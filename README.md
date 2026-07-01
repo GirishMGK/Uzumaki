@@ -8,6 +8,15 @@ pip install -r requirements.txt
 streamlit run Home.py
 ```
 
+**Tests** — a compile sweep plus regression tests for the bugs found in the
+2026-07-01 codebase review (e.g. a structural check that `pdf_tools.py`'s
+dispatch actually calls the real tool functions, not a placeholder):
+```bash
+pip install pytest
+pytest
+```
+Runs automatically on every push/PR via `.github/workflows/ci.yml`.
+
 **Tools in the hub**
 | Tool | What it does |
 |------|--------------|
