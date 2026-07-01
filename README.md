@@ -1,3 +1,27 @@
+# Sangir Analytics — Tools
+
+A unified Streamlit hub that groups every tool under a **Tools** section in the
+sidebar; each tool opens as its own page.
+
+```bash
+pip install -r requirements.txt
+streamlit run Home.py
+```
+
+**Tools in the hub**
+| Tool | What it does |
+|------|--------------|
+| **Disha Parquet Tool** (`parquet_tool.py`) | Python/Streamlit port of the Sangir WPF app: Convert (CSV/Excel→Parquet w/ compression + type inference), Viewer (schema, row-groups, stats, filter, sort), CSV Tools (delimiter, encoding, merge, split-rows, schema-compare), Analytics (DuckDB SQL + query history). |
+| **PF & Statutory** (`Combined_PF_Statutory.py`) | PF Challan / ECR Return / TRRN **and** ESI · PT · TDS · GSTR-1 · GSTR-3B extraction — already combined into one two-tab app (shared PDF-read/regex utilities). |
+| **PDF Tools** (`pdf_tools.py` + `tools/`) | Merge, split, edit (remove/insert/reorder pages) and PDF→Word. |
+| **SOA · RPS · Reconcile** (`app.py`) | L&T Finance SOA extractor with TOC/TOD audit — ships as a standalone Flask app (SSE live progress); the hub page links to it. |
+
+> **PF + Statutory combinable?** Yes — they already share `_read_pdf_text`,
+> `_g`/`normalize_period` helpers and live together in `Combined_PF_Statutory.py`
+> as two tabs, so the hub mounts that single file.
+
+---
+
 # SOA Extractor & TOC/TOD Tool (L&T Finance NBFC SOAs)
 
 Parses L&T Finance Statement-of-Account (SOA) PDFs into structured Excel and

@@ -1,6 +1,10 @@
 pdfplumber
+PyMuPDF
 openpyxl
 flask
 streamlit
 pypdf
 python-docx
+pandas
+pyarrow
+duckdb
