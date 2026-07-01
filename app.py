@@ -16,6 +16,7 @@ is persisted. "Download everything" bundles all outputs into one zip.
 """
 import io
 import os
+import re
 import json
 import time
 import uuid
@@ -277,7 +278,10 @@ def process_stream(job_id):
         results = job["results"]
         soas, rpss = [], []
         for i, pdf_path in enumerate(job["pdfs"]):
-            display = os.path.basename(pdf_path)[4:]
+            # strip the "NNN_" index prefix added by _collect_pdfs (width grows
+            # past 3 digits once a job has >=1000 files, so match the pattern
+            # rather than assuming a fixed 4-char prefix)
+            display = re.sub(r"^\d+_", "", os.path.basename(pdf_path), count=1)
             rec = {"index": i, "file": display, "ok": False, "doctype": "unknown",
                    "agreement": "", "exceptions": 0, "stage": "", "instalments": 0,
                    "error": "", "xlsx": None}

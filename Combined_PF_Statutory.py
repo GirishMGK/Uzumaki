@@ -32,6 +32,13 @@ def _g(pattern, text, flags=re.I):
 
 g = _g
 
+def g_last(pattern, text, flags=re.I):
+    """Like g(), but returns the LAST match — for "Grand Total"-style fields
+    where a multi-section document can repeat the label for per-section
+    subtotals before the true final total."""
+    matches = list(re.finditer(pattern, text, flags))
+    return matches[-1].group(1).strip() if matches else ""
+
 def _normalize_period(raw):
     if not raw:
         return ""
@@ -133,7 +140,8 @@ def extract_pf_data(pdf_path) -> dict:
     wm_m = re.search(r"CHALLAN FOR WAGE MONTH\s*[:\-]\s*(\w+\s+\d{4})", text, re.I) if is_new else \
            re.search(r"Dues for the wage month of\s+(\w+\s*\d{4})", text, re.I)
     month = wm_m.group(1).replace(" ", "") if wm_m else ""
-    gt_m = re.search(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)\s*$", text, re.I | re.MULTILINE)
+    gt_matches = list(re.finditer(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I))
+    gt_m = gt_matches[-1] if gt_matches else None
     detail_table_df = None
     for t in (tables or []):
         if not t: continue
@@ -207,7 +215,7 @@ def extract_pt(fn, text):
     return {"File Name": fn,
             "Client Name": g(r"Trade Name\s*:\s*(.+)", text) or g(r"Name of the Employer\s*:\s*(.+)", text),
             "Period": normalize_period(period_raw),
-            "Grand Total": g(r"Grand Total\s+([\d,]+)", text) or g(r"Grand Total\s*:\s*([\d,]+)", text)}
+            "Grand Total": g_last(r"Grand Total\s+([\d,]+)", text) or g_last(r"Grand Total\s*:\s*([\d,]+)", text)}
 
 def extract_tds(fn, text):
     return {"File Name": fn,
@@ -257,8 +265,12 @@ def compute_recon(gstr1_rows, gstr3b_rows):
     def to_f(val):
         try: return float(str(val).replace(",", "")) if val not in ("", None) else 0.0
         except ValueError: return 0.0
-    idx3b = {(str(r.get("GSTIN", "")).strip().upper(), normalize_period(r.get("Tax Period", ""))): r
-              for r in gstr3b_rows}
+    idx3b, dup_keys = {}, set()
+    for r in gstr3b_rows:
+        key = (str(r.get("GSTIN", "")).strip().upper(), normalize_period(r.get("Tax Period", "")))
+        if key in idx3b:
+            dup_keys.add(key)  # e.g. original + amended return for same GSTIN/period
+        idx3b[key] = r  # last-processed file wins for a duplicate key
     results, matched = [], set()
     for r1 in gstr1_rows:
         gstin = str(r1.get("GSTIN", "")).strip().upper()
@@ -275,7 +287,7 @@ def compute_recon(gstr1_rows, gstr3b_rows):
                         "GSTR-1 Taxable": g1_tv, "GSTR-3B Taxable": g3_tv, "Diff Taxable": round(g1_tv - g3_tv, 2),
                         "GSTR-1 Tax": g1_tax, "GSTR-3B Tax": g3_tax, "Diff Tax": round(g1_tax - g3_tax, 2),
                         "Status": status})
-    return results
+    return results, sorted(dup_keys)
 
 def process_statutory_pdf(file_name, file_bytes, state_prefix="stat_"):
     import traceback
@@ -440,9 +452,17 @@ with tab_stat:
                 process_statutory_pdf(name, data, state_prefix="stat_")
                 bar.progress((i + 1) / len(all_pdfs))
             if st.session_state.stat_gstr1 or st.session_state.stat_gstr3b:
-                st.session_state.stat_recon = compute_recon(
+                stat_recon, stat_dup_keys = compute_recon(
                     st.session_state.stat_gstr1, st.session_state.stat_gstr3b
                 )
+                st.session_state.stat_recon = stat_recon
+                if stat_dup_keys:
+                    st.warning(
+                        "Multiple GSTR-3B files found for the same GSTIN + Tax Period — "
+                        "only the most recently processed file is used for each: "
+                        + ", ".join(f"{gstin} / {period}" for gstin, period in stat_dup_keys),
+                        icon="⚠️",
+                    )
             counts = {k: len(st.session_state[k]) for k in _STAT_KEYS}
             st.success(f"Done — **{counts['stat_esi']}** ESI · **{counts['stat_pt']}** PT · **{counts['stat_tds']}** TDS · **{counts['stat_gstr1']}** GSTR-1 · **{counts['stat_gstr3b']}** GSTR-3B")
 

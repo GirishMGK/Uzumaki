@@ -247,8 +247,14 @@ def main():
     if args[0] == "--dir":
         folder = args[1]
         out = args[2] if len(args) > 2 else "RPS_Combined.xlsx"
-        loans = [extract_rps(os.path.join(folder, f)) for f in sorted(os.listdir(folder))
-                 if f.lower().endswith(".pdf")]
+        loans = []
+        for f in sorted(os.listdir(folder)):
+            if not f.lower().endswith(".pdf"):
+                continue
+            try:
+                loans.append(extract_rps(os.path.join(folder, f)))
+            except Exception as exc:
+                print(f"[SKIP] {f}: {exc}")
     else:
         pdf_path = args[0]
         out = args[1] if len(args) > 1 else os.path.splitext(pdf_path)[0] + ".xlsx"

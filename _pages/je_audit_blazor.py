@@ -1,8 +1,13 @@
 """Hub page: JE Audit Analytics Tool — Blazor Server edition (info/launcher)."""
 import streamlit as st
 
-st.title("JE Audit Analytics Tool — Blazor Edition")
-st.caption("Self-contained .NET/Blazor Server port of the JE Audit Analytics Tool")
+from _pages.theme import page_header, footer
+
+page_header(
+    "⚡", "JE Audit Analytics Tool — Blazor Edition",
+    "Self-contained .NET/Blazor Server port of the JE Audit Analytics Tool",
+    badges=[".NET / Blazor Server", "EPPlus", "Runs outside this hub"],
+)
 
 st.info(
     "This is a separate **Blazor Server** (.NET) implementation of the same "
@@ -42,3 +47,5 @@ version (`je_audit_tool/`) has the more complete test coverage (18+ test IDs
 across amount/timing/user/vendor/Benford, DuckDB-backed for large datasets).
 """
 )
+
+footer()

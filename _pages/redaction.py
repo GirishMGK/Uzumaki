@@ -1,8 +1,13 @@
 """Hub page: Secure Document Redaction Tool (tkinter desktop launcher)."""
 import streamlit as st
 
-st.title("Secure Document Redaction Tool")
-st.caption("Auto-detect and redact PAN, TAN, GSTIN, CIN, Aadhaar, Phone, Email — PDF, DOCX, XLSX, images")
+from _pages.theme import page_header, footer
+
+page_header(
+    "🔒", "Secure Document Redaction Tool",
+    "Auto-detect and redact PAN, TAN, GSTIN, CIN, Aadhaar, Phone, Email — PDF, DOCX, XLSX, images",
+    badges=["Desktop app (tkinter)", "PDF/DOCX/XLSX/Images", "Runs outside this hub"],
+)
 
 st.info(
     "This tool ships as a **desktop GUI app** (tkinter), which runs outside the "
@@ -45,3 +50,5 @@ redaction_tool/
 > https://github.com/UB-Mannheim/tesseract/wiki for Windows installers.
 """
 )
+
+footer()

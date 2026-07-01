@@ -35,6 +35,17 @@ def g(pattern, text, flags=re.I):
     return m.group(1).strip() if m else ""
 
 
+def g_last(pattern, text, flags=re.I):
+    """Like g(), but returns the LAST match rather than the first.
+
+    Used for "Grand Total"-style fields where a multi-section document can
+    repeat the same label for per-section subtotals before the true final
+    total — re.search's first-match would silently report a subtotal.
+    """
+    matches = list(re.finditer(pattern, text, flags))
+    return matches[-1].group(1).strip() if matches else ""
+
+
 def normalize_period(raw):
     if not raw:
         return ""
@@ -114,7 +125,7 @@ def extract_pt(file_name, text):
         g(r"ending on\s*:\s*([A-Za-z]+\s*[-–]\s*\d{4})", text) or
         g(r"for the month.*?:\s*([A-Za-z]+\s*[-–]\s*\d{4})", text, re.I | re.S)
     )
-    grand_total = g(r"Grand Total\s+([\d,]+)", text) or g(r"Grand Total\s*:\s*([\d,]+)", text)
+    grand_total = g_last(r"Grand Total\s+([\d,]+)", text) or g_last(r"Grand Total\s*:\s*([\d,]+)", text)
     pay_date = (
         g(r"(\d{2}-\d{2}-\d{4})\s+Khajane", text) or
         g(r"ePayment\s*\d+\s+\S+\s+(\d{2}[-/]\d{2}[-/]\d{4})", text)
@@ -303,10 +314,13 @@ def compute_recon(gstr1_rows, gstr3b_rows):
             return 0.0
 
     idx3b = {}
+    dup_keys = set()
     for row in gstr3b_rows:
         key = (str(row.get("GSTIN", "")).strip().upper(),
                normalize_period(row.get("Tax Period", "")))
-        idx3b[key] = row
+        if key in idx3b:
+            dup_keys.add(key)  # e.g. original + amended return for same GSTIN/period
+        idx3b[key] = row  # last-processed file wins for a duplicate key
 
     results = []
     matched_3b_keys = set()
@@ -357,7 +371,7 @@ def compute_recon(gstr1_rows, gstr3b_rows):
             "Status": "Only in GSTR-3B",
         })
 
-    return results
+    return results, sorted(dup_keys)
 
 
 def process_pdf(file_name, file_bytes):
@@ -467,7 +481,15 @@ if extract_btn:
                 bar.progress((i + 1) / len(all_pdfs))
 
         if st.session_state.gstr1 or st.session_state.gstr3b:
-            st.session_state.recon = compute_recon(st.session_state.gstr1, st.session_state.gstr3b)
+            recon, dup_keys = compute_recon(st.session_state.gstr1, st.session_state.gstr3b)
+            st.session_state.recon = recon
+            if dup_keys:
+                st.warning(
+                    "Multiple GSTR-3B files found for the same GSTIN + Tax Period — "
+                    "only the most recently processed file is used for each: "
+                    + ", ".join(f"{gstin} / {period}" for gstin, period in dup_keys),
+                    icon="⚠️",
+                )
 
         counts = {t: len(st.session_state[t]) for t in TYPES}
         st.success(

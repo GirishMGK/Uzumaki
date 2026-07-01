@@ -287,8 +287,11 @@ def extract_pf_data(pdf_path) -> dict:
         if cd_m:
             challan_date = cd_m.group(1)
 
-    gt_m = re.search(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)\s*$", text, re.I | re.MULTILINE)
-    grand_total = gt_m.group(1) if gt_m else ""
+    # last match (not first) and no trailing end-of-line anchor — the anchor
+    # made this silently return empty whenever trailing table content followed
+    # the total on the same physical line, which is common in these layouts.
+    gt_matches = list(re.finditer(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I))
+    grand_total = gt_matches[-1].group(1) if gt_matches else ""
 
     return {
         "Company": company, "Establishment Code": estab_code, "Month": month,

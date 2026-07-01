@@ -71,7 +71,10 @@ def reconcile_pair(soa, rps):
     counts = {"matched": 0, "amount": 0, "late": 0, "unpaid": 0, "missing": 0}
     for r in rps["schedule"]:
         n = r["Instalment Number"]
-        sched_emi = r["Instalment Balance"]
+        principal, interest = r.get("Principal"), r.get("Interest")
+        # scheduled EMI = Principal + Interest; "Instalment Balance" is an
+        # outstanding/running balance figure, not the instalment amount.
+        sched_emi = (principal + interest) if principal is not None and interest is not None else None
         sd = soa_by_n.get(n)
         soa_amt = soa_due = soa_paid = dpd = None
         if not sd:

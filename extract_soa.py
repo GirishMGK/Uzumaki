@@ -727,8 +727,10 @@ def extract_loan(pdf_path):
     rate = to_num(master.get("Annualised Interest Rate %"))
     tenure = to_num(master.get("Loan Tenure (Months)"))
     emi = to_num(master.get("First Instalment Amount (Rs)"))
+    # NOTE: use "is not None" rather than all(...) truthiness — a valid 0%
+    # promotional loan has rate == 0.0, which all() would treat as missing.
     amort = (build_amortization(loan_amt, rate, tenure, emi)
-             if all((loan_amt, rate, tenure, emi)) else [])
+             if None not in (loan_amt, rate, tenure, emi) else [])
 
     checks, dpd_rows, summary = build_checks(
         master, fin_rows, recv, disb, txns, charges, bounce_grid, bounce)

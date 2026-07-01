@@ -1,8 +1,13 @@
 """Hub page: SOA / RPS / Reconcile (Flask app launcher)."""
 import streamlit as st
 
-st.title("SOA · RPS · Reconcile")
-st.caption("L&T Finance NBFC Statement-of-Account extractor & TOC/TOD audit tool")
+from _pages.theme import page_header, footer
+
+page_header(
+    "📊", "SOA · RPS · Reconcile",
+    "L&T Finance NBFC Statement-of-Account extractor & TOC/TOD audit tool",
+    badges=["Flask app", "SSE live progress", "Runs outside this hub"],
+)
 
 st.info(
     "This tool ships as a dedicated **Flask** web app (`app.py`) with live "
@@ -32,3 +37,5 @@ python extract_soa.py --portfolio ./pdfs report.xlsx  # portfolio exception repo
 ```
 """
 )
+
+footer()
