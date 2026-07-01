@@ -10,3 +10,10 @@ pyarrow
 duckdb
 Pillow
 pytesseract
+numpy
+plotly
+scipy
+xlsxwriter
+xlrd
+scikit-learn
+python-calamine

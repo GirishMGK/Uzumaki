@@ -16,6 +16,8 @@ streamlit run Home.py
 | **PDF Tools** (`pdf_tools.py` + `tools/`) | Merge, split, edit (remove/insert/reorder pages) and PDF→Word. |
 | **SOA · RPS · Reconcile** (`app.py`) | L&T Finance SOA extractor with TOC/TOD audit — ships as a standalone Flask app (SSE live progress); the hub page links to it. |
 | **Document Redaction** (`redaction_tool/`) | Auto-detect + redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email plus custom keywords across PDF (true redaction via PyMuPDF), DOCX, XLSX, and images (Tesseract OCR) — ships as a standalone tkinter desktop app; the hub page links to it. |
+| **JE Audit Analytics** (`je_audit_tool/`) | Journal Entry exception testing for statutory/forensic audit: Amount (duplicates, high-value, split transactions), Timing (weekend/holiday, year-end cutoff, reversals), User & Access Control (SOD violations, dormant users, related parties), Vendor Master Data (duplicate GSTIN/PAN, MSME delay, inactive vendors), Benford's Law (chi-square digit analysis). DuckDB-backed for large GL dumps; exports a multi-sheet Excel audit report + working paper. |
+| **JE Audit (Blazor)** (`je_audit_tool_blazor/JEAuditApp.razor`) | Self-contained .NET/Blazor Server port of the same JE audit workflow (7-step wizard, same test families) for teams preferring a C#/.NET deployment — needs the `EPPlus` NuGet package for Excel I/O. |
 
 > **PF + Statutory combinable?** Yes — they already share `_read_pdf_text`,
 > `_g`/`normalize_period` helpers and live together in `Combined_PF_Statutory.py`

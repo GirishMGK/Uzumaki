@@ -32,6 +32,8 @@ def home():
         ("📄", "PDF Tools", "Merge, split, edit and convert PDFs to Word."),
         ("📊", "SOA · RPS · Reconcile", "L&T Finance SOA extractor with TOC/TOD audit (Flask app)."),
         ("🔒", "Document Redaction", "Auto-redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email — PDF, DOCX, XLSX, images (desktop app)."),
+        ("🔍", "JE Audit Analytics", "Journal Entry exception testing — amount, timing, user, vendor, Benford's Law, DuckDB-backed."),
+        ("⚡", "JE Audit (Blazor)", "Same JE audit engine as a self-contained .NET/Blazor Server app."),
     ]
     cols = st.columns(2)
     for i, (icon, title, desc) in enumerate(cards):
@@ -60,6 +62,8 @@ nav = st.navigation(
             st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
+            st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
+            st.Page("_pages/je_audit_blazor.py", title="JE Audit (Blazor)", icon="⚡"),
         ],
     }
 )
