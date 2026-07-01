@@ -31,6 +31,7 @@ def home():
         ("🧾", "PF & Statutory", "PF Challan/ECR/TRRN + ESI/PT/TDS/GSTR-1/GSTR-3B extraction."),
         ("📄", "PDF Tools", "Merge, split, edit and convert PDFs to Word."),
         ("📊", "SOA · RPS · Reconcile", "L&T Finance SOA extractor with TOC/TOD audit (Flask app)."),
+        ("🔒", "Document Redaction", "Auto-redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email — PDF, DOCX, XLSX, images (desktop app)."),
     ]
     cols = st.columns(2)
     for i, (icon, title, desc) in enumerate(cards):
@@ -58,6 +59,7 @@ nav = st.navigation(
             st.Page("_pages/pf_statutory.py", title="PF & Statutory", icon="🧾"),
             st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
+            st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
         ],
     }
 )

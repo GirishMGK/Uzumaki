@@ -8,3 +8,5 @@ python-docx
 pandas
 pyarrow
 duckdb
+Pillow
+pytesseract
