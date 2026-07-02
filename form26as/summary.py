@@ -51,6 +51,12 @@ def by_section(transactions: List[Transaction]) -> List[SummaryRow]:
     return rows
 
 
+def by_year(transactions: List[Transaction]) -> List[SummaryRow]:
+    rows = _aggregate(transactions, lambda t: (t.assessment_year or "Unknown",))
+    rows.sort(key=lambda r: r.key[0])
+    return rows
+
+
 def _month_key(txn: Transaction) -> Tuple[str, ...]:
     d = _to_date(txn.transaction_date)
     if d is None:

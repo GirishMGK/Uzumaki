@@ -146,6 +146,9 @@ def _write_summary_sheets(wb, transactions: List[Transaction]) -> None:
         last = get_column_letter(len(headers))
         ws.auto_filter.ref = f"A1:{last}{max(ws.max_row, 1)}"
 
+    years = {t.assessment_year for t in transactions if t.assessment_year}
+    if len(years) > 1:
+        add_sheet("Summary by Year", ("Assessment Year",), _summary.by_year(transactions))
     add_sheet("Summary by Deductor", ("Name of Deductor", "TAN"), _summary.by_deductor(transactions))
     add_sheet("Summary by Section", ("Section",), _summary.by_section(transactions))
     add_sheet("Summary by Month", ("Month",), _summary.by_month(transactions))

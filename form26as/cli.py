@@ -6,8 +6,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .loader import load_grid
-from .parser import parse_part_a
+from .merge import parse_files
 from .writer import write_csv, write_xlsx
 
 
@@ -15,17 +14,24 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="form26as",
         description=(
-            "Parse a TRACES Form 26AS (Excel/HTML) and produce a flat, "
-            "searchable table where every transaction carries its deductor's "
-            "name and TAN."
+            "Parse one or more TRACES Form 26AS files (text/Excel/HTML/PDF) and "
+            "produce a flat, searchable table where every transaction carries "
+            "its deductor's name and TAN. Pass multiple files (e.g. one per "
+            "assessment year) to get a single combined workbook."
         ),
     )
-    p.add_argument("input", help="Path to the 26AS file (.xlsx / .xls / .html)")
+    p.add_argument(
+        "inputs",
+        nargs="+",
+        help="Path(s) to one or more 26AS files (.txt/.xlsx/.xls/.html/.pdf). "
+        "Provide several files to combine multiple years into one workbook.",
+    )
     p.add_argument(
         "-o",
         "--output",
         help="Output path. Extension picks the format (.xlsx or .csv). "
-        "Defaults to '<input>_formatted.xlsx'.",
+        "Defaults to '<input>_formatted.xlsx' for a single file, or "
+        "'26AS_Combined_formatted.xlsx' for multiple.",
     )
     p.add_argument(
         "--csv",
@@ -34,13 +40,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--password",
-        help="Password for an encrypted PDF (TRACES 26AS PDFs use your date of "
-        "birth as DDMMYYYY, e.g. 15041985).",
+        help="Password applied to any encrypted PDF inputs (TRACES 26AS PDFs "
+        "use your date of birth as DDMMYYYY, e.g. 15041985).",
     )
     p.add_argument(
         "--debug",
         action="store_true",
-        help="Print the detected grid (first rows) to help diagnose parsing.",
+        help="Print each file's detected grid (first rows) to help diagnose parsing.",
     )
     return p
 
@@ -48,40 +54,37 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
-    input_path = Path(args.input)
-    try:
-        grid = load_grid(input_path, password=args.password)
-    except FileNotFoundError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    except Exception as exc:  # noqa: BLE001 - surface loader errors clearly
-        hint = ""
-        if input_path.suffix.lower() == ".pdf":
-            hint = (
-                " If the PDF is password-protected, pass --password (TRACES uses "
-                "your date of birth as DDMMYYYY)."
+    paths = [Path(p) for p in args.inputs]
+    for p in paths:
+        if not p.exists():
+            print(f"error: No such file: {p}", file=sys.stderr)
+            return 2
+
+    passwords = {p: args.password for p in paths} if args.password else {}
+    transactions, results = parse_files(paths, passwords=passwords, debug=args.debug)
+
+    for r in results:
+        name = r["path"].name
+        if r["error"]:
+            hint = ""
+            if r["path"].suffix.lower() == ".pdf":
+                hint = " (if it's password-protected, pass --password)"
+            print(f"error: could not read {name}: {r['error']}{hint}", file=sys.stderr)
+        elif r["count"] == 0:
+            print(
+                f"warning: no Part A transactions found in {name} "
+                f"(detected year: {r['year']}).",
+                file=sys.stderr,
             )
-        print(f"error: could not read {input_path}: {exc}.{hint}", file=sys.stderr)
-        return 2
-
-    if args.debug:
-        print(f"Loaded {len(grid)} rows. First 20:", file=sys.stderr)
-        for i, row in enumerate(grid[:20]):
-            print(f"  [{i}] {row}", file=sys.stderr)
-
-    transactions = parse_part_a(grid)
-    if not transactions:
-        print(
-            "warning: no Part A transactions were found. The file layout may "
-            "differ from what the parser expects — re-run with --debug and share "
-            "the output so the parser can be tuned.",
-            file=sys.stderr,
-        )
+        else:
+            print(f"  {name}: {r['count']} transactions (year: {r['year']})")
 
     if args.output:
         out_path = Path(args.output)
+    elif len(paths) == 1:
+        out_path = paths[0].with_name(f"{paths[0].stem}_formatted.xlsx")
     else:
-        out_path = input_path.with_name(f"{input_path.stem}_formatted.xlsx")
+        out_path = paths[0].parent / "26AS_Combined_formatted.xlsx"
 
     if out_path.suffix.lower() == ".csv":
         write_csv(transactions, out_path)
@@ -92,8 +95,8 @@ def main(argv: list[str] | None = None) -> int:
             write_csv(transactions, csv_path)
             print(f"Wrote {csv_path}")
 
-    print(f"Wrote {out_path}  ({len(transactions)} transactions)")
-    return 0
+    print(f"Wrote {out_path}  ({len(transactions)} transactions total across {len(paths)} file(s))")
+    return 0 if transactions else 1
 
 
 if __name__ == "__main__":

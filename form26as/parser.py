@@ -28,6 +28,8 @@ _DATE_FORMATS = ("%d-%b-%Y", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d")
 
 @dataclass
 class Transaction:
+    assessment_year: str = ""
+    source_file: str = ""
     deductor_sr_no: str = ""
     name_of_deductor: str = ""
     tan_of_deductor: str = ""
@@ -46,6 +48,8 @@ class Transaction:
 
     def as_row(self) -> List[object]:
         return [
+            self.assessment_year,
+            self.source_file,
             self.deductor_sr_no,
             self.name_of_deductor,
             self.tan_of_deductor,
@@ -65,6 +69,8 @@ class Transaction:
 
 
 COLUMNS = [
+    "Assessment Year",
+    "Source File",
     "Deductor Sr. No.",
     "Name of Deductor",
     "TAN of Deductor",
@@ -81,6 +87,10 @@ COLUMNS = [
     "Tax Deducted",
     "TDS Deposited",
 ]
+
+ASSESSMENT_YEAR_RE = re.compile(r"^(20\d{2})-(\d{2})$")
+_YEAR_IN_TEXT_RE = re.compile(r"(20\d{2}-\d{2})")
+_YEAR_IN_NAME_RE = re.compile(r"(20\d{2}-\d{2}|20\d{2})")
 
 
 def _norm(text: str) -> str:
@@ -109,6 +119,30 @@ def _to_date(text: str) -> Optional[date]:
         except ValueError:
             continue
     return None
+
+
+def detect_assessment_year(grid: Grid) -> Optional[str]:
+    """Find the statement's Assessment Year (e.g. '2026-27') inside the grid."""
+    for cells in grid:
+        for idx, cell in enumerate(cells):
+            if _norm(cell) == "assessment year":
+                for later in cells[idx + 1:]:
+                    if ASSESSMENT_YEAR_RE.match(later.strip()):
+                        return later.strip()
+        joined = " ".join(cells)
+        if "assessment year" in _norm(joined):
+            m = _YEAR_IN_TEXT_RE.search(joined)
+            if m:
+                return m.group(1)
+    return None
+
+
+def year_from_filename(path) -> str:
+    """Best-effort fallback: pull a year/FY out of the file name."""
+    from pathlib import Path as _Path
+
+    m = _YEAR_IN_NAME_RE.search(_Path(path).stem)
+    return m.group(1) if m else "Unknown"
 
 
 def _find_col(cells: List[str], *keywords: str) -> Optional[int]:
