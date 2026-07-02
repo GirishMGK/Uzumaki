@@ -190,6 +190,18 @@ st.markdown(
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+def read_pdf_or_error(uploaded):
+    """Read an uploaded file and return (bytes, page_count), or (None, None)
+    after showing a friendly error if it isn't a readable PDF."""
+    pdf_bytes = uploaded.read()
+    try:
+        return pdf_bytes, get_page_count(pdf_bytes)
+    except Exception:
+        st.error(f"'{uploaded.name}' doesn't look like a valid PDF (it may be corrupted, "
+                  "empty, or password-protected).")
+        return None, None
+
+
 def fmt_size(n_bytes: int) -> str:
     if n_bytes < 1024:
         return f"{n_bytes} B"
@@ -326,14 +338,15 @@ def page_merge() -> None:
         return
 
     # Build file list in session state for reordering
+    upload_identity = [(f.name, f.size) for f in uploaded]
     if "merge_files" not in st.session_state or st.session_state.get(
-        "merge_upload_count"
-    ) != len(uploaded):
+        "merge_upload_identity"
+    ) != upload_identity:
         st.session_state.merge_files = [
             {"name": f.name, "bytes": f.read(), "idx": i}
             for i, f in enumerate(uploaded)
         ]
-        st.session_state.merge_upload_count = len(uploaded)
+        st.session_state.merge_upload_identity = upload_identity
 
     files = st.session_state.merge_files
 
@@ -341,12 +354,16 @@ def page_merge() -> None:
 
     for pos, item in enumerate(files):
         cols = st.columns([6, 1, 1, 1])
-        page_count = get_page_count(item["bytes"])
+        try:
+            page_count = get_page_count(item["bytes"])
+            desc = f'{page_count} pages · {fmt_size(len(item["bytes"]))}'
+        except Exception:
+            desc = '<span style="color:#c0392b;">not a valid PDF — will be skipped</span>'
         with cols[0]:
             st.markdown(
                 f'<div class="file-pill">📄 <strong>{item["name"]}</strong>'
                 f'&nbsp;&nbsp;<span style="color:#888;font-size:0.82rem;">'
-                f'{page_count} pages · {fmt_size(len(item["bytes"]))}</span></div>',
+                f'{desc}</span></div>',
                 unsafe_allow_html=True,
             )
         with cols[1]:
@@ -372,7 +389,7 @@ def page_merge() -> None:
     if st.button("🔀 Merge PDFs", type="primary", use_container_width=True):
         with st.spinner("Merging PDFs…"):
             try:
-                result = merge_pdfs(files)
+                result = merge_pdfs([f["bytes"] for f in files])
                 st.session_state.merge_result = result
                 total_pages = get_page_count(result)
                 st.success(
@@ -411,8 +428,9 @@ def page_split() -> None:
         st.info("Upload a PDF file to get started.")
         return
 
-    pdf_bytes = uploaded.read()
-    total_pages = get_page_count(pdf_bytes)
+    pdf_bytes, total_pages = read_pdf_or_error(uploaded)
+    if pdf_bytes is None:
+        return
     st.markdown(
         f'<div class="info-box">📄 <strong>{uploaded.name}</strong> — '
         f'{total_pages} pages · {fmt_size(len(pdf_bytes))}</div>',
@@ -550,8 +568,9 @@ def page_edit() -> None:
         st.info("Upload a PDF to edit.")
         return
 
-    pdf_bytes = uploaded.read()
-    total_pages = get_page_count(pdf_bytes)
+    pdf_bytes, total_pages = read_pdf_or_error(uploaded)
+    if pdf_bytes is None:
+        return
     st.markdown(
         f'<div class="info-box">📄 <strong>{uploaded.name}</strong> — '
         f'{total_pages} pages · {fmt_size(len(pdf_bytes))}</div>',
@@ -630,8 +649,11 @@ def page_edit() -> None:
             label_visibility="collapsed",
         )
         if insert_file:
-            insert_bytes = insert_file.read()
-            insert_pages_count = get_page_count(insert_bytes)
+            insert_bytes, insert_pages_count = read_pdf_or_error(insert_file)
+        else:
+            insert_bytes = None
+
+        if insert_bytes is not None:
             st.markdown(
                 f'<div class="info-box">📄 <strong>{insert_file.name}</strong> — '
                 f"{insert_pages_count} pages</div>",
@@ -670,7 +692,7 @@ def page_edit() -> None:
                         )
                     except Exception as e:
                         st.error(f"Insert failed: {e}")
-        else:
+        elif not insert_file:
             st.info("Upload a PDF whose pages you want to insert into the base PDF.")
 
     # ── TAB: REORDER ─────────────────────────────────────────────────────────
@@ -772,8 +794,9 @@ def page_convert() -> None:
         st.info("Upload a PDF to convert it to Word.")
         return
 
-    pdf_bytes = uploaded.read()
-    total_pages = get_page_count(pdf_bytes)
+    pdf_bytes, total_pages = read_pdf_or_error(uploaded)
+    if pdf_bytes is None:
+        return
     st.markdown(
         f'<div class="info-box">📄 <strong>{uploaded.name}</strong> — '
         f'{total_pages} pages · {fmt_size(len(pdf_bytes))}</div>',

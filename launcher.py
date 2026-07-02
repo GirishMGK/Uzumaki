@@ -56,10 +56,12 @@ def _local_version() -> str:
 
 
 def _remote_version() -> str | None:
+    # Broad except by design: a failed/garbled update check (bad encoding,
+    # malformed response, proxy captive portal, ...) must never block launch.
     try:
         with urllib.request.urlopen(_VERSION_URL, timeout=_TIMEOUT) as resp:
             return resp.read().decode("utf-8").strip()
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except Exception:
         return None
 
 
@@ -67,8 +69,24 @@ def _download(url: str, dest: str) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=30) as resp, open(dest, "wb") as out:
             out.write(resp.read())
-        return True
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except Exception:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return False
+    return _looks_like_valid_exe(dest)
+
+
+def _looks_like_valid_exe(path: str) -> bool:
+    """Minimal integrity check before the swap-in helper deletes the running
+    exe — a truncated/corrupt download must never brick the install."""
+    try:
+        if os.path.getsize(path) < 1_000_000:  # a real build is tens of MB
+            return False
+        with open(path, "rb") as f:
+            return f.read(2) == b"MZ"  # Windows PE header magic
+    except OSError:
         return False
 
 
@@ -88,14 +106,25 @@ def _self_update_and_relaunch() -> None:
         with open(helper, "w", encoding="utf-8") as f:
             f.write(
                 "@echo off\r\n"
+                "setlocal enabledelayedexpansion\r\n"
+                "set tries=0\r\n"
                 "timeout /t 2 /nobreak >nul\r\n"
                 f':retry\r\n'
                 f'del /f /q "{exe_path}" 2>nul\r\n'
                 f'if exist "{exe_path}" (\r\n'
+                "  set /a tries+=1\r\n"
+                "  if !tries! geq 15 goto giveup\r\n"
                 "  timeout /t 1 /nobreak >nul\r\n"
                 "  goto retry\r\n"
                 ")\r\n"
                 f'move /y "{new_path}" "{exe_path}" >nul\r\n'
+                f'start "" "{exe_path}"\r\n'
+                'del /f /q "%~f0"\r\n'
+                "goto :eof\r\n"
+                ":giveup\r\n"
+                # exe stayed locked (e.g. AV scan) — abandon the swap and
+                # relaunch the still-working current build instead of hanging.
+                f'del /f /q "{new_path}" 2>nul\r\n'
                 f'start "" "{exe_path}"\r\n'
                 'del /f /q "%~f0"\r\n'
             )
@@ -118,11 +147,17 @@ def _self_update_and_relaunch() -> None:
 def check_for_update() -> None:
     if not _is_frozen():
         return  # nothing to self-replace when running from source
-    remote = _remote_version()
-    if remote is None:
-        return  # offline or GitHub unreachable — just launch what we have
-    if remote != _local_version():
-        _self_update_and_relaunch()
+    try:
+        remote = _remote_version()
+        if remote is None:
+            return  # offline or GitHub unreachable — just launch what we have
+        if remote != _local_version():
+            _self_update_and_relaunch()
+    except SystemExit:
+        raise  # the successful-update path calls sys.exit(0) — let it through
+    except Exception as e:
+        # The self-update path must never prevent the app from launching.
+        print(f"Update check failed ({e}) — continuing with the current version.")
 
 
 def run_app() -> None:

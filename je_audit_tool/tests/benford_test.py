@@ -61,7 +61,11 @@ def run_benford_test(
     obs_pct  = obs_cnt / total
     expected = _benford_expected()
     exp_pct  = pd.Series(expected)
-    exp_cnt  = (exp_pct * total).round().astype(int).clip(lower=1)
+    # Keep expected counts as float (not rounded to int) so sum(exp_cnt) ==
+    # sum(obs_cnt) == total exactly — scipy.stats.chisquare raises ValueError
+    # whenever the two sums disagree, which rounding each digit independently
+    # triggers for most sample sizes.
+    exp_cnt  = exp_pct * total
 
     # ── Chi-square test ───────────────────────────────────────────────────────
     try:
@@ -70,7 +74,7 @@ def run_benford_test(
             obs_cnt.values,
             f_exp=exp_cnt.values,
         )
-    except ImportError:
+    except (ImportError, ValueError):
         # Manual chi-square if scipy not available
         chi2_stat = float(np.sum((obs_cnt.values - exp_cnt.values) ** 2 / exp_cnt.values))
         # Approximate p-value via normal approximation

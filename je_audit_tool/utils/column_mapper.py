@@ -3,6 +3,7 @@ Column Mapper — maps client dataset columns to standard audit field names.
 All field keys are standardised; labels match the prompt specification.
 """
 from __future__ import annotations
+import re
 import pandas as pd
 from typing import Dict, Optional, List
 
@@ -119,9 +120,36 @@ def get_safe_series(df: pd.DataFrame, key: str, col_map: Dict) -> pd.Series:
     return pd.Series([""] * len(df), index=df.index, dtype=object)
 
 
+_CURRENCY_JUNK_RE = re.compile(r"[₹$,\s]")
+_PAREN_NEG_RE = re.compile(r"^\((.*)\)$")
+
+
+def _is_text_dtype(s: pd.Series) -> bool:
+    """True for text columns regardless of pandas version. Pandas 3.x infers
+    a dedicated string dtype for text by default instead of the legacy
+    'object' dtype, so a bare `dtype == object` check silently stops
+    matching any string column on newer pandas."""
+    return s.dtype == object or pd.api.types.is_string_dtype(s)
+
+
 def get_safe_numeric(df: pd.DataFrame, key: str, col_map: Dict) -> pd.Series:
-    """Return numeric series for mapped column, or zeros if unmapped/invalid."""
+    """Return numeric series for mapped column, or zeros if unmapped/invalid.
+
+    Strips common currency symbols / thousands separators and accounting-
+    style parentheses first — otherwise amounts like "₹1,23,456.00" or
+    "(1,234.56)" (very common in Tally/Excel GL exports) silently coerce to
+    0 via errors="coerce", which every amount-based test relies on and would
+    otherwise cause large-scale false negatives with no warning.
+    """
     s = get_safe_series(df, key, col_map)
+    if _is_text_dtype(s):
+        cleaned = s.astype(str).str.strip()
+        is_paren_neg = cleaned.str.match(_PAREN_NEG_RE)
+        cleaned = cleaned.str.replace(_PAREN_NEG_RE, r"\1", regex=True)
+        cleaned = cleaned.str.replace(_CURRENCY_JUNK_RE, "", regex=True)
+        nums = pd.to_numeric(cleaned, errors="coerce")
+        nums = nums.where(~is_paren_neg, -nums)
+        return nums.fillna(0)
     return pd.to_numeric(s, errors="coerce").fillna(0)
 
 

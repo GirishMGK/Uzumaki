@@ -22,6 +22,13 @@ def _looks_like_html(head: bytes) -> bool:
     return b"<html" in lowered or b"<table" in lowered or b"<!doctype html" in lowered
 
 
+_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # legacy Excel (BIFF/.xls) container
+
+
+def _looks_like_legacy_xls(head: bytes) -> bool:
+    return head[:8] == _OLE2_MAGIC
+
+
 def _load_xlsx(path: Path) -> Grid:
     from openpyxl import load_workbook
 
@@ -140,6 +147,14 @@ def load_grid(path: str | Path, password: Optional[str] = None) -> Grid:
         try:
             return _load_xlsx(path)
         except Exception:
+            if _looks_like_legacy_xls(head):
+                # openpyxl can't read the pre-2007 binary format at all, and
+                # feeding it to the HTML loader silently returns an empty
+                # grid — surface a clear, actionable error instead.
+                raise ValueError(
+                    f"{path.name} is a legacy .xls (Excel 97-2003 binary) file, which isn't "
+                    "supported. Open it in Excel and re-save as .xlsx, or export as CSV/text."
+                ) from None
             # Genuine-looking extension but not a real workbook — fall back.
             return _load_html(path)
     if suffix in {".html", ".htm"}:
@@ -149,4 +164,9 @@ def load_grid(path: str | Path, password: Optional[str] = None) -> Grid:
     try:
         return _load_xlsx(path)
     except Exception:
+        if _looks_like_legacy_xls(head):
+            raise ValueError(
+                f"{path.name} is a legacy .xls (Excel 97-2003 binary) file, which isn't "
+                "supported. Open it in Excel and re-save as .xlsx, or export as CSV/text."
+            ) from None
         return _load_html(path)

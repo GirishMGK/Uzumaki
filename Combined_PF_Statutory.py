@@ -121,7 +121,7 @@ def extract_pf_trrn(file_name, text):
         "Establishment ID": fv("establishment id"),
         "TRRN No": fv("trrn no", "trrn number", "trrn"),
         "Challan Status": fv("challan status"),
-        "Wage Month": _normalize_period(fv("wage month")),
+        "Wage Month": _normalize_period(re.split(r'\s+\d{2}:', fv("wage month"))[0].strip()),
         "Total Amount (Rs)": fv("total amount (rs)", "total amount(rs)"),
         "Payment Date": fv("payment date"),
         "Bank": fv("bank name", "bank"),
@@ -287,6 +287,18 @@ def compute_recon(gstr1_rows, gstr3b_rows):
                         "GSTR-1 Taxable": g1_tv, "GSTR-3B Taxable": g3_tv, "Diff Taxable": round(g1_tv - g3_tv, 2),
                         "GSTR-1 Tax": g1_tax, "GSTR-3B Tax": g3_tax, "Diff Tax": round(g1_tax - g3_tax, 2),
                         "Status": status})
+    # A GSTIN/period filed in GSTR-3B but never uploaded as a GSTR-1 would
+    # otherwise vanish from the report entirely (an unfiled-GSTR-1 signal an
+    # auditor needs to see), since the loop above only iterates gstr1_rows.
+    for key, r3b in idx3b.items():
+        if key in matched:
+            continue
+        g3_tv = to_f(r3b.get("3.1(a) Taxable Value"))
+        g3_tax = to_f(r3b.get("3.1(a) IGST")) + to_f(r3b.get("3.1(a) CGST")) + to_f(r3b.get("3.1(a) SGST"))
+        results.append({"GSTIN": key[0], "Tax Period": key[1],
+                        "GSTR-1 Taxable": 0.0, "GSTR-3B Taxable": g3_tv, "Diff Taxable": round(-g3_tv, 2),
+                        "GSTR-1 Tax": 0.0, "GSTR-3B Tax": g3_tax, "Diff Tax": round(-g3_tax, 2),
+                        "Status": "Only in GSTR-3B"})
     return results, sorted(dup_keys)
 
 def process_statutory_pdf(file_name, file_bytes, state_prefix="stat_"):

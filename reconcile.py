@@ -107,14 +107,45 @@ def reconcile_pair(soa, rps):
             "instalments": instalments, "summary": summary}
 
 
+def _norm_agreement(a):
+    """Normalize an Agreement No for matching: strip/uppercase so whitespace
+    or casing differences between an SOA and its RPS don't break the join,
+    and coerce a missing/blank value to None (never a joinable key)."""
+    if a is None:
+        return None
+    s = str(a).strip().upper()
+    return s or None
+
+
 def reconcile_jobs(soas, rpss):
-    soa_by = {s["master"].get("Agreement No"): s for s in soas}
-    rps_by = {r["master"].get("Agreement No"): r for r in rpss}
-    common = [a for a in soa_by if a in rps_by]
-    pairs = [reconcile_pair(soa_by[a], rps_by[a]) for a in common]
-    soa_only = [a for a in soa_by if a not in rps_by]
-    rps_only = [a for a in rps_by if a not in soa_by]
-    return pairs, soa_only, rps_only
+    def group(items):
+        by = {}
+        for it in items:
+            by.setdefault(_norm_agreement(it["master"].get("Agreement No")), []).append(it)
+        return by
+
+    soa_by = group(soas)
+    rps_by = group(rpss)
+
+    pairs, soa_only, rps_only = [], [], []
+    for key, soa_items in soa_by.items():
+        rps_items = rps_by.get(key)
+        # Only join on a real, unambiguous 1-to-1 match: a missing Agreement
+        # No (key is None) or a duplicate value on either side can't be
+        # matched safely, so every such item is reported as unmatched
+        # instead of being silently paired with the wrong loan or dropped.
+        if key is not None and rps_items and len(soa_items) == 1 and len(rps_items) == 1:
+            pairs.append(reconcile_pair(soa_items[0], rps_items[0]))
+        else:
+            soa_only.extend(soa_items)
+    for key, rps_items in rps_by.items():
+        soa_items = soa_by.get(key)
+        if key is None or not soa_items or len(soa_items) != 1 or len(rps_items) != 1:
+            rps_only.extend(rps_items)
+
+    soa_only_agr = [s["master"].get("Agreement No") for s in soa_only]
+    rps_only_agr = [r["master"].get("Agreement No") for r in rps_only]
+    return pairs, soa_only_agr, rps_only_agr
 
 
 def write_reconciliation_workbook(path, pairs, soa_only, rps_only):

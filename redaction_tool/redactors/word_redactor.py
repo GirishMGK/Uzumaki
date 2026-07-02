@@ -50,10 +50,31 @@ def redact_word(
     audit = []
     file_name = Path(input_path).name
 
+    def _all_runs(para):
+        """Every Run in document order, including runs inside hyperlinks.
+
+        `para.runs` only returns direct <w:r> children of <w:p> — runs
+        wrapped in a <w:hyperlink> (e.g. an auto-linked "mailto:" email or
+        clickable phone number, which Word/Outlook create routinely) are
+        skipped entirely, so that text would never be scanned or redacted.
+        """
+        if not hasattr(para, "iter_inner_content"):
+            return list(para.runs)  # older python-docx: best effort
+        from docx.text.run import Run
+        from docx.text.hyperlink import Hyperlink
+        runs = []
+        for item in para.iter_inner_content():
+            if isinstance(item, Run):
+                runs.append(item)
+            elif isinstance(item, Hyperlink):
+                runs.extend(item.runs)
+        return runs
+
     def _process_paragraph(para, location: str) -> int:
-        if not para.runs:
+        runs = _all_runs(para)
+        if not runs:
             return 0
-        full_text = "".join(r.text for r in para.runs)
+        full_text = "".join(r.text for r in runs)
         new_text = full_text
         count = 0
         for pat, label in compiled:
@@ -71,8 +92,8 @@ def redact_word(
                 count += n
         if count:
             # Put redacted text in first run, blank the rest
-            para.runs[0].text = new_text
-            for run in para.runs[1:]:
+            runs[0].text = new_text
+            for run in runs[1:]:
                 run.text = ""
         return count
 

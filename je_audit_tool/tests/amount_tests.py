@@ -243,8 +243,14 @@ def run_amount_aggregation(df: pd.DataFrame, col_map: dict, params: dict) -> lis
             _tmp = df.loc[_dup_candidate_idx].copy()
             _tmp["_dc"]  = dc_series.loc[_dup_candidate_idx]
             _tmp["_clr"] = clearing_doc.loc[_dup_candidate_idx]
+            # Group on the SAME key the SQL duplicate-detection GROUP BY used
+            # (all of dup_cols, not just the first 3) — grouping on a coarser
+            # key here can merge two distinct 5-column duplicate groups into
+            # one, and if that merged group happens to contain one debit and
+            # one credit line, the DR/CR-offset exclusion below would wrongly
+            # exclude real duplicates along with it.
             suspect_idx: list = []
-            for _, grp in _tmp.groupby(dup_cols[:3]):
+            for _, grp in _tmp.groupby(dup_cols):
                 if _is_dr_cr_pair(grp["_dc"]) or _all_have_clearing_doc(grp["_clr"]):
                     continue
                 suspect_idx.extend(grp.index.tolist())

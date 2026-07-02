@@ -333,6 +333,8 @@ def expected_bounce_charge(grid, sanctioned):
     for g in grid:
         slab = g["slab"].upper()
         nums = re.findall(r"[\d.]+\s*(?:LACS?|CR\.?)", slab)
+        if not nums:
+            continue  # slab wording we don't recognise — skip rather than crash
         lo, hi = 0, float("inf")
         if slab.startswith("<"):
             hi = _lacs(nums[0])
@@ -503,9 +505,9 @@ def build_checks(master, fin_rows, recv, disb, txns, charges=None,
         add("TOC-04", "Income", "Interest Paid recorded (income recognition)",
             ">=0", f"{int_paid:,.2f}", st)
 
-    pf = next((c for c in charges if c["Category"] == "Processing Fee" and c["DR"]), None)
-    if pf and loan_amt:
-        incl = pf["DR"]
+    pf_rows = [c for c in charges if c["Category"] == "Processing Fee" and c["DR"]]
+    if pf_rows and loan_amt:
+        incl = sum(c["DR"] for c in pf_rows)  # multi-disbursement loans can carry >1 PF line
         base = round(incl / (1 + GST_RATE), 2)
         pct = base / loan_amt * 100
         st = "PASS" if pct <= PF_PCT_THRESHOLD else "REVIEW"
@@ -513,14 +515,21 @@ def build_checks(master, fin_rows, recv, disb, txns, charges=None,
             f"<= {PF_PCT_THRESHOLD:.1f}%", f"{pct:.2f}% (base {base:,.2f} excl GST)", st,
             f"PF incl. tax {incl:,.2f}; assumed GST {GST_RATE*100:.0f}%")
 
-    bpi = next((c for c in charges if c["Category"] == "Broken Period Interest" and c["DR"]), None)
-    if bpi and loan_amt and rate and disb_date and inst_start:
+    bpi_rows = [c for c in charges if c["Category"] == "Broken Period Interest" and c["DR"]]
+    if bpi_rows and loan_amt and rate and disb_date and inst_start:
         months = FREQ_MONTHS.get((master.get("Frequency") or "MONTHLY").upper(), 1)
         cycle_start = _minus_months(inst_start, months)
         days = max((cycle_start - disb_date).days, 0)
         exp = round(loan_amt * rate / 100 * days / 365.0, 2)
-        actual = bpi["DR"]
-        rel = abs(actual - exp) / exp if exp else 0
+        actual = sum(c["DR"] for c in bpi_rows)
+        if exp:
+            rel = abs(actual - exp) / exp
+        else:
+            # No broken-period interest is expected (disbursal fell on/after
+            # the notional cycle start) — only PASS if none was actually
+            # charged; a non-trivial actual amount is a real mismatch, not a
+            # free pass.
+            rel = 0.0 if abs(actual) <= 1 else float("inf")
         st = "PASS" if rel <= BPI_TOLERANCE else "REVIEW"
         add("TOD-06", "Charges", "Broken-period interest recompute (disbursal -> 1st billing cycle)",
             f"{exp:,.2f}", f"{actual:,.2f}", st,

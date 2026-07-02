@@ -103,10 +103,16 @@ def _to_number(text: str) -> Optional[float]:
     s = str(text).strip().replace(",", "")
     if s in ("", "-", "nan", "none"):
         return None
+    negative = False
+    if s.startswith("(") and s.endswith(")"):  # accounting-style negative
+        s, negative = s[1:-1], True
+    elif s.endswith("-"):  # trailing-minus negative
+        s, negative = s[:-1], True
     try:
-        return float(s)
+        value = float(s)
     except ValueError:
         return None
+    return -value if negative else value
 
 
 def _to_date(text: str) -> Optional[date]:
@@ -265,9 +271,11 @@ def parse_part_a(grid: Grid) -> List[Transaction]:
             thdr = maybe_thdr
             continue
 
-        # Deductor summary row: a TAN sitting in the TAN column.
+        # Deductor summary row: a TAN sitting in the TAN column. Gated by
+        # in_part_a so a deductor header from Part A1/B/C/D can't leak into
+        # `current` and get silently attributed to later Part A transactions.
         tan_val = _get(cells, dhdr.tan) if dhdr else ""
-        if dhdr and TAN_RE.match(tan_val.upper()):
+        if in_part_a and dhdr and TAN_RE.match(tan_val.upper()):
             current = Transaction(
                 deductor_sr_no=_get(cells, dhdr.sr_no),
                 name_of_deductor=_get(cells, dhdr.name),

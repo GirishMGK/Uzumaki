@@ -7,6 +7,7 @@ pandas groupby / apply loops on 10 M+ rows.
 Install: pip install duckdb
 """
 from __future__ import annotations
+import warnings
 import duckdb
 import pandas as pd
 
@@ -39,10 +40,16 @@ def fetch_idx(con: duckdb.DuckDBPyConnection, sql: str,
               params: list | None = None) -> list:
     """
     Execute `sql`, return a deduplicated list of integer _orig_idx values.
-    Returns [] on any error so the calling test simply produces no exceptions.
+    Returns [] on any error so the calling test simply produces no exceptions
+    rather than crashing the whole audit run — but a query that fails for a
+    real reason (bad SQL, a type mismatch on the uploaded data, ...) would
+    otherwise fail completely silently, indistinguishable from "no exceptions
+    found", so it's surfaced as a warning instead of swallowed outright.
     """
     try:
         rows = con.execute(sql, params or []).fetchall()
         return list({int(r[0]) for r in rows if r[0] is not None})
-    except Exception:
+    except Exception as exc:
+        warnings.warn(f"fetch_idx: query failed, treating as no matches: {exc}\nSQL: {sql}",
+                      RuntimeWarning, stacklevel=2)
         return []

@@ -61,17 +61,39 @@ def _read_tabular(uploaded, *, sep=None, encoding="utf-8", sheet=0) -> pd.DataFr
     return pd.read_csv(io.BytesIO(data), **kwargs)
 
 
+def _has_significant_leading_zeros(s: pd.Series) -> bool:
+    """True if any value looks like a zero-padded code (e.g. a zip code
+    '00501') rather than a real number — converting these to numeric would
+    silently strip the leading zeros."""
+    vals = s.dropna().astype(str).str.strip()
+    return vals.str.match(r"^0\d+$").any()
+
+
+def _is_text_dtype(s: pd.Series) -> bool:
+    """True for text columns regardless of pandas version. Pandas 3.x infers
+    a dedicated string dtype for text by default instead of the legacy
+    'object' dtype, so a bare `dtype == object` check silently stops
+    matching any string column (and this function becomes a no-op) on
+    newer pandas."""
+    return s.dtype == object or pd.api.types.is_string_dtype(s)
+
+
 def _infer_types(df: pd.DataFrame) -> pd.DataFrame:
     """Best-effort down-cast of object columns to numeric / datetime."""
     out = df.copy()
     for col in out.columns:
-        if out[col].dtype != object:
+        if not _is_text_dtype(out[col]):
             continue
         num = pd.to_numeric(out[col], errors="coerce")
-        if num.notna().mean() >= 0.95:
+        if num.notna().mean() >= 0.95 and not _has_significant_leading_zeros(out[col]):
             out[col] = num
             continue
-        dt = pd.to_datetime(out[col], errors="coerce", dayfirst=True)
+        # Day-first vs. month-first is genuinely ambiguous for numeric dates
+        # (e.g. 01/02/2024) — try both and keep whichever parses more values
+        # successfully, instead of silently assuming day-first for everyone.
+        dt_dayfirst = pd.to_datetime(out[col], errors="coerce", dayfirst=True)
+        dt_monthfirst = pd.to_datetime(out[col], errors="coerce", dayfirst=False)
+        dt = dt_dayfirst if dt_dayfirst.notna().sum() >= dt_monthfirst.notna().sum() else dt_monthfirst
         if dt.notna().mean() >= 0.95:
             out[col] = dt
     return out
@@ -128,6 +150,8 @@ def _page_convert():
 
     if st.button("Convert", type="primary", key="conv_go"):
         results, zip_buf = [], io.BytesIO()
+        used_names = set()
+        st.session_state["conv_out"] = {}
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for f in files:
                 try:
@@ -135,13 +159,19 @@ def _page_convert():
                     if infer:
                         df = _infer_types(df)
                     blob = _to_parquet_bytes(df, compression)
-                    out_name = os.path.splitext(f.name)[0] + ".parquet"
+                    base_name = os.path.splitext(f.name)[0] + ".parquet"
+                    out_name = base_name
+                    n = 1
+                    while out_name in used_names:
+                        out_name = f"{os.path.splitext(base_name)[0]}_{n}.parquet"
+                        n += 1
+                    used_names.add(out_name)
                     zf.writestr(out_name, blob)
                     results.append({
                         "File": f.name, "Rows": len(df), "Columns": df.shape[1],
                         "Parquet bytes": len(blob), "Status": "OK",
                     })
-                    st.session_state.setdefault("conv_out", {})[out_name] = blob
+                    st.session_state["conv_out"][out_name] = blob
                 except Exception as exc:
                     results.append({"File": f.name, "Rows": "—", "Columns": "—",
                                     "Parquet bytes": "—", "Status": f"FAILED: {exc}"})
@@ -170,14 +200,17 @@ def _page_viewer():
         return
 
     data = f.getvalue()
-    meta = _parquet_meta(data)
+    try:
+        meta = _parquet_meta(data)
+        df = pd.read_parquet(io.BytesIO(data))
+    except Exception as exc:
+        st.error(f"'{f.name}' doesn't look like a valid Parquet file: {exc}")
+        return
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Rows", meta["num_rows"] if meta["num_rows"] is not None else "—")
     m2.metric("Columns", len(meta["columns"]) or "—")
     m3.metric("Row groups", meta["num_row_groups"] if meta["num_row_groups"] is not None else "—")
     m4.metric("File size", f"{meta['size_bytes']/1024:.1f} KB")
-
-    df = pd.read_parquet(io.BytesIO(data))
 
     with st.expander("Schema", expanded=True):
         if meta["columns"]:
@@ -228,12 +261,16 @@ def _page_csv_tools():
         src = st.selectbox("From", ["auto", ",", ";", "|", "\\t"], key="d_from")
         dst = st.selectbox("To", [",", ";", "|", "\\t"], key="d_to")
         if f and st.button("Convert delimiter", key="d_go"):
-            df = _read_tabular(f, sep=src)
-            out_sep = {"\\t": "\t"}.get(dst, dst)
-            st.download_button("⬇ Download",
-                               df.to_csv(index=False, sep=out_sep).encode("utf-8"),
-                               file_name="redelimited.csv", mime="text/csv", key="d_dl")
-            st.dataframe(df.head(50), use_container_width=True)
+            try:
+                df = _read_tabular(f, sep=src)
+            except Exception as exc:
+                st.error(f"Couldn't read '{f.name}': {exc}")
+            else:
+                out_sep = {"\\t": "\t"}.get(dst, dst)
+                st.download_button("⬇ Download",
+                                   df.to_csv(index=False, sep=out_sep).encode("utf-8"),
+                                   file_name="redelimited.csv", mime="text/csv", key="d_dl")
+                st.dataframe(df.head(50), use_container_width=True)
 
     elif tool == "Encoding":
         f = st.file_uploader("CSV file", type=["csv", "txt"], key="e_file")
@@ -243,35 +280,48 @@ def _page_csv_tools():
             text = f.getvalue().decode(src, errors="replace")
             st.download_button("⬇ Download", text.encode(dst, errors="replace"),
                                file_name="reencoded.csv", mime="text/csv", key="e_dl")
-            st.success(f"Re-encoded {len(text):,} chars: {src} → {dst}")
+            if "�" in text:
+                st.warning(f"Re-encoded {len(text):,} chars: {src} → {dst} — but some bytes "
+                           f"didn't match '{src}' and were replaced with '�'. Try a different "
+                           "source encoding.")
+            else:
+                st.success(f"Re-encoded {len(text):,} chars: {src} → {dst}")
 
     elif tool == "Merge":
         files = st.file_uploader("CSV files to stack", type=["csv", "txt"],
                                  accept_multiple_files=True, key="m_files")
         how = st.radio("Mode", ["Union columns", "Only common columns"], horizontal=True, key="m_how")
         if files and st.button("Merge", key="m_go"):
-            frames = [_read_tabular(f, sep="auto").assign(_source=f.name) for f in files]
-            join = "outer" if how == "Union columns" else "inner"
-            merged = pd.concat(frames, ignore_index=True, join=join)
-            st.download_button("⬇ Download merged.csv",
-                               merged.to_csv(index=False).encode("utf-8"),
-                               file_name="merged.csv", mime="text/csv", key="m_dl")
-            st.caption(f"{len(merged):,} rows × {merged.shape[1]} cols")
-            st.dataframe(merged.head(50), use_container_width=True)
+            try:
+                frames = [_read_tabular(f, sep="auto").assign(_source=f.name) for f in files]
+            except Exception as exc:
+                st.error(f"Couldn't read one of the files: {exc}")
+            else:
+                join = "outer" if how == "Union columns" else "inner"
+                merged = pd.concat(frames, ignore_index=True, join=join)
+                st.download_button("⬇ Download merged.csv",
+                                   merged.to_csv(index=False).encode("utf-8"),
+                                   file_name="merged.csv", mime="text/csv", key="m_dl")
+                st.caption(f"{len(merged):,} rows × {merged.shape[1]} cols")
+                st.dataframe(merged.head(50), use_container_width=True)
 
     elif tool == "Split rows":
         f = st.file_uploader("CSV file", type=["csv", "txt"], key="s_file")
         n = st.number_input("Rows per chunk", min_value=1, value=1000, step=100, key="s_n")
         if f and st.button("Split", key="s_go"):
-            df = _read_tabular(f, sep="auto")
-            zip_buf = io.BytesIO()
-            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                for i in range(0, len(df), int(n)):
-                    part = df.iloc[i:i + int(n)]
-                    zf.writestr(f"part_{i//int(n)+1:03d}.csv", part.to_csv(index=False))
-            st.download_button("⬇ Download parts.zip", zip_buf.getvalue(),
-                               file_name="split_parts.zip", mime="application/zip", key="s_dl")
-            st.success(f"Split {len(df):,} rows into {(len(df)-1)//int(n)+1} files")
+            try:
+                df = _read_tabular(f, sep="auto")
+            except Exception as exc:
+                st.error(f"Couldn't read '{f.name}': {exc}")
+            else:
+                zip_buf = io.BytesIO()
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for i in range(0, len(df), int(n)):
+                        part = df.iloc[i:i + int(n)]
+                        zf.writestr(f"part_{i//int(n)+1:03d}.csv", part.to_csv(index=False))
+                st.download_button("⬇ Download parts.zip", zip_buf.getvalue(),
+                                   file_name="split_parts.zip", mime="application/zip", key="s_dl")
+                st.success(f"Split {len(df):,} rows into {(len(df)-1)//int(n)+1} files")
 
     else:  # Schema compare
         c1, c2 = st.columns(2)
@@ -284,20 +334,24 @@ def _page_csv_tools():
                 else:
                     d = _read_tabular(f, sep="auto")
                 return {c: str(t) for c, t in zip(d.columns, d.dtypes)}
-            a, b = _cols(fa), _cols(fb)
-            rows = []
-            for col in sorted(set(a) | set(b)):
-                ta, tb = a.get(col, "—"), b.get(col, "—")
-                if col not in a:
-                    verdict = "only in B"
-                elif col not in b:
-                    verdict = "only in A"
-                elif ta != tb:
-                    verdict = "type differs"
-                else:
-                    verdict = "match"
-                rows.append({"Column": col, "A": ta, "B": tb, "Result": verdict})
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            try:
+                a, b = _cols(fa), _cols(fb)
+            except Exception as exc:
+                st.error(f"Couldn't read one of the files: {exc}")
+            else:
+                rows = []
+                for col in sorted(set(a) | set(b)):
+                    ta, tb = a.get(col, "—"), b.get(col, "—")
+                    if col not in a:
+                        verdict = "only in B"
+                    elif col not in b:
+                        verdict = "only in A"
+                    elif ta != tb:
+                        verdict = "type differs"
+                    else:
+                        verdict = "match"
+                    rows.append({"Column": col, "A": ta, "B": tb, "Result": verdict})
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -312,21 +366,39 @@ def _page_analytics():
     files = st.file_uploader("Load parquet / csv as SQL tables",
                              type=["parquet", "csv"], accept_multiple_files=True,
                              key="an_files")
-    con = duckdb.connect(database=":memory:")
-    registered = []
+    # Reuse one connection for the whole session instead of opening a fresh
+    # in-memory DuckDB on every Streamlit rerun (every widget interaction),
+    # which otherwise leaks a connection + its registered DataFrames each time.
+    con = st.session_state.get("_duck_con")
+    if con is None:
+        con = duckdb.connect(database=":memory:")
+        st.session_state["_duck_con"] = con
+
+    registered, used_tbls = [], set()
     for f in files or []:
         tbl = os.path.splitext(os.path.basename(f.name))[0]
         tbl = "".join(ch if ch.isalnum() else "_" for ch in tbl)
-        if f.name.lower().endswith(".parquet"):
-            df = pd.read_parquet(io.BytesIO(f.getvalue()))
-        else:
-            df = _read_tabular(f, sep="auto")
+        if not tbl or tbl[0].isdigit():
+            tbl = f"t_{tbl}"  # DuckDB identifiers can't start with a digit
+        base_tbl, n = tbl, 1
+        while tbl in used_tbls:
+            tbl = f"{base_tbl}_{n}"
+            n += 1
+        used_tbls.add(tbl)
+        try:
+            if f.name.lower().endswith(".parquet"):
+                df = pd.read_parquet(io.BytesIO(f.getvalue()))
+            else:
+                df = _read_tabular(f, sep="auto")
+        except Exception as exc:
+            st.error(f"Couldn't load '{f.name}': {exc}")
+            continue
         con.register(tbl, df)
         registered.append((tbl, df.shape))
     if registered:
-        st.caption("Tables: " + ", ".join(f"`{t}` {s}" for t, s in registered))
+        st.caption("Tables: " + ", ".join(f'`"{t}"` {s}' for t, s in registered))
 
-    default_q = f"SELECT * FROM {registered[0][0]} LIMIT 100" if registered else "SELECT 42 AS answer"
+    default_q = f'SELECT * FROM "{registered[0][0]}" LIMIT 100' if registered else "SELECT 42 AS answer"
     sql = st.text_area("SQL", value=st.session_state.get("an_sql", default_q), height=120, key="an_sql_box")
 
     if st.button("Run", type="primary", key="an_go"):

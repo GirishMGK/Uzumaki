@@ -32,6 +32,24 @@ from utils.duckdb_helper import slim_df, duck_con, fetch_idx
 
 _SCORES = {"Low": 1, "Medium": 3, "High": 5, "Critical": 8}
 
+import calendar
+
+
+def _fiscal_quarter_months(yed):
+    """Return [year-end month, Q3-end, Q2-end, Q1-end] for the fiscal year
+    implied by `yed` (defaults to the Apr-Mar Indian fiscal year — March
+    year-end — when no year-end date is configured), instead of assuming
+    every client's year-end falls in March."""
+    m = yed.month if yed is not None else 3
+    return [((m - 3 * k - 1) % 12) + 1 for k in range(4)]
+
+
+def _last_quarter_months(yed):
+    """The 3 months making up the final quarter of the fiscal year implied
+    by `yed` (Jan-Mar for a March year-end)."""
+    m = yed.month if yed is not None else 3
+    return [((m - 3 + i - 1) % 12) + 1 for i in range(1, 4)]
+
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "exception_rules.json")
 try:
     with open(_CONFIG_PATH) as _f:
@@ -157,21 +175,21 @@ def run_timing_rowlevel(chunk: pd.DataFrame, col_map: dict, params: dict) -> lis
     _holiday_set  = set(_all_holidays.keys())
     if entry_date.notna().any():
         _entry_d  = entry_date.dt.date          # Series of date objects
-        _is_sun   = entry_date.dt.dayofweek == 6
+        _is_weekend = entry_date.dt.dayofweek.isin([5, 6])  # Saturday(5) and Sunday(6)
         # Vectorised holiday check via string isin (avoids Python-loop apply)
         _entry_str = _entry_d.astype(str)
         _hol_str   = {str(d) for d in _holiday_set}
         _is_hol    = _entry_str.isin(_hol_str) & entry_date.notna()
-        _wh_mask   = entry_date.notna() & (_is_sun | _is_hol)
+        _wh_mask   = entry_date.notna() & (_is_weekend | _is_hol)
         for _idx in chunk[_wh_mask].index:
             _d = _entry_d.at[_idx]
-            _reason = (
-                _all_holidays.get(_d) or "Public Holiday"
-                if str(_d) in _hol_str else "Sunday"
-            )
+            if str(_d) in _hol_str:
+                _reason = _all_holidays.get(_d) or "Public Holiday"
+            else:
+                _reason = "Saturday" if entry_date.dt.dayofweek.at[_idx] == 5 else "Sunday"
             exceptions.append({
                 "original_index":     _idx,
-                "Exception Type":     "Sunday / Holiday Entry",
+                "Exception Type":     "Weekend / Holiday Entry",
                 "Exception Category": "Timing-Based Anomalies",
                 "Risk Level":         "Medium",
                 "Risk Score":         _SCORES["Medium"],
@@ -179,28 +197,31 @@ def run_timing_rowlevel(chunk: pd.DataFrame, col_map: dict, params: dict) -> lis
             })
 
     # ── 8. Quarter-End / Year-End Adjustments ────────────────────────────────
-    # March (year-end) is highest risk. Jun/Sep/Dec quarter-ends are medium.
-    # Routine month-ends (Jan, Feb, Apr, May, Jul, Aug, Oct, Nov) are excluded —
-    # too much noise, no meaningful audit signal.
+    # The fiscal year-end month (derived from `yed`, defaulting to March) is
+    # highest risk. The other three quarter-ends are medium. Routine
+    # month-ends are excluded — too much noise, no meaningful audit signal.
     _is_last5   = posting_date.notna() & posting_date.apply(
         lambda d: _last_n_month_days(d, 5) if pd.notna(d) else False
     )
     _post_month = posting_date.dt.month
-    _march_mask = _is_last5 & (_post_month == 3)
-    _qend_mask  = _is_last5 & (_post_month.isin([6, 9, 12]))
+    _ye_month, *_other_q_months = _fiscal_quarter_months(yed)
+    _march_mask = _is_last5 & (_post_month == _ye_month)
+    _qend_mask  = _is_last5 & (_post_month.isin(_other_q_months))
     _late_mask  = _march_mask | _qend_mask  # combined — used below for reversal check
 
+    _ye_name = calendar.month_name[_ye_month]
+    _other_names = "/".join(calendar.month_abbr[m] for m in _other_q_months)
     if _march_mask.any():
         exceptions.extend(_exc(
             chunk[_march_mask].index.tolist(),
-            "Year-End Adjustment (March)", "Timing-Based Anomalies", "High",
-            "Posted in last 5 days of March (financial year-end) — highest risk for "
+            f"Year-End Adjustment ({_ye_name})", "Timing-Based Anomalies", "High",
+            f"Posted in last 5 days of {_ye_name} (financial year-end) — highest risk for "
             "cutoff manipulation, provision stuffing, and earnings management",
         ))
     if _qend_mask.any():
         exceptions.extend(_exc(
             chunk[_qend_mask].index.tolist(),
-            "Quarter-End Adjustment (Jun/Sep/Dec)", "Timing-Based Anomalies", "Medium",
+            f"Quarter-End Adjustment ({_other_names})", "Timing-Based Anomalies", "Medium",
             "Posted in last 5 days of a quarter-end month — quarter-close earnings management risk",
         ))
 
@@ -364,36 +385,39 @@ def run_timing_aggregation(df: pd.DataFrame, col_map: dict, params: dict) -> lis
             f"Entry follows a gap of ≥{gap_thr:.0f} days — posting after an unusually long pause",
         ))
 
-    # ── 15. Provision in March → Reversed in April ────────────────────────────
+    # ── 15. Provision at Year-End → Reversed the Following Month ──────────────
+    _ye_month   = yed.month if yed is not None else 3
+    _next_month = (_ye_month % 12) + 1
+    _ye_name, _next_name = calendar.month_name[_ye_month], calendar.month_name[_next_month]
     rev_flag  = reversal.isin(["x", "1", "true", "yes", "r", "reversed", "y"])
-    prov_mask = (posting_date.dt.month == 3) & narr.str.contains(r"provision|accrual|prov", na=False)
-    apr_rev   = (posting_date.dt.month == 4) & rev_flag
+    prov_mask = (posting_date.dt.month == _ye_month) & narr.str.contains(r"provision|accrual|prov", na=False)
+    apr_rev   = (posting_date.dt.month == _next_month) & rev_flag
     p_vendors = set(vendor[prov_mask].tolist())
     p_gls     = set(gl_acct[prov_mask].tolist())
     apr_match = df[apr_rev & (vendor.isin(p_vendors) | gl_acct.isin(p_gls))]
     exceptions.extend(_exc(
         df[prov_mask].index.tolist(),
-        "Provision Created at Year-End (March)", "Reversal & Provision Patterns", "Medium",
-        "Provision/accrual created in March — verify economic substance vs window-dressing",
+        f"Provision Created at Year-End ({_ye_name})", "Reversal & Provision Patterns", "Medium",
+        f"Provision/accrual created in {_ye_name} — verify economic substance vs window-dressing",
     ))
     exceptions.extend(_exc(
         apr_match.index.tolist(),
-        "March Provision Reversed in April", "Reversal & Provision Patterns", "High",
-        "Probable reversal of a March-year-end provision — income smoothing risk",
+        f"{_ye_name} Provision Reversed in {_next_name}", "Reversal & Provision Patterns", "High",
+        f"Probable reversal of a {_ye_name}-year-end provision — income smoothing risk",
     ))
 
     # ── 18. AR / Customer Entry Concentration in Q4 ───────────────────────────
     cust_entries = df[customer.str.len() > 0]
     if len(cust_entries) > 10:
-        q4_months = [1, 2, 3] if (yed is None or yed.month == 3) else []
-        if q4_months:
-            cust_q4 = cust_entries[posting_date[cust_entries.index].dt.month.isin(q4_months)]
-            if len(cust_q4) / len(cust_entries) > 0.45:
-                exceptions.extend(_exc(
-                    cust_q4.index.tolist(),
-                    "AR / Customer Entries Concentrated in Q4", "Revenue & Cutoff Risks", "High",
-                    ">45% of customer entries fall in Q4 (Jan–Mar) — possible cutoff manipulation",
-                ))
+        q4_months = _last_quarter_months(yed)
+        q4_label = "/".join(calendar.month_abbr[m] for m in q4_months)
+        cust_q4 = cust_entries[posting_date[cust_entries.index].dt.month.isin(q4_months)]
+        if len(cust_q4) / len(cust_entries) > 0.45:
+            exceptions.extend(_exc(
+                cust_q4.index.tolist(),
+                "AR / Customer Entries Concentrated in Q4", "Revenue & Cutoff Risks", "High",
+                f">45% of customer entries fall in Q4 ({q4_label}) — possible cutoff manipulation",
+            ))
 
     return exceptions
 

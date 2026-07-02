@@ -21,6 +21,7 @@ import json
 import time
 import uuid
 import shutil
+import threading
 import zipfile
 import tempfile
 
@@ -43,16 +44,24 @@ def _no_cache(resp):
     return resp
 
 JOBS = {}
+JOBS_LOCK = threading.Lock()
 MAX_JOBS = 6
 
 
 def _purge_old_jobs():
-    while len(JOBS) > MAX_JOBS:
-        oldest = min(JOBS, key=lambda k: JOBS[k]["created"])
-        try:
-            shutil.rmtree(JOBS[oldest]["dir"], ignore_errors=True)
-        finally:
-            JOBS.pop(oldest, None)
+    # Never purge a job whose /process_stream is still running — deleting its
+    # directory mid-stream raises FileNotFoundError from inside the SSE
+    # generator and kills that upload's progress feed.
+    with JOBS_LOCK:
+        while len(JOBS) > MAX_JOBS:
+            candidates = [k for k, v in JOBS.items() if not v.get("active")]
+            if not candidates:
+                break
+            oldest = min(candidates, key=lambda k: JOBS[k]["created"])
+            try:
+                shutil.rmtree(JOBS[oldest]["dir"], ignore_errors=True)
+            finally:
+                JOBS.pop(oldest, None)
 
 
 def _collect_pdfs(files, dest):
@@ -262,9 +271,10 @@ def upload():
     job_id = uuid.uuid4().hex
     job_dir = tempfile.mkdtemp(prefix="job_" + job_id + "_")
     pdfs = _collect_pdfs(uploads, job_dir)
-    JOBS[job_id] = {"dir": job_dir, "pdfs": pdfs, "results": [], "mode": mode,
-                    "created": time.time(), "portfolio": None, "rps": None,
-                    "recon": None, "loans": []}
+    with JOBS_LOCK:
+        JOBS[job_id] = {"dir": job_dir, "pdfs": pdfs, "results": [], "mode": mode,
+                        "created": time.time(), "portfolio": None, "rps": None,
+                        "recon": None, "loans": [], "active": False}
     return jsonify(job_id=job_id, total=len(pdfs), mode=mode)
 
 
@@ -275,6 +285,13 @@ def process_stream(job_id):
         abort(404)
 
     def gen_auto():
+        job["active"] = True
+        try:
+            yield from _process_job(job)
+        finally:
+            job["active"] = False
+
+    def _process_job(job):
         results = job["results"]
         soas, rpss = [], []
         for i, pdf_path in enumerate(job["pdfs"]):

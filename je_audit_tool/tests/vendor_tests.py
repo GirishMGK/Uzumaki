@@ -235,17 +235,25 @@ def run_vendor_tests(df: pd.DataFrame, col_map: dict, params: dict) -> list:
     # ── 8. Sequential Vendor Codes (no master required) ──────────────────────
     num_vc = vc[vc.str.match(r"^\d+$", na=False)]
     if num_vc.nunique() >= 3:
-        nums = sorted(num_vc.unique().astype(int).tolist())
-        seq_vendors: set = set()
+        # Keep the original (possibly zero-padded) string forms alongside the
+        # int value used for the sequence check — reformatting via str(int)
+        # loses leading zeros (e.g. SAP-style "0001000234"), so a match
+        # against those original strings would silently find nothing.
+        int_to_orig: dict = {}
+        for orig in num_vc.unique():
+            int_to_orig.setdefault(int(orig), set()).add(orig)
+        nums = sorted(int_to_orig)
+        seq_nums: set = set()
         run = 1
         for i in range(1, len(nums)):
             if nums[i] - nums[i - 1] == 1:
                 run += 1
                 if run >= 3:
-                    seq_vendors.update([str(nums[i - 2]), str(nums[i - 1]), str(nums[i])])
+                    seq_nums.update([nums[i - 2], nums[i - 1], nums[i]])
             else:
                 run = 1
-        if seq_vendors:
+        if seq_nums:
+            seq_vendors = {orig for n in seq_nums for orig in int_to_orig[n]}
             exceptions.extend(_exc(
                 df[vc.isin(seq_vendors)].index.tolist(),
                 "Sequential Vendor Codes", "High",

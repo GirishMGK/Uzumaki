@@ -49,7 +49,7 @@ if files and st.button("Convert", type="primary"):
     with tempfile.TemporaryDirectory() as tmpdir:
         paths = []
         for f in files:
-            p = Path(tmpdir) / f.name
+            p = Path(tmpdir) / (os.path.basename(f.name) or "upload")
             p.write_bytes(f.getvalue())
             paths.append(p)
 

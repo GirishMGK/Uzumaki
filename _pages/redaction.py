@@ -67,7 +67,8 @@ if files and st.button("Redact", type="primary", disabled=not (patterns or custo
             in_dir.mkdir()
             paths = []
             for f in files:
-                p = in_dir / f.name
+                safe_name = os.path.basename(f.name) or "upload"
+                p = in_dir / safe_name
                 p.write_bytes(f.getvalue())
                 paths.append(str(p))
 
