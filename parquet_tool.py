@@ -1,5 +1,5 @@
 """
-Uzumaki Parquet Tool  —  Python / Streamlit port of the Sangir Analytics
+Uzumaki Tool  —  Python / Streamlit port of the Sangir Analytics
 WPF desktop application (DishaParquetTool).
 
 Rebuilds the desktop app's modules on the pandas / pyarrow / duckdb stack:
@@ -357,12 +357,12 @@ def _header():
     try:
         from _pages.theme import page_header, footer
     except Exception:
-        st.title("🗄️ Uzumaki Parquet Tool")
+        st.title("🗄️ Uzumaki Tool")
         st.caption("CSV/Excel ↔ Parquet · Viewer · CSV Tools · DuckDB Analytics")
         return lambda: None
 
     page_header(
-        "🗄️", "Uzumaki Parquet Tool",
+        "🗄️", "Uzumaki Tool",
         "CSV/Excel ↔ Parquet conversion, a schema/row-group viewer, CSV utilities, "
         "and DuckDB SQL analytics — all in one place.",
         badges=["Convert", "Viewer", "CSV Tools", "Analytics"],
@@ -392,5 +392,5 @@ def render():
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="Uzumaki Parquet Tool", page_icon="🗄️", layout="wide")
+    st.set_page_config(page_title="Uzumaki Tool", page_icon="🗄️", layout="wide")
     render()
