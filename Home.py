@@ -39,7 +39,7 @@ _TOOLS = [
     },
     {
         "group": "Documents & PDFs",
-        "icon": "🔒", "title": "Document Redaction", "tag": "Desktop app",
+        "icon": "🔒", "title": "Document Redaction", "tag": "Streamlit",
         "desc": "Auto-redact PAN, TAN, GSTIN, CIN, Aadhaar, phone, email across PDF, DOCX, XLSX, and images.",
     },
     {
@@ -54,18 +54,13 @@ _TOOLS = [
     },
     {
         "group": "Finance & Loan Audit",
-        "icon": "📊", "title": "SOA · RPS · Reconcile", "tag": "Flask app",
+        "icon": "📊", "title": "SOA · RPS · Reconcile", "tag": "Streamlit",
         "desc": "L&T Finance SOA extractor with TOC/TOD validation, RPS parser, and SOA-vs-RPS reconciliation.",
     },
     {
         "group": "Finance & Loan Audit",
         "icon": "🔍", "title": "JE Audit Analytics", "tag": "Streamlit",
         "desc": "Journal Entry exception testing — amount, timing, user, vendor, and Benford's Law checks.",
-    },
-    {
-        "group": "Finance & Loan Audit",
-        "icon": "⚡", "title": "JE Audit (Blazor)", "tag": ".NET / Blazor",
-        "desc": "Same JE audit engine as a self-contained Blazor Server app, for .NET deployments.",
     },
 ]
 
@@ -95,13 +90,13 @@ def home():
     st.markdown(
         """
         <div class="sa-hero">
-            <h1>🧰 Sangir Analytics — Tools</h1>
+            <h1>🧰 Uzumaki — Tools</h1>
             <p>A unified workspace for loan-audit, statutory-compliance, and document-processing
             tools — everything runs locally, nothing is uploaded to a server you don't control.</p>
             <div class="sa-badges">
-                <span class="sa-badge">8 tools</span>
+                <span class="sa-badge">7 tools</span>
                 <span class="sa-badge">Local-only processing</span>
-                <span class="sa-badge">Streamlit · Flask · Desktop · .NET</span>
+                <span class="sa-badge">One framework — Streamlit</span>
             </div>
         </div>
         """,
@@ -159,7 +154,6 @@ nav = st.navigation(
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
-            st.Page("_pages/je_audit_blazor.py", title="JE Audit (Blazor)", icon="⚡"),
         ],
     }
 )

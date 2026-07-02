@@ -1,33 +1,73 @@
-# Sangir Analytics — Tools
+# Uzumaki — Tools
 
 A unified Streamlit hub that groups every tool under a **Tools** section in the
-sidebar; each tool opens as its own page.
+sidebar; each tool opens as its own page. Everything runs on one framework
+(Streamlit) in one process — no separate Flask server or desktop GUI to launch
+for the core tools.
+
+## Run from source
 
 ```bash
 pip install -r requirements.txt
 streamlit run Home.py
 ```
 
-**Tests** — a compile sweep plus regression tests for the bugs found in the
-2026-07-01 codebase review (e.g. a structural check that `pdf_tools.py`'s
-dispatch actually calls the real tool functions, not a placeholder):
+## Run as a Windows app (Uzumaki.exe)
+
+Download the latest `Uzumaki.exe` from the repo's
+[**Releases**](../../releases/tag/latest) page (or build it yourself — see
+"Building the .exe" below) and double-click it. It opens the same hub in your
+browser — no Python install required.
+
+**Auto-update:** every time you launch `Uzumaki.exe`, it checks GitHub for a
+newer build. If one exists (published automatically whenever `main` is
+updated — see `.github/workflows/build-exe.yml`), it downloads it, swaps
+itself out, and relaunches automatically. A failed or offline check never
+blocks the app — it just launches whatever version you already have.
+
+### Building the .exe yourself
+
+```bash
+pip install -r requirements.txt -r requirements-build.txt
+pyinstaller Uzumaki.spec
+```
+Produces `dist/Uzumaki.exe`. Must be run **on Windows** to produce a Windows
+executable — PyInstaller doesn't cross-compile.
+
+## Tests
+
+A compile sweep, regression tests for bugs found in past reviews (e.g. a
+structural check that `pdf_tools.py`'s dispatch actually calls the real tool
+functions, not a placeholder), and the launcher's self-update decision logic
+(mocked network — a failed update check must never block launching the app):
 ```bash
 pip install pytest
 pytest
 ```
 Runs automatically on every push/PR via `.github/workflows/ci.yml`.
+`.github/workflows/build-exe.yml` separately builds and publishes
+`Uzumaki.exe` to the rolling `latest` GitHub Release on every push to `main`.
+
+Every tool below runs **in-process, directly in this Streamlit app** — one
+framework, one process, one `.exe` (see "Packaging" further down). Some also
+still ship their original standalone entry point (CLI / desktop launcher) for
+users who prefer that, but it's optional, not required to use the tool.
 
 **Tools in the hub**
 | Tool | What it does |
 |------|--------------|
 | **Uzumaki Tool** (`parquet_tool.py`) | Python/Streamlit port of the Sangir WPF app: Convert (CSV/Excel→Parquet w/ compression + type inference), Viewer (schema, row-groups, stats, filter, sort), CSV Tools (delimiter, encoding, merge, split-rows, schema-compare), Analytics (DuckDB SQL + query history). |
 | **PF & Statutory** (`Combined_PF_Statutory.py`) | PF Challan / ECR Return / TRRN **and** ESI · PT · TDS · GSTR-1 · GSTR-3B extraction — already combined into one two-tab app (shared PDF-read/regex utilities). |
-| **Form 26AS Extractor** (`form26as_tool/`) | Flattens Form 26AS's nested Part A (TDS) into a flat, searchable table — every transaction row carries its deductor's Name and TAN. Combines multiple assessment years into one workbook (TRACES only lets you download one year at a time), with Summary-by-Year/Deductor/Section/Month rollup tabs. Auto-detects input format (caret-delimited `.txt`, `.xlsx`/`.xls`, HTML, password-protected PDF). Runs directly in the hub; also ships as a standalone CLI + double-click Windows GUI (`Run26ASFormatter.bat`). |
+| **Form 26AS Extractor** (`form26as_tool/`) | Flattens Form 26AS's nested Part A (TDS) into a flat, searchable table — every transaction row carries its deductor's Name and TAN. Combines multiple assessment years into one workbook (TRACES only lets you download one year at a time), with Summary-by-Year/Deductor/Section/Month rollup tabs. Auto-detects input format (caret-delimited `.txt`, `.xlsx`/`.xls`, HTML, password-protected PDF). Also ships as a standalone CLI + double-click Windows GUI (`Run26ASFormatter.bat`). |
 | **PDF Tools** (`pdf_tools.py` + `tools/`) | Merge, split, edit (remove/insert/reorder pages) and PDF→Word. |
-| **SOA · RPS · Reconcile** (`app.py`) | L&T Finance SOA extractor with TOC/TOD audit — ships as a standalone Flask app (SSE live progress); the hub page links to it. |
-| **Document Redaction** (`redaction_tool/`) | Auto-detect + redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email plus custom keywords across PDF (true redaction via PyMuPDF), DOCX, XLSX, and images (Tesseract OCR) — ships as a standalone tkinter desktop app; the hub page links to it. |
+| **SOA · RPS · Reconcile** (`extract_soa.py` / `extract_rps.py` / `reconcile.py`) | L&T Finance SOA extractor with TOC/TOD audit, RPS parser, and auto-reconciliation by Agreement No. Also ships as a standalone Flask app (`app.py`, SSE live progress) for users who prefer that UI. |
+| **Document Redaction** (`redaction_tool/`) | Auto-detect + redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email plus custom keywords across PDF (true redaction via PyMuPDF), DOCX, XLSX, and images (Tesseract OCR). Also ships as a standalone tkinter desktop app (`redaction_tool/main.py`). |
 | **JE Audit Analytics** (`je_audit_tool/`) | Journal Entry exception testing for statutory/forensic audit: Amount (duplicates, high-value, split transactions), Timing (weekend/holiday, year-end cutoff, reversals), User & Access Control (SOD violations, dormant users, related parties), Vendor Master Data (duplicate GSTIN/PAN, MSME delay, inactive vendors), Benford's Law (chi-square digit analysis). DuckDB-backed for large GL dumps; exports a multi-sheet Excel audit report + working paper. |
-| **JE Audit (Blazor)** (`je_audit_tool_blazor/JEAuditApp.razor`) | Self-contained .NET/Blazor Server port of the same JE audit workflow (7-step wizard, same test families) for teams preferring a C#/.NET deployment — needs the `EPPlus` NuGet package for Excel I/O. |
+
+> A separate .NET/Blazor Server port of the JE Audit workflow exists at
+> `je_audit_tool_blazor/JEAuditApp.razor` for reference, but is not part of
+> the unified app/`.exe` (different framework, same functionality as
+> JE Audit Analytics above).
 
 > **PF + Statutory combinable?** Yes — they already share `_read_pdf_text`,
 > `_g`/`normalize_period` helpers and live together in `Combined_PF_Statutory.py`

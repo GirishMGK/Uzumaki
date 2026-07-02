@@ -109,3 +109,22 @@ def test_compute_recon_flags_duplicate_gstr3b_keys():
 def test_app_prefix_strip_handles_wide_index():
     display = re.sub(r"^\d+_", "", "1000_myfile.pdf", count=1)
     assert display == "myfile.pdf"
+
+
+# ── unified-framework pages: dispatch must call the real tool functions ────────
+def test_soa_page_calls_real_functions():
+    """
+    Regression guard for the same class of bug as the pdf_tools.py stub: the
+    SOA/RPS/Reconcile Streamlit page must actually call extract_loan/
+    write_workbook/classify/reconcile_jobs, not just describe them.
+    """
+    src = open(os.path.join(REPO_ROOT, "_pages", "soa.py"), encoding="utf-8").read()
+    for fn in ["extract_loan(", "write_workbook(", "classify(", "extract_rps(",
+               "write_rps_workbook(", "reconcile_jobs(", "write_reconciliation_workbook("]:
+        assert fn in src, f"_pages/soa.py no longer calls {fn} — the tool may be disconnected"
+
+
+def test_redaction_page_calls_real_functions():
+    src = open(os.path.join(REPO_ROOT, "_pages", "redaction.py"), encoding="utf-8").read()
+    for fn in ["RedactionEngine(", "get_active_patterns(", "process_files("]:
+        assert fn in src, f"_pages/redaction.py no longer calls {fn} — the tool may be disconnected"

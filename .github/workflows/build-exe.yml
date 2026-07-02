@@ -1,0 +1,55 @@
+name: Build Uzumaki.exe
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-build.txt
+
+      - name: Stamp version (short commit SHA)
+        id: version
+        shell: bash
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          echo "$SHA" > VERSION
+          echo "$SHA" > version.txt
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build with PyInstaller
+        run: pyinstaller Uzumaki.spec
+
+      - name: Verify the exe was produced
+        shell: bash
+        run: test -f dist/Uzumaki.exe
+
+      - name: Publish / update the rolling "latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Uzumaki (latest — ${{ steps.version.outputs.sha }})"
+          body: |
+            Auto-built from commit ${{ github.sha }}.
+            This release is updated on every push to `main` — Uzumaki.exe
+            checks it on launch and self-updates when a newer build exists.
+          make_latest: true
+          files: |
+            dist/Uzumaki.exe
+            version.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
