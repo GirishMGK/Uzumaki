@@ -10,7 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from form26as.loader import load_grid
 from form26as.parser import parse_part_a
 
-SAMPLE = Path(__file__).resolve().parent.parent / "samples" / "sample_26as.html"
+SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+SAMPLE = SAMPLES / "sample_26as.html"
+SAMPLE_TXT = SAMPLES / "sample_26as.txt"
 
 
 class TestParser(unittest.TestCase):
@@ -44,6 +46,27 @@ class TestParser(unittest.TestCase):
         self.assertEqual(third.name_of_deductor, "STATE BANK OF INDIA")
         self.assertEqual(third.tan_of_deductor, "MUMS12345B")
         self.assertEqual(third.amount_paid, 50000.00)
+
+
+class TestCaretDelimitedText(unittest.TestCase):
+    def setUp(self):
+        self.txns = parse_part_a(load_grid(SAMPLE_TXT))
+
+    def test_only_part_a_collected(self):
+        # 3 Part A transactions; Part A1 and Part B rows must be excluded.
+        self.assertEqual(len(self.txns), 3)
+        tans = {t.tan_of_deductor for t in self.txns}
+        self.assertIn("AGRA10192A", tans)
+        self.assertIn("MUMS12345B", tans)
+        self.assertNotIn("DELS99999Z", tans)  # Part A1 (15G/15H)
+        self.assertNotIn("JPRS55555Q", tans)  # Part B (TCS)
+
+    def test_fields_from_text(self):
+        first = self.txns[0]
+        self.assertEqual(first.name_of_deductor, "ANIL KUMAR GANDHI")
+        self.assertEqual(first.section, "194A")
+        self.assertEqual(first.amount_paid, 18786.32)
+        self.assertEqual(first.tds_deposited, 1879.00)
 
 
 if __name__ == "__main__":

@@ -34,33 +34,52 @@ so you can run analysis immediately without building pivots first:
 The flat `Form 26AS - Part A` sheet remains the analysis-ready base table for
 your own pivots.
 
-## Install
+## Run it locally
 
 ```bash
+# 1. (optional but recommended) create a virtual environment
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+
+# 2. install dependencies
 pip install -r requirements.txt
+
+# 3. run it on your 26AS file
+python -m form26as path/to/26AS.txt
 ```
+
+Requires Python 3.9+.
 
 ## Usage
 
 ```bash
 # Default: writes <input>_formatted.xlsx next to the input file
-python -m form26as.cli path/to/26AS.xlsx
+python -m form26as path/to/26AS.txt
 
 # Choose the output name/format (.xlsx or .csv from the extension)
-python -m form26as.cli path/to/26AS.html -o formatted.xlsx
+python -m form26as path/to/26AS.html -o formatted.xlsx
 
 # Also drop a CSV alongside the xlsx
-python -m form26as.cli path/to/26AS.xlsx --csv
+python -m form26as path/to/26AS.xlsx --csv
 
 # Diagnose an unexpected layout (prints the detected grid)
-python -m form26as.cli path/to/26AS.xlsx --debug
+python -m form26as path/to/26AS.txt --debug
 ```
+
+(`python -m form26as.cli ...` also works.)
 
 ### Supported input
 
+- **Caret (`^`) delimited `.txt`** — the native TRACES download (also tab/comma)
 - Genuine `.xlsx` / `.xls` workbooks
 - HTML exports (including TRACES "Excel" files that are really HTML with an
   `.xls`/`.xlsx` extension — these are detected automatically)
+
+Only **Part A** (TDS) is summarized; Part A1/A2/B/C rows are detected and
+skipped so they don't pollute the TDS totals.
+
+> **Tip:** if you download the `.txt` from TRACES, run the tool directly on it —
+> no need to manually convert it to Excel first.
 
 ## How it works
 

@@ -1,0 +1,21 @@
+Annual Tax Statement under Section 203AA
+Permanent Account Number (PAN)^ABCDE1234F^Current Status of PAN^Active
+Assessment Year^2026-27^Name of Assessee^JOHN DOE
+PART A - Details of Tax Deducted at Source
+Sr. No.^Name of Deductor^TAN of Deductor^Total Amount Paid / Credited(Rs.)^Total Tax Deducted(Rs.)^Total TDS Deposited(Rs.)
+^Sr. No.^Section^Transaction Date^Status of Booking^Date of Booking^Remarks^Amount Paid / Credited(Rs.)^Tax Deducted(Rs.)^TDS Deposited(Rs.)
+1^ANIL KUMAR GANDHI^AGRA10192A^299269.11^29926.00^29926.00
+^1^194A^31-Mar-2026^F^01-Jun-2026^-^18786.32^1879.00^1879.00
+^2^194A^31-Dec-2025^F^10-Feb-2026^-^280482.79^28047.00^28047.00
+2^STATE BANK OF INDIA^MUMS12345B^50000.00^5000.00^5000.00
+^1^194A^30-Jun-2025^F^15-Jul-2025^-^50000.00^5000.00^5000.00
+PART A1 - Details of Tax Deducted at Source for 15G/15H
+Sr. No.^Name of Deductor^TAN of Deductor^Total Amount Paid / Credited(Rs.)^Total Tax Deducted(Rs.)^Total TDS Deposited(Rs.)
+^Sr. No.^Section^Transaction Date^Status of Booking^Date of Booking^Remarks^Amount Paid / Credited(Rs.)^Tax Deducted(Rs.)^TDS Deposited(Rs.)
+1^SMALL BANK LTD^DELS99999Z^100000.00^0.00^0.00
+^1^194A^30-Sep-2025^F^05-Oct-2025^-^100000.00^0.00^0.00
+PART B - Details of Tax Collected at Source
+Sr. No.^Name of Collector^TAN of Collector^Total Amount Paid / Debited(Rs.)^Total Tax Collected(Rs.)^Total TCS Deposited(Rs.)
+^Sr. No.^Section^Transaction Date^Status of Booking^Date of Booking^Remarks^Amount Paid / Debited(Rs.)^Tax Collected(Rs.)^TCS Deposited(Rs.)
+1^SOME MOTORS LTD^JPRS55555Q^1000000.00^10000.00^10000.00
+^1^206CE^15-Jan-2026^F^20-Jan-2026^-^1000000.00^10000.00^10000.00

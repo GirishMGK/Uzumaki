@@ -33,6 +33,23 @@ def _load_xlsx(path: Path) -> Grid:
     return grid
 
 
+def _load_text(path: Path) -> Grid:
+    """Split a caret (^) delimited TRACES text export into a grid.
+
+    Falls back to tab or comma if no carets are present.
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        lines = fh.read().splitlines()
+    sample = "\n".join(lines[:200])
+    if "^" in sample:
+        delim = "^"
+    elif "\t" in sample:
+        delim = "\t"
+    else:
+        delim = ","
+    return [[cell.strip() for cell in line.split(delim)] for line in lines if line.strip()]
+
+
 def _load_html(path: Path) -> Grid:
     from bs4 import BeautifulSoup
 
@@ -67,12 +84,19 @@ def load_grid(path: str | Path) -> Grid:
     with open(path, "rb") as fh:
         head = fh.read(4096)
 
+    suffix = path.suffix.lower()
+    if suffix in {".txt", ".csv"}:
+        return _load_text(path)
+
     # HTML masquerading as .xls/.xlsx is common from TRACES, so sniff content
     # first rather than trusting the extension.
     if _looks_like_html(head):
         return _load_html(path)
 
-    suffix = path.suffix.lower()
+    # A caret-delimited text export sniffed by content (extension may vary).
+    if b"^" in head and b"PK\x03\x04" not in head[:4]:
+        return _load_text(path)
+
     if suffix in {".xlsx", ".xlsm", ".xls"}:
         try:
             return _load_xlsx(path)

@@ -182,14 +182,44 @@ def _get(cells: List[str], idx: Optional[int]) -> str:
     return cells[idx]
 
 
+def _part_marker(cells: List[str]) -> Optional[str]:
+    """Return the 26AS part a marker line announces ('A', 'A1', 'B', ...), else None."""
+    joined = _norm(" ".join(cells))
+    if "part a1" in joined:
+        return "A1"
+    if "part a2" in joined:
+        return "A2"
+    if re.search(r"\bpart b\b", joined):
+        return "B"
+    if re.search(r"\bpart c\b", joined):
+        return "C"
+    if re.search(r"\bpart d\b", joined):
+        return "D"
+    if re.search(r"\bpart a\b", joined) and "tax deducted at source" in joined:
+        return "A"
+    return None
+
+
 def parse_part_a(grid: Grid) -> List[Transaction]:
     """Parse Part A of a loaded 26AS grid into flat transaction rows."""
     dhdr: Optional[_DeductorHeader] = None
     thdr: Optional[_TxnHeader] = None
     current: Optional[Transaction] = None
+    # None until a part marker is seen. Files without explicit markers (e.g.
+    # some Excel/HTML exports) stay None and are treated as Part A.
+    part: Optional[str] = None
     out: List[Transaction] = []
 
     for cells in grid:
+        marker = _part_marker(cells)
+        if marker is not None:
+            part = marker
+            continue
+
+        # Only Part A (TDS) is collected; once another part begins, stop
+        # emitting until/unless Part A is seen again.
+        in_part_a = part in (None, "A")
+
         # Refresh header maps whenever a header row appears (Part A headers may
         # repeat, and column positions can differ between parts).
         maybe_dhdr = _detect_deductor_header(cells)
@@ -216,7 +246,7 @@ def parse_part_a(grid: Grid) -> List[Transaction]:
 
         # Transaction row: a valid section code in the section column.
         section_val = _get(cells, thdr.section) if thdr else ""
-        if thdr and current and SECTION_RE.match(section_val.upper()):
+        if in_part_a and thdr and current and SECTION_RE.match(section_val.upper()):
             out.append(
                 Transaction(
                     deductor_sr_no=current.deductor_sr_no,
