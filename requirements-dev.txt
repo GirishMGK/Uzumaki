@@ -1,0 +1,3 @@
+# Extra dependencies for running the test suite (generating sample PDFs).
+-r requirements.txt
+reportlab>=4.0

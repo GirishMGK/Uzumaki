@@ -1,17 +1,18 @@
-"""Load a Form 26AS file (real .xlsx or HTML) into a uniform grid of string cells.
+"""Load a Form 26AS file into a uniform grid of string cells.
 
-TRACES lets you download Form 26AS as an "Excel" file, but that file is very
-often actually an HTML document with an .xls/.xlsx extension. It can also be a
-genuine .xlsx workbook, or a plain .html export. This loader detects which it is
-and returns a single flat grid (list of rows, each row a list of stripped
-strings). The parser scans that grid for the header rows it needs, so it does
-not matter that different parts of the statement have different column counts.
+Supported inputs: the native caret (^) delimited TRACES ``.txt`` export, a
+genuine ``.xlsx``/``.xls`` workbook, an HTML export (including TRACES "Excel"
+files that are really HTML with an ``.xls``/``.xlsx`` extension), and the
+password-protected ``.pdf`` download. Whatever the source, this loader returns
+a single flat grid (list of rows, each a list of stripped strings). The parser
+scans that grid for the header rows it needs, so it does not matter that the
+different parts of the statement have different column counts.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 Grid = List[List[str]]
 
@@ -75,7 +76,41 @@ def _load_html(path: Path) -> Grid:
     return grid
 
 
-def load_grid(path: str | Path) -> Grid:
+def _split_on_wide_gaps(line: str) -> List[str]:
+    """Split a text line into cells on runs of 2+ spaces (fallback for PDFs)."""
+    import re
+
+    parts = re.split(r"\s{2,}", line.strip())
+    return [p.strip() for p in parts if p.strip() != ""]
+
+
+def _load_pdf(path: Path, password: Optional[str] = None) -> Grid:
+    """Extract Part-A-style tables from a (possibly password-protected) PDF.
+
+    Prefers pdfplumber's ruled-table extraction; if a page has no detectable
+    table it falls back to splitting text lines on wide whitespace gaps.
+    """
+    import pdfplumber
+
+    grid: Grid = []
+    with pdfplumber.open(str(path), password=password or "") as pdf:
+        for page in pdf.pages:
+            tables = page.extract_tables()
+            if tables:
+                for table in tables:
+                    for row in table:
+                        grid.append(["" if c is None else str(c).replace("\n", " ").strip()
+                                     for c in row])
+            else:
+                text = page.extract_text() or ""
+                for line in text.splitlines():
+                    cells = _split_on_wide_gaps(line)
+                    if cells:
+                        grid.append(cells)
+    return grid
+
+
+def load_grid(path: str | Path, password: Optional[str] = None) -> Grid:
     """Return the file's contents as a list of rows of stripped string cells."""
     path = Path(path)
     if not path.exists():
@@ -87,6 +122,10 @@ def load_grid(path: str | Path) -> Grid:
     suffix = path.suffix.lower()
     if suffix in {".txt", ".csv"}:
         return _load_text(path)
+
+    # PDF, by extension or magic bytes.
+    if suffix == ".pdf" or head[:5] == b"%PDF-":
+        return _load_pdf(path, password)
 
     # HTML masquerading as .xls/.xlsx is common from TRACES, so sniff content
     # first rather than trusting the extension.

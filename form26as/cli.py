@@ -33,6 +33,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Also write a .csv alongside the .xlsx output.",
     )
     p.add_argument(
+        "--password",
+        help="Password for an encrypted PDF (TRACES 26AS PDFs use your date of "
+        "birth as DDMMYYYY, e.g. 15041985).",
+    )
+    p.add_argument(
         "--debug",
         action="store_true",
         help="Print the detected grid (first rows) to help diagnose parsing.",
@@ -45,9 +50,18 @@ def main(argv: list[str] | None = None) -> int:
 
     input_path = Path(args.input)
     try:
-        grid = load_grid(input_path)
+        grid = load_grid(input_path, password=args.password)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - surface loader errors clearly
+        hint = ""
+        if input_path.suffix.lower() == ".pdf":
+            hint = (
+                " If the PDF is password-protected, pass --password (TRACES uses "
+                "your date of birth as DDMMYYYY)."
+            )
+        print(f"error: could not read {input_path}: {exc}.{hint}", file=sys.stderr)
         return 2
 
     if args.debug:

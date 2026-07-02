@@ -56,6 +56,10 @@ Requires Python 3.9+.
 # Default: writes <input>_formatted.xlsx next to the input file
 python -m form26as path/to/26AS.txt
 
+# Excel or PDF work the same way — the format is auto-detected
+python -m form26as path/to/26AS.xlsx
+python -m form26as path/to/26AS.pdf --password 15041985
+
 # Choose the output name/format (.xlsx or .csv from the extension)
 python -m form26as path/to/26AS.html -o formatted.xlsx
 
@@ -68,12 +72,18 @@ python -m form26as path/to/26AS.txt --debug
 
 (`python -m form26as.cli ...` also works.)
 
-### Supported input
+### Supported input (auto-detected)
 
 - **Caret (`^`) delimited `.txt`** — the native TRACES download (also tab/comma)
 - Genuine `.xlsx` / `.xls` workbooks
+- **PDF** — including the password-protected TRACES download. Pass
+  `--password` (TRACES uses your **date of birth as `DDMMYYYY`**, e.g.
+  `15041985`). Table-based PDFs extract best; if a PDF isn't ruled, the loader
+  falls back to whitespace-based column splitting.
 - HTML exports (including TRACES "Excel" files that are really HTML with an
-  `.xls`/`.xlsx` extension — these are detected automatically)
+  `.xls`/`.xlsx` extension)
+
+The format is detected from the file's contents, not just its extension.
 
 Only **Part A** (TDS) is summarized; Part A1/A2/B/C rows are detected and
 skipped so they don't pollute the TDS totals.
@@ -83,9 +93,9 @@ skipped so they don't pollute the TDS totals.
 
 ## How it works
 
-1. **Load** the file into a uniform grid of cells (`openpyxl` for real
-   workbooks, BeautifulSoup for HTML; content is sniffed so a mislabeled HTML
-   "Excel" file still works).
+1. **Load** the file into a uniform grid of cells (delimited text split on `^`,
+   `openpyxl` for workbooks, BeautifulSoup for HTML, `pdfplumber` for PDF;
+   content is sniffed so a mislabeled HTML "Excel" file still works).
 2. **Detect** Part A's two header rows by their labels, so column positions are
    found dynamically rather than hard-coded.
 3. **Walk** the rows: a row with a TAN in the TAN column starts a new deductor;
@@ -96,10 +106,13 @@ skipped so they don't pollute the TDS totals.
 ## Tests
 
 ```bash
+pip install -r requirements-dev.txt   # adds reportlab, used to build sample PDFs
 python -m unittest discover -s tests -v
 ```
 
-A synthetic sample lives in `samples/sample_26as.html`.
+Synthetic samples live in `samples/` (`.html` and caret-delimited `.txt`); the
+PDF tests generate their fixtures on the fly and skip if the PDF libraries are
+not installed.
 
 ## Note on other parts / layout variations
 
