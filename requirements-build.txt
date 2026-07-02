@@ -1,0 +1,2 @@
+# Extra dependency for building Uzumaki.exe — not needed to just run the app.
+pyinstaller>=6.0

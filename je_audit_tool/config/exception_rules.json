@@ -1,0 +1,46 @@
+{
+  "risk_scores": {
+    "Low": 1,
+    "Medium": 3,
+    "High": 5,
+    "Critical": 8
+  },
+  "narration_keywords": [
+    {"keyword": "adjustment",    "risk_level": "Medium"},
+    {"keyword": "manual",        "risk_level": "Medium"},
+    {"keyword": "urgent",        "risk_level": "High"},
+    {"keyword": "as advised",    "risk_level": "High"},
+    {"keyword": "reclass",       "risk_level": "Medium"},
+    {"keyword": "correction",    "risk_level": "Medium"},
+    {"keyword": "penalty",       "risk_level": "High"},
+    {"keyword": "misc",          "risk_level": "Low"},
+    {"keyword": "adhoc",         "risk_level": "Medium"},
+    {"keyword": "rectification", "risk_level": "Medium"},
+    {"keyword": "transfer",      "risk_level": "Low"},
+    {"keyword": "write off",     "risk_level": "High"},
+    {"keyword": "write-off",     "risk_level": "High"},
+    {"keyword": "waiver",        "risk_level": "High"},
+    {"keyword": "rebate",        "risk_level": "Medium"},
+    {"keyword": "discount",      "risk_level": "Medium"},
+    {"keyword": "reversal",      "risk_level": "Medium"},
+    {"keyword": "suspense",      "risk_level": "High"},
+    {"keyword": "provision",     "risk_level": "Medium"},
+    {"keyword": "written back",  "risk_level": "High"}
+  ],
+  "manual_doc_types": ["SA", "MN", "AB", "ZZ", "XX", "JE", "MJ", "G1", "G2", "KG"],
+  "auto_doc_types":   ["RB", "KO", "ZA", "ZP", "ZR", "WR", "WL", "AA", "KP"],
+  "revenue_gl_keywords":  ["revenue", "sales", "turnover", "income", "sale", "billing"],
+  "expense_gl_keywords":  ["expense", "cost", "charge", "accrual", "provision", "depreciation"],
+  "related_party_keywords": [
+    "director", "promoter", "related", "subsidiary", "associate",
+    "group company", "holding", "kmp", "key managerial", "proprietor",
+    "shareholder", "partner", "related party", "sister concern"
+  ],
+  "admin_user_patterns": ["admin", "superuser", "it_", "sys", "sysadmin", "root", "test", "service"],
+  "holidays_fy2526": [
+    "2025-04-14", "2025-04-18", "2025-05-01",
+    "2025-08-15", "2025-10-02", "2025-10-20",
+    "2025-10-22", "2025-11-05", "2025-12-25",
+    "2026-01-26", "2026-03-14", "2026-03-31"
+  ]
+}

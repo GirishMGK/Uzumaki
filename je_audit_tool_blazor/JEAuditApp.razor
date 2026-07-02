@@ -1,0 +1,1990 @@
+@* JEAuditApp.razor
+   NuGet packages required:
+     - EPPlus (version 5.x or 6.x, non-commercial license) for Excel read/write
+     - Microsoft.AspNetCore.Components.Forms (included in Blazor Server SDK)
+   Add to _Host.cshtml or App.razor:
+     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+*@
+
+@page "/je-audit"
+@using System.Data
+@using System.IO
+@using System.Text
+@using System.Text.Json
+@using System.Globalization
+@using Microsoft.AspNetCore.Components.Forms
+@inject IJSRuntime JSRuntime
+
+<style>
+  /* ── Reset / base ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f0f2f6; }
+
+  /* ── Hero banner ── */
+  .hero {
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 40%, #0f3460 70%, #533483 100%);
+    padding: 2.5rem 2rem 2rem;
+    color: white;
+    border-radius: 0 0 1.5rem 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35);
+  }
+  .hero h1 { font-size: 2rem; font-weight: 700; letter-spacing: .5px; }
+  .hero p  { font-size: .95rem; color: #c9d1e8; margin-top: .4rem; }
+  .hero-badge {
+    display: inline-block;
+    background: rgba(255,255,255,.15);
+    border: 1px solid rgba(255,255,255,.3);
+    border-radius: 999px;
+    padding: .2rem .8rem;
+    font-size: .78rem;
+    margin-right: .4rem;
+  }
+
+  /* ── Layout ── */
+  .app-layout { display: flex; min-height: calc(100vh - 180px); gap: 1rem; padding: 0 1rem 2rem; }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: white;
+    border-radius: 1rem;
+    padding: 1rem .5rem;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    height: fit-content;
+    position: sticky; top: 1rem;
+  }
+  .sidebar-item {
+    display: flex; align-items: center; gap: .5rem;
+    padding: .6rem .9rem;
+    border-radius: .6rem;
+    cursor: pointer;
+    font-size: .88rem;
+    color: #444;
+    transition: background .15s, color .15s;
+    border: none; background: transparent; width: 100%; text-align: left;
+  }
+  .sidebar-item:hover  { background: #f0f0ff; color: #5c4fff; }
+  .sidebar-item.active { background: linear-gradient(90deg,#667eea,#764ba2); color: white; font-weight: 600; }
+  .main-content { flex: 1; min-width: 0; }
+
+  /* ── Section card ── */
+  .section-card {
+    background: white; border-radius: 1rem;
+    padding: 1.5rem; margin-bottom: 1.2rem;
+    box-shadow: 0 2px 12px rgba(0,0,0,.07);
+  }
+  .section-title {
+    font-size: 1.2rem; font-weight: 700; color: #1a1a2e;
+    border-left: 4px solid #667eea;
+    padding-left: .75rem; margin-bottom: 1rem;
+  }
+
+  /* ── KPI cards ── */
+  .kpi-grid { display: flex; flex-wrap: wrap; gap: .8rem; margin-bottom: 1.2rem; }
+  .kpi-card {
+    border-radius: .8rem; padding: 1rem 1.4rem;
+    min-width: 140px; flex: 1;
+    color: white;
+    box-shadow: 0 2px 10px rgba(0,0,0,.15);
+  }
+  .kpi-card.blue   { background: linear-gradient(135deg,#667eea,#764ba2); }
+  .kpi-card.red    { background: linear-gradient(135deg,#FF3B3B,#c0392b); }
+  .kpi-card.orange { background: linear-gradient(135deg,#FF8C00,#e67e22); }
+  .kpi-card.green  { background: linear-gradient(135deg,#4CAF50,#27ae60); }
+  .kpi-card.teal   { background: linear-gradient(135deg,#00b4d8,#0077b6); }
+  .kpi-card.purple { background: linear-gradient(135deg,#9b59b6,#8e44ad); }
+  .kpi-val { font-size: 1.8rem; font-weight: 700; }
+  .kpi-lbl { font-size: .78rem; opacity: .9; margin-top: .1rem; }
+
+  /* ── Risk badges ── */
+  .badge { display:inline-block; padding:.2rem .7rem; border-radius:999px; font-size:.76rem; font-weight:600; }
+  .badge-critical { background:#FF3B3B; color:white; }
+  .badge-high     { background:#FF8C00; color:white; }
+  .badge-medium   { background:#F5A623; color:white; }
+  .badge-low      { background:#4CAF50; color:white; }
+
+  /* ── Tables ── */
+  .data-table { width:100%; border-collapse:collapse; font-size:.85rem; }
+  .data-table th { background:#f8f9ff; color:#444; font-weight:600; padding:.55rem .75rem; border-bottom:2px solid #e8eaf6; text-align:left; }
+  .data-table td { padding:.5rem .75rem; border-bottom:1px solid #f0f0f0; vertical-align:top; }
+  .data-table tr:hover td { background:#fafbff; }
+
+  /* ── Form controls ── */
+  .form-group { margin-bottom: .9rem; }
+  .form-label { font-size: .83rem; font-weight: 600; color: #555; margin-bottom: .3rem; display: block; }
+  .form-control {
+    width: 100%; padding: .45rem .7rem;
+    border: 1.5px solid #d1d5db; border-radius: .5rem;
+    font-size: .88rem; color: #222;
+    transition: border-color .15s;
+    outline: none;
+  }
+  .form-control:focus { border-color: #667eea; box-shadow: 0 0 0 3px rgba(102,126,234,.15); }
+  select.form-control { background: white; }
+
+  /* ── Buttons ── */
+  .btn {
+    padding: .5rem 1.2rem; border-radius: .5rem; border: none;
+    font-size: .88rem; font-weight: 600; cursor: pointer;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn:hover { opacity: .88; transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn-primary  { background: linear-gradient(90deg,#667eea,#764ba2); color: white; }
+  .btn-success  { background: linear-gradient(90deg,#4CAF50,#27ae60); color: white; }
+  .btn-danger   { background: linear-gradient(90deg,#FF3B3B,#c0392b); color: white; }
+  .btn-secondary{ background: #e8eaf6; color: #444; }
+  .btn-sm       { padding: .3rem .8rem; font-size: .8rem; }
+
+  /* ── Progress ── */
+  .progress-bar-wrap { background: #e8eaf6; border-radius: 999px; height: 12px; overflow: hidden; margin: .5rem 0; }
+  .progress-bar-fill { height: 100%; background: linear-gradient(90deg,#667eea,#764ba2); border-radius: 999px; transition: width .4s; }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    border: 2px dashed #c7d2fe; border-radius: .8rem;
+    padding: 1.5rem; text-align: center;
+    background: #f8f9ff; margin-bottom: .8rem;
+    transition: border-color .2s;
+  }
+  .upload-zone:hover { border-color: #667eea; }
+  .upload-icon { font-size: 2rem; }
+
+  /* ── Alert ── */
+  .alert { border-radius: .6rem; padding: .7rem 1rem; margin-bottom: .8rem; font-size: .87rem; }
+  .alert-info    { background: #e0e7ff; color: #3730a3; border-left: 4px solid #667eea; }
+  .alert-success { background: #dcfce7; color: #166534; border-left: 4px solid #4CAF50; }
+  .alert-warning { background: #fef3c7; color: #92400e; border-left: 4px solid #F5A623; }
+  .alert-danger  { background: #fee2e2; color: #991b1b; border-left: 4px solid #FF3B3B; }
+
+  /* ── Checkbox / toggle ── */
+  .check-group { display: flex; flex-wrap: wrap; gap: .6rem; }
+  .check-item  { display: flex; align-items: center; gap: .4rem; font-size: .87rem; padding: .4rem .8rem; border-radius: .4rem; background: #f8f9ff; cursor: pointer; }
+  .check-item input { accent-color: #667eea; }
+
+  /* ── Chart container ── */
+  .chart-container { width: 100%; height: 320px; border-radius: .8rem; overflow: hidden; }
+
+  /* ── Responsive ── */
+  @media (max-width:768px) {
+    .app-layout { flex-direction: column; }
+    .sidebar { width: 100%; position: static; display: flex; flex-wrap: wrap; gap: .3rem; }
+    .sidebar-item { width: auto; }
+  }
+</style>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  HERO BANNER                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="hero">
+  <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+    <div>
+      <h1>⚡ JE Audit Analytics Tool</h1>
+      <p>AI-powered Journal Entry Audit &amp; Exception Detection Platform</p>
+      <div style="margin-top:.7rem;">
+        <span class="hero-badge">v2.0</span>
+        <span class="hero-badge">Blazor Server</span>
+        <span class="hero-badge">EPPlus</span>
+        @if (_runDone)
+        {
+          <span class="hero-badge" style="background:rgba(76,175,80,.3);border-color:#4CAF50;">✔ Analysis Complete</span>
+        }
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!--  MAIN LAYOUT                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<div class="app-layout">
+
+  <!-- ── Sidebar navigation ── -->
+  <nav class="sidebar">
+    @foreach (var (icon, label, key) in _navItems)
+    {
+      <button class="sidebar-item @(_currentPage == key ? "active" : "")"
+              @onclick="() => _currentPage = key">
+        <span>@icon</span><span>@label</span>
+      </button>
+    }
+  </nav>
+
+  <!-- ── Page content ── -->
+  <main class="main-content">
+    @switch (_currentPage)
+    {
+      case "upload":    @RenderUploadPage();    break;
+      case "mapping":   @RenderMappingPage();   break;
+      case "params":    @RenderParamsPage();    break;
+      case "run":       @RenderRunPage();       break;
+      case "results":   @RenderResultsPage();   break;
+      case "dashboard": @RenderDashboard();     break;
+      case "export":    @RenderExportPage();    break;
+    }
+  </main>
+</div>
+
+@* ════════════════════════════════════════════════════════════════════ *@
+@*  CODE BLOCK                                                          *@
+@* ════════════════════════════════════════════════════════════════════ *@
+@code {
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Navigation
+  // ─────────────────────────────────────────────────────────────────
+  private string _currentPage = "upload";
+
+  private readonly (string icon, string label, string key)[] _navItems =
+  {
+    ("📁", "Upload Data",       "upload"),
+    ("🔗", "Column Mapping",    "mapping"),
+    ("⚙️", "Audit Parameters",  "params"),
+    ("🚀", "Run JE Tests",      "run"),
+    ("📋", "Exception Results", "results"),
+    ("📊", "Dashboard",         "dashboard"),
+    ("⬇️", "Export Results",   "export"),
+  };
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Session state
+  // ─────────────────────────────────────────────────────────────────
+  private DataTable? _df;
+  private DataTable? _exceptionsDF;
+  private DataTable? _benfordDF;
+  private DataTable? _chi2DF;
+  private DataTable? _txRiskDF;
+  private DataTable? _userRiskDF;
+  private DataTable? _vendorMasterDF;
+  private Dictionary<string, string>  _colMap          = new();
+  private Dictionary<string, object>  _params          = new();
+  private Dictionary<string, string>  _docTypeMap      = new();
+  private List<Dictionary<string,string>> _relatedPartyList = new();
+  private List<DateTime> _customHolidays = new();
+  private bool _runDone = false;
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Upload page state
+  // ─────────────────────────────────────────────────────────────────
+  private string _uploadStatus      = "";
+  private string _docTypeStatus     = "";
+  private string _holidayStatus     = "";
+  private string _vendorStatus      = "";
+  private string _relatedPartyStatus = "";
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Audit parameters (defaults)
+  // ─────────────────────────────────────────────────────────────────
+  private string _clientName        = "";
+  private string _engagementNumber  = "";
+  private DateTime _periodStart     = new DateTime(DateTime.Today.Year, 1, 1);
+  private DateTime _periodEnd       = DateTime.Today;
+  private string _materialityUnit   = "Lakhs";
+  private decimal _materialityValue = 10m;
+  private decimal _highRiskThreshold= 5m;
+  private int     _roundAmountMultiple = 1000;
+  private decimal _largeTxThreshold  = 100m;
+  private bool    _enableML          = false;
+  private decimal _benfordThreshold  = 0.05m;
+  private int     _sampleSize        = 30;
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Run page state
+  // ─────────────────────────────────────────────────────────────────
+  private bool _runAmount   = true;
+  private bool _runTiming   = true;
+  private bool _runUser     = true;
+  private bool _runVendor   = true;
+  private bool _runBenford  = true;
+  private bool _runML       = false;
+  private bool _isRunning   = false;
+  private int  _runProgress = 0;
+  private string _runLog    = "";
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Results page filters
+  // ─────────────────────────────────────────────────────────────────
+  private string _filterCategory = "All";
+  private string _filterRisk     = "All";
+  private string _filterKeyword  = "";
+  private int    _sampleCount    = 25;
+  private string _sampleStrategy = "Random";
+  private DataTable? _sampleResult;
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Required audit field names
+  // ─────────────────────────────────────────────────────────────────
+  private static readonly string[] RequiredFields =
+  {
+    "doc_number","doc_date","posting_date","entry_date","doc_type",
+    "posting_key","gl_account","gl_desc","amount","dc_indicator",
+    "vendor_code","vendor_name","customer","invoice_ref","purchase_doc",
+    "clearing_doc","user_id","approval_id","assignment","reference",
+    "text","reversal_indicator","cost_center","profit_center",
+    "offset_account","wbs","sales_doc","billing_doc","asset","order",
+    "wht_amount","collective_inv","grouping","sub_grouping"
+  };
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Exception categories
+  // ─────────────────────────────────────────────────────────────────
+  private static readonly string[] ExceptionCategories =
+  {
+    "Amount & Materiality", "Timing & Scheduling",
+    "User & Access Control", "Vendor Master Data",
+    "Benford's Law", "System & Entry Nature"
+  };
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Risk colours
+  // ─────────────────────────────────────────────────────────────────
+  private static string RiskColor(string risk) => risk switch
+  {
+    "Critical" => "#FF3B3B",
+    "High"     => "#FF8C00",
+    "Medium"   => "#F5A623",
+    _          => "#4CAF50"
+  };
+  private static string RiskBadgeClass(string risk) => risk switch
+  {
+    "Critical" => "badge badge-critical",
+    "High"     => "badge badge-high",
+    "Medium"   => "badge badge-medium",
+    _          => "badge badge-low"
+  };
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  FILE PARSING
+  // ═══════════════════════════════════════════════════════════════════
+
+  /// <summary>
+  /// Reads an IBrowserFile into a DataTable.
+  /// Supports .csv and .xlsx/.xls (requires EPPlus for Excel).
+  /// </summary>
+  private async Task<DataTable?> ParseFileToDataTable(IBrowserFile file, long maxBytes = 52_428_800)
+  {
+    var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+    await using var stream = file.OpenReadStream(maxBytes);
+    using var ms = new MemoryStream();
+    await stream.CopyToAsync(ms);
+    ms.Position = 0;
+
+    try
+    {
+      if (ext == ".csv")
+        return ParseCsv(ms);
+
+      // Excel — EPPlus
+      // using var package = new OfficeOpenXml.ExcelPackage(ms);
+      // var ws = package.Workbook.Worksheets[0];
+      // return WorksheetToDataTable(ws);
+
+      // ↑ Uncomment once EPPlus NuGet is installed.
+      // Fallback: attempt CSV parse anyway
+      return ParseCsv(ms);
+    }
+    catch (Exception ex)
+    {
+      _uploadStatus = $"❌ Parse error: {ex.Message}";
+      return null;
+    }
+  }
+
+  private static DataTable ParseCsv(Stream stream)
+  {
+    var dt = new DataTable();
+    using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+    string? header = reader.ReadLine();
+    if (header == null) return dt;
+
+    var cols = SplitCsvLine(header);
+    foreach (var c in cols)
+      dt.Columns.Add(c.Trim('"', ' '));
+
+    string? line;
+    while ((line = reader.ReadLine()) != null)
+    {
+      if (string.IsNullOrWhiteSpace(line)) continue;
+      var vals = SplitCsvLine(line);
+      var row = dt.NewRow();
+      for (int i = 0; i < dt.Columns.Count && i < vals.Length; i++)
+        row[i] = vals[i].Trim('"');
+      dt.Rows.Add(row);
+    }
+    return dt;
+  }
+
+  private static string[] SplitCsvLine(string line)
+  {
+    var result = new List<string>();
+    bool inQuotes = false;
+    var current = new StringBuilder();
+    foreach (char c in line)
+    {
+      if (c == '"') { inQuotes = !inQuotes; continue; }
+      if (c == ',' && !inQuotes) { result.Add(current.ToString()); current.Clear(); continue; }
+      current.Append(c);
+    }
+    result.Add(current.ToString());
+    return result.ToArray();
+  }
+
+  // EPPlus helper (uncomment after installing package)
+  /*
+  private static DataTable WorksheetToDataTable(OfficeOpenXml.ExcelWorksheet ws)
+  {
+    var dt = new DataTable();
+    int cols = ws.Dimension.Columns;
+    int rows = ws.Dimension.Rows;
+    for (int c = 1; c <= cols; c++)
+      dt.Columns.Add(ws.Cells[1, c].Text.Trim());
+    for (int r = 2; r <= rows; r++)
+    {
+      var row = dt.NewRow();
+      for (int c = 1; c <= cols; c++)
+        row[c-1] = ws.Cells[r, c].Text;
+      dt.Rows.Add(row);
+    }
+    return dt;
+  }
+  */
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  COLUMN AUTO-MAPPING
+  // ═══════════════════════════════════════════════════════════════════
+
+  private void AutoMapColumns()
+  {
+    if (_df == null) return;
+    _colMap.Clear();
+
+    var aliases = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+    {
+      ["doc_number"]        = new[]{"doc_number","document_number","docno","doc no","voucher","voucher_no","journal_no"},
+      ["doc_date"]          = new[]{"doc_date","document_date","docdate","journal_date","jnl_date"},
+      ["posting_date"]      = new[]{"posting_date","postingdate","post_date","value_date"},
+      ["entry_date"]        = new[]{"entry_date","entrydate","created_date","input_date","entered_date"},
+      ["doc_type"]          = new[]{"doc_type","document_type","doctype","type"},
+      ["posting_key"]       = new[]{"posting_key","postingkey","pk","debit_credit_key"},
+      ["gl_account"]        = new[]{"gl_account","glaccount","account","account_no","gl_no","gl no"},
+      ["gl_desc"]           = new[]{"gl_desc","gl_description","account_desc","account_name","description"},
+      ["amount"]            = new[]{"amount","amt","value","transaction_amount","lc_amount"},
+      ["dc_indicator"]      = new[]{"dc_indicator","dc","debit_credit","d_c","indicator"},
+      ["vendor_code"]       = new[]{"vendor_code","vendor_no","vendorno","vendor number","lifnr"},
+      ["vendor_name"]       = new[]{"vendor_name","vendor","supplier","supplier_name"},
+      ["customer"]          = new[]{"customer","customer_code","customer_no","kunnr"},
+      ["invoice_ref"]       = new[]{"invoice_ref","invoice","invoice_no","invoice_number","ref"},
+      ["purchase_doc"]      = new[]{"purchase_doc","po_number","purchase_order","ebeln"},
+      ["clearing_doc"]      = new[]{"clearing_doc","cleared_doc","augbl"},
+      ["user_id"]           = new[]{"user_id","user","userid","created_by","entered_by","username"},
+      ["approval_id"]       = new[]{"approval_id","approved_by","approver","genehmiger"},
+      ["assignment"]        = new[]{"assignment","zuonr"},
+      ["reference"]         = new[]{"reference","xblnr","ref_doc"},
+      ["text"]              = new[]{"text","narration","description","remarks","bktxt"},
+      ["reversal_indicator"]= new[]{"reversal_indicator","reversal","stgrd","reversal_reason"},
+      ["cost_center"]       = new[]{"cost_center","costcenter","kostl"},
+      ["profit_center"]     = new[]{"profit_center","profitcenter","prctr"},
+      ["offset_account"]    = new[]{"offset_account","offsetaccount","hkont"},
+      ["wbs"]               = new[]{"wbs","wbs_element","posid"},
+      ["sales_doc"]         = new[]{"sales_doc","sales_order","vbeln"},
+      ["billing_doc"]       = new[]{"billing_doc","billing","vbeln_vf"},
+      ["asset"]             = new[]{"asset","asset_no","anln1"},
+      ["order"]             = new[]{"order","internal_order","aufnr"},
+      ["wht_amount"]        = new[]{"wht_amount","withholding_tax","wt_base"},
+      ["collective_inv"]    = new[]{"collective_inv","collective_invoice"},
+      ["grouping"]          = new[]{"grouping","group"},
+      ["sub_grouping"]      = new[]{"sub_grouping","subgroup","sub_group"},
+    };
+
+    var actualCols = _df.Columns.Cast<DataColumn>().Select(c => c.ColumnName).ToList();
+
+    foreach (var (field, candidates) in aliases)
+    {
+      foreach (var candidate in candidates)
+      {
+        var match = actualCols.FirstOrDefault(c =>
+          string.Equals(c, candidate, StringComparison.OrdinalIgnoreCase) ||
+          c.Replace(" ","_").Equals(candidate, StringComparison.OrdinalIgnoreCase));
+        if (match != null) { _colMap[field] = match; break; }
+      }
+    }
+  }
+
+  private string ColVal(DataRow row, string field)
+  {
+    if (_colMap.TryGetValue(field, out var col) && _df!.Columns.Contains(col))
+      return row[col]?.ToString() ?? "";
+    return "";
+  }
+
+  private decimal ParseAmount(string s)
+  {
+    s = s.Replace(",", "").Replace("(", "-").Replace(")", "");
+    return decimal.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0m;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  TEST RUNNER
+  // ═══════════════════════════════════════════════════════════════════
+
+  private async Task RunAllTests()
+  {
+    if (_df == null) { _runLog = "⚠ No data loaded."; return; }
+    _isRunning  = true;
+    _runProgress = 0;
+    _runLog      = "";
+    _runDone     = false;
+    var allExceptions = new DataTable();
+    allExceptions.Columns.Add("original_index", typeof(int));
+    allExceptions.Columns.Add("Exception Type");
+    allExceptions.Columns.Add("Exception Category");
+    allExceptions.Columns.Add("Risk Level");
+    allExceptions.Columns.Add("Risk Score", typeof(decimal));
+    allExceptions.Columns.Add("Detail");
+
+    int step = 0;
+    int totalSteps = (_runAmount?1:0) + (_runTiming?1:0) + (_runUser?1:0) +
+                     (_runVendor?1:0) + (_runBenford?1:0) + (_runML?1:0);
+    if (totalSteps == 0) { _isRunning = false; return; }
+
+    void AddExceptions(DataTable src)
+    {
+      foreach (DataRow r in src.Rows)
+        allExceptions.ImportRow(r);
+    }
+
+    async Task Tick(string msg)
+    {
+      step++;
+      _runProgress = (int)(step * 100.0 / totalSteps);
+      _runLog += $"\n✔ {msg}";
+      StateHasChanged();
+      await Task.Delay(50);
+    }
+
+    if (_runAmount)  { AddExceptions(RunAmountTests());  await Tick("Amount Tests completed"); }
+    if (_runTiming)  { AddExceptions(RunTimingTests());  await Tick("Timing Tests completed"); }
+    if (_runUser)    { AddExceptions(RunUserTests());    await Tick("User & Access Control completed"); }
+    if (_runVendor)  { AddExceptions(RunVendorTests());  await Tick("Vendor Master Data completed"); }
+    if (_runBenford) { RunBenfordTest();                 await Tick("Benford's Law completed"); }
+    if (_runML)      { AddExceptions(RunIsolationForest()); await Tick("ML Anomaly Detection completed"); }
+
+    _exceptionsDF = allExceptions;
+    _txRiskDF     = CalculateTransactionRisk(allExceptions);
+    _userRiskDF   = RankUsers(allExceptions);
+    _runDone      = true;
+    _isRunning    = false;
+    _runProgress  = 100;
+    _runLog      += $"\n\n✅ Done — {allExceptions.Rows.Count} exception(s) flagged.";
+    StateHasChanged();
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Amount Tests
+  // ─────────────────────────────────────────────────────────────────
+  private DataTable RunAmountTests()
+  {
+    var dt = MakeExceptionTable();
+    if (_df == null) return dt;
+
+    decimal materialityAbs = _materialityUnit switch
+    {
+      "Crores" => _materialityValue * 10_000_000m,
+      "Lakhs"  => _materialityValue * 100_000m,
+      _        => _materialityValue
+    };
+    decimal largeTxAbs = _largeTxThreshold * (_materialityUnit switch
+    {
+      "Crores" => 10_000_000m, "Lakhs" => 100_000m, _ => 1m
+    });
+
+    int idx = 0;
+    foreach (DataRow row in _df.Rows)
+    {
+      var amtStr = ColVal(row, "amount");
+      var amt    = Math.Abs(ParseAmount(amtStr));
+
+      // Round-number amounts
+      if (amt > 0 && _roundAmountMultiple > 0 && amt % _roundAmountMultiple == 0)
+        AddException(dt, idx, "Round Number Amount", "Amount & Materiality", "Medium", 4m,
+          $"Amount {amt:N0} is a round multiple of {_roundAmountMultiple}");
+
+      // Large transactions above materiality
+      if (amt >= materialityAbs && materialityAbs > 0)
+        AddException(dt, idx, "Above Materiality", "Amount & Materiality", "High", 7m,
+          $"Amount {amt:N0} exceeds materiality {materialityAbs:N0}");
+
+      // Very large transactions
+      if (amt >= largeTxAbs && largeTxAbs > 0)
+        AddException(dt, idx, "Large Transaction", "Amount & Materiality", "Critical", 9m,
+          $"Amount {amt:N0} exceeds large-transaction threshold {largeTxAbs:N0}");
+
+      // Zero-amount entries
+      if (amt == 0)
+        AddException(dt, idx, "Zero Amount Entry", "Amount & Materiality", "Low", 2m,
+          "Journal entry has zero amount");
+
+      // Negative / credit entries in unusual accounts
+      var dc = ColVal(row, "dc_indicator").ToUpper();
+      var gl  = ColVal(row, "gl_account");
+      if (dc == "C" && gl.StartsWith("1")) // debit-normally accounts credited
+        AddException(dt, idx, "Unusual Credit Entry", "Amount & Materiality", "Medium", 5m,
+          $"Credit entry on GL {gl} which is normally a debit account");
+
+      idx++;
+    }
+    return dt;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Timing Tests
+  // ─────────────────────────────────────────────────────────────────
+  private DataTable RunTimingTests()
+  {
+    var dt = MakeExceptionTable();
+    if (_df == null) return dt;
+
+    // Build weekend + holiday set
+    var holidays = new HashSet<DateTime>(_customHolidays.Select(d => d.Date));
+
+    int idx = 0;
+    foreach (DataRow row in _df.Rows)
+    {
+      var entryDateStr   = ColVal(row, "entry_date");
+      var postingDateStr = ColVal(row, "posting_date");
+      var docDateStr     = ColVal(row, "doc_date");
+
+      DateTime.TryParse(entryDateStr,   out var entryDt);
+      DateTime.TryParse(postingDateStr, out var postDt);
+      DateTime.TryParse(docDateStr,     out var docDt);
+
+      // Weekend entries
+      if (entryDt != default &&
+          (entryDt.DayOfWeek == DayOfWeek.Saturday || entryDt.DayOfWeek == DayOfWeek.Sunday))
+        AddException(dt, idx, "Weekend Entry", "Timing & Scheduling", "Medium", 5m,
+          $"Entry made on {entryDt:ddd dd-MMM-yyyy}");
+
+      // Holiday entries
+      if (entryDt != default && holidays.Contains(entryDt.Date))
+        AddException(dt, idx, "Holiday Entry", "Timing & Scheduling", "High", 7m,
+          $"Entry made on holiday {entryDt:dd-MMM-yyyy}");
+
+      // Late-night entries (outside 08:00-20:00)
+      if (entryDt != default && (entryDt.Hour < 8 || entryDt.Hour >= 20))
+        AddException(dt, idx, "Off-Hours Entry", "Timing & Scheduling", "Medium", 5m,
+          $"Entry at {entryDt:HH:mm} (outside business hours)");
+
+      // Back-dated entries (doc_date earlier than posting_date by >30 days)
+      if (docDt != default && postDt != default && (postDt - docDt).TotalDays > 30)
+        AddException(dt, idx, "Back-Dated Entry", "Timing & Scheduling", "High", 7m,
+          $"Doc date {docDt:dd-MMM-yyyy}, Posting date {postDt:dd-MMM-yyyy} — {(postDt-docDt).Days} days gap");
+
+      // Future-dated entries
+      if (postDt != default && postDt.Date > _periodEnd)
+        AddException(dt, idx, "Future-Dated Entry", "Timing & Scheduling", "Critical", 9m,
+          $"Posting date {postDt:dd-MMM-yyyy} is after period end {_periodEnd:dd-MMM-yyyy}");
+
+      // Period-end entries (last 3 days of month)
+      if (postDt != default)
+      {
+        int daysInMonth = DateTime.DaysInMonth(postDt.Year, postDt.Month);
+        if (postDt.Day >= daysInMonth - 2)
+          AddException(dt, idx, "Period-End Entry", "Timing & Scheduling", "Medium", 4m,
+            $"Posting date {postDt:dd-MMM-yyyy} is within last 3 days of month");
+      }
+
+      idx++;
+    }
+    return dt;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  User & Access Control Tests
+  // ─────────────────────────────────────────────────────────────────
+  private DataTable RunUserTests()
+  {
+    var dt = MakeExceptionTable();
+    if (_df == null) return dt;
+
+    // Count entries per user
+    var userCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    foreach (DataRow row in _df.Rows)
+    {
+      var u = ColVal(row, "user_id");
+      if (!string.IsNullOrWhiteSpace(u))
+        userCounts[u] = userCounts.GetValueOrDefault(u) + 1;
+    }
+    double mean  = userCounts.Values.Any() ? userCounts.Values.Average() : 0;
+    double stdev = userCounts.Values.Any()
+      ? Math.Sqrt(userCounts.Values.Select(v => Math.Pow(v - mean, 2)).Average())
+      : 0;
+
+    int idx = 0;
+    foreach (DataRow row in _df.Rows)
+    {
+      var userId     = ColVal(row, "user_id");
+      var approvalId = ColVal(row, "approval_id");
+
+      // Self-approved entries
+      if (!string.IsNullOrWhiteSpace(userId) &&
+          !string.IsNullOrWhiteSpace(approvalId) &&
+          userId.Equals(approvalId, StringComparison.OrdinalIgnoreCase))
+        AddException(dt, idx, "Self-Approved Entry", "User & Access Control", "Critical", 9m,
+          $"User {userId} approved their own entry");
+
+      // Missing user ID
+      if (string.IsNullOrWhiteSpace(userId))
+        AddException(dt, idx, "Missing User ID", "User & Access Control", "High", 7m,
+          "Entry has no user ID — may indicate system-generated or tampered entry");
+
+      // Missing approval ID
+      if (string.IsNullOrWhiteSpace(approvalId))
+        AddException(dt, idx, "Missing Approval ID", "User & Access Control", "Medium", 5m,
+          "Entry has no approval ID — segregation of duties risk");
+
+      // High-volume user (> mean + 2*stdev)
+      if (!string.IsNullOrWhiteSpace(userId) &&
+          stdev > 0 &&
+          userCounts.GetValueOrDefault(userId) > mean + 2 * stdev)
+        AddException(dt, idx, "High-Volume User", "User & Access Control", "Medium", 4m,
+          $"User {userId} has {userCounts[userId]} entries (threshold: {mean + 2*stdev:N0})");
+
+      idx++;
+    }
+    return dt;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Vendor Master Data Tests
+  // ─────────────────────────────────────────────────────────────────
+  private DataTable RunVendorTests()
+  {
+    var dt = MakeExceptionTable();
+    if (_df == null) return dt;
+
+    // Build related-party set
+    var relatedCodes = new HashSet<string>(
+      _relatedPartyList
+        .SelectMany(d => d.Values)
+        .Where(v => !string.IsNullOrWhiteSpace(v)),
+      StringComparer.OrdinalIgnoreCase);
+
+    // Build vendor master lookup (vendor_code → vendor_name)
+    var vendorMaster = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    if (_vendorMasterDF != null)
+    {
+      foreach (DataRow r in _vendorMasterDF.Rows)
+      {
+        var code = r[0]?.ToString() ?? "";
+        var name = _vendorMasterDF.Columns.Count > 1 ? r[1]?.ToString() ?? "" : "";
+        if (!string.IsNullOrWhiteSpace(code))
+          vendorMaster[code] = name;
+      }
+    }
+
+    int idx = 0;
+    foreach (DataRow row in _df.Rows)
+    {
+      var vendorCode = ColVal(row, "vendor_code");
+      var vendorName = ColVal(row, "vendor_name");
+      var docType    = ColVal(row, "doc_type");
+      var amtStr     = ColVal(row, "amount");
+      var amt        = Math.Abs(ParseAmount(amtStr));
+
+      // Related party transactions
+      if (!string.IsNullOrWhiteSpace(vendorCode) && relatedCodes.Contains(vendorCode))
+        AddException(dt, idx, "Related Party Transaction", "Vendor Master Data", "Critical", 9m,
+          $"Vendor {vendorCode} ({vendorName}) is a related party");
+
+      // Vendor not in master
+      if (!string.IsNullOrWhiteSpace(vendorCode) && vendorMaster.Any() && !vendorMaster.ContainsKey(vendorCode))
+        AddException(dt, idx, "Vendor Not in Master", "Vendor Master Data", "High", 7m,
+          $"Vendor code {vendorCode} not found in vendor master");
+
+      // Name mismatch
+      if (!string.IsNullOrWhiteSpace(vendorCode) && vendorMaster.ContainsKey(vendorCode))
+      {
+        var masterName = vendorMaster[vendorCode];
+        if (!string.IsNullOrWhiteSpace(vendorName) &&
+            !vendorName.Equals(masterName, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(masterName))
+          AddException(dt, idx, "Vendor Name Mismatch", "Vendor Master Data", "High", 7m,
+            $"Transaction: '{vendorName}' vs Master: '{masterName}'");
+      }
+
+      // Payment without PO reference
+      if ((docType == "KR" || docType == "RE") &&
+          string.IsNullOrWhiteSpace(ColVal(row, "purchase_doc")) &&
+          amt > 0)
+        AddException(dt, idx, "Payment Without PO", "Vendor Master Data", "Medium", 5m,
+          $"Vendor payment (doc type {docType}) with no purchase order reference");
+
+      idx++;
+    }
+    return dt;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Benford's Law Test
+  // ─────────────────────────────────────────────────────────────────
+  private void RunBenfordTest()
+  {
+    if (_df == null) return;
+
+    // Expected Benford distribution for digits 1-9
+    double[] expected = { .301, .176, .125, .097, .079, .067, .058, .051, .046 };
+
+    var counts = new int[9]; // index 0 = digit 1, ..., index 8 = digit 9
+    int total  = 0;
+
+    foreach (DataRow row in _df.Rows)
+    {
+      var amtStr = ColVal(row, "amount");
+      var amt    = Math.Abs(ParseAmount(amtStr));
+      if (amt <= 0) continue;
+
+      // First significant digit
+      var digits = amt.ToString("0").TrimStart('0');
+      if (digits.Length > 0 && char.IsDigit(digits[0]))
+      {
+        int d = digits[0] - '0';
+        if (d >= 1 && d <= 9) { counts[d - 1]++; total++; }
+      }
+    }
+
+    var benford = new DataTable();
+    benford.Columns.Add("Digit",    typeof(int));
+    benford.Columns.Add("Expected", typeof(double));
+    benford.Columns.Add("Observed", typeof(double));
+    benford.Columns.Add("Count",    typeof(int));
+
+    var chi2 = new DataTable();
+    chi2.Columns.Add("Statistic", typeof(string));
+    chi2.Columns.Add("Value",     typeof(double));
+
+    double chiSqStat = 0;
+    for (int i = 0; i < 9; i++)
+    {
+      double obs = total > 0 ? (double)counts[i] / total : 0;
+      double exp = expected[i];
+      benford.Rows.Add(i + 1, Math.Round(exp, 4), Math.Round(obs, 4), counts[i]);
+      double exp_n = exp * total;
+      if (exp_n > 0) chiSqStat += Math.Pow(counts[i] - exp_n, 2) / exp_n;
+    }
+    // df=8, critical value at 0.05 = 15.507
+    bool significant = chiSqStat > 15.507;
+    chi2.Rows.Add("Chi-Square Statistic", Math.Round(chiSqStat, 4));
+    chi2.Rows.Add("Critical Value (α=0.05)", 15.507);
+    chi2.Rows.Add("Significant Deviation", significant ? 1.0 : 0.0);
+
+    _benfordDF = benford;
+    _chi2DF    = chi2;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  ML Anomaly Detection (Isolation Forest stub)
+  // ─────────────────────────────────────────────────────────────────
+  private DataTable RunIsolationForest()
+  {
+    var dt = MakeExceptionTable();
+    if (_df == null) return dt;
+
+    // Stub: flag top-5% by amount as anomalies (replace with ML.NET IsolationForest)
+    var amounts = new List<(int idx, decimal amt)>();
+    int i = 0;
+    foreach (DataRow row in _df.Rows)
+    {
+      var a = Math.Abs(ParseAmount(ColVal(row, "amount")));
+      amounts.Add((i, a));
+      i++;
+    }
+    var sorted  = amounts.OrderByDescending(x => x.amt).ToList();
+    int topCount = Math.Max(1, (int)(sorted.Count * 0.05));
+    foreach (var (rowIdx, amt) in sorted.Take(topCount))
+      AddException(dt, rowIdx, "ML Anomaly (High Amount)", "System & Entry Nature", "High", 7m,
+        $"Isolation Forest flagged amount {amt:N0} as anomalous (top 5%)");
+
+    return dt;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Risk calculation helpers
+  // ─────────────────────────────────────────────────────────────────
+  private static DataTable MakeExceptionTable()
+  {
+    var dt = new DataTable();
+    dt.Columns.Add("original_index",    typeof(int));
+    dt.Columns.Add("Exception Type");
+    dt.Columns.Add("Exception Category");
+    dt.Columns.Add("Risk Level");
+    dt.Columns.Add("Risk Score",        typeof(decimal));
+    dt.Columns.Add("Detail");
+    return dt;
+  }
+
+  private static void AddException(DataTable dt, int idx, string type, string category,
+                                   string risk, decimal score, string detail)
+    => dt.Rows.Add(idx, type, category, risk, score, detail);
+
+  private DataTable CalculateTransactionRisk(DataTable exceptions)
+  {
+    // Aggregate risk per original_index
+    var groups = exceptions.AsEnumerable()
+      .GroupBy(r => (int)r["original_index"])
+      .Select(g => new
+      {
+        Index    = g.Key,
+        Score    = g.Sum(r => (decimal)r["Risk Score"]),
+        Count    = g.Count(),
+        TopRisk  = g.OrderByDescending(r => (decimal)r["Risk Score"])
+                    .First()["Risk Level"].ToString()!,
+        Types    = string.Join("; ", g.Select(r => r["Exception Type"]).Distinct())
+      })
+      .OrderByDescending(x => x.Score)
+      .ToList();
+
+    var dt = new DataTable();
+    dt.Columns.Add("Row #",           typeof(int));
+    dt.Columns.Add("Risk Score",      typeof(decimal));
+    dt.Columns.Add("Exception Count", typeof(int));
+    dt.Columns.Add("Risk Level");
+    dt.Columns.Add("Exception Types");
+    dt.Columns.Add("Amount");
+    dt.Columns.Add("User ID");
+
+    foreach (var g in groups)
+    {
+      string amt = _df != null && g.Index < _df.Rows.Count
+        ? ColVal(_df.Rows[g.Index], "amount") : "";
+      string uid = _df != null && g.Index < _df.Rows.Count
+        ? ColVal(_df.Rows[g.Index], "user_id") : "";
+      dt.Rows.Add(g.Index + 1, g.Score, g.Count, g.TopRisk, g.Types, amt, uid);
+    }
+    return dt;
+  }
+
+  private DataTable RankUsers(DataTable exceptions)
+  {
+    if (_df == null) return new DataTable();
+
+    var userScores = new Dictionary<string, (decimal score, int count)>(StringComparer.OrdinalIgnoreCase);
+    foreach (DataRow r in exceptions.Rows)
+    {
+      int rowIdx = (int)r["original_index"];
+      if (rowIdx >= _df.Rows.Count) continue;
+      var uid = ColVal(_df.Rows[rowIdx], "user_id");
+      if (string.IsNullOrWhiteSpace(uid)) uid = "(unknown)";
+      var score = (decimal)r["Risk Score"];
+      var (prevScore, prevCount) = userScores.GetValueOrDefault(uid, (0m, 0));
+      userScores[uid] = (prevScore + score, prevCount + 1);
+    }
+
+    var dt = new DataTable();
+    dt.Columns.Add("User ID");
+    dt.Columns.Add("Total Risk Score", typeof(decimal));
+    dt.Columns.Add("Exception Count",  typeof(int));
+    dt.Columns.Add("Risk Rating");
+
+    foreach (var (uid, (score, cnt)) in userScores.OrderByDescending(k => k.Value.score))
+    {
+      string rating = score >= 50 ? "Critical" : score >= 20 ? "High" : score >= 10 ? "Medium" : "Low";
+      dt.Rows.Add(uid, score, cnt, rating);
+    }
+    return dt;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Sampling
+  // ─────────────────────────────────────────────────────────────────
+  private void GenerateSample()
+  {
+    if (_exceptionsDF == null || _exceptionsDF.Rows.Count == 0) return;
+    var filtered = GetFilteredExceptions();
+    if (filtered.Rows.Count == 0) return;
+
+    var rng  = new Random();
+    var rows = filtered.AsEnumerable().ToList();
+
+    IEnumerable<DataRow> selected = _sampleStrategy switch
+    {
+      "Risk-Based" => rows.OrderByDescending(r => (decimal)r["Risk Score"]).Take(_sampleCount),
+      "Systematic" => rows.Where((_, i) => i % Math.Max(1, rows.Count / _sampleCount) == 0).Take(_sampleCount),
+      _            => rows.OrderBy(_ => rng.Next()).Take(_sampleCount)
+    };
+
+    _sampleResult = selected.Any() ? selected.CopyToDataTable() : null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Filtering helper
+  // ─────────────────────────────────────────────────────────────────
+  private DataTable GetFilteredExceptions()
+  {
+    if (_exceptionsDF == null) return new DataTable();
+    var rows = _exceptionsDF.AsEnumerable();
+
+    if (_filterCategory != "All")
+      rows = rows.Where(r => r["Exception Category"].ToString() == _filterCategory);
+    if (_filterRisk != "All")
+      rows = rows.Where(r => r["Risk Level"].ToString() == _filterRisk);
+    if (!string.IsNullOrWhiteSpace(_filterKeyword))
+    {
+      var kw = _filterKeyword.ToLower();
+      rows = rows.Where(r =>
+        r["Exception Type"].ToString()!.ToLower().Contains(kw) ||
+        r["Detail"].ToString()!.ToLower().Contains(kw));
+    }
+    var list = rows.ToList();
+    return list.Any() ? list.CopyToDataTable() : _exceptionsDF.Clone();
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Export
+  // ─────────────────────────────────────────────────────────────────
+  private async Task GenerateCsvExport()
+  {
+    if (_exceptionsDF == null) return;
+    var sb = new StringBuilder();
+    sb.AppendLine(string.Join(",", _exceptionsDF.Columns.Cast<DataColumn>().Select(c => c.ColumnName)));
+    foreach (DataRow row in _exceptionsDF.Rows)
+      sb.AppendLine(string.Join(",", row.ItemArray.Select(v => $"\"{v}\"")));
+    var bytes = Encoding.UTF8.GetBytes(sb.ToString());
+    var b64   = Convert.ToBase64String(bytes);
+    await JSRuntime.InvokeVoidAsync("downloadFile", "JE_Exceptions.csv", "text/csv", b64);
+  }
+
+  private async Task GenerateExcelReport()
+  {
+    // EPPlus implementation (requires NuGet package):
+    // using OfficeOpenXml;
+    // ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
+    // using var pkg = new ExcelPackage();
+    // AddSheet(pkg, "Exceptions",     _exceptionsDF);
+    // AddSheet(pkg, "Transaction Risk",_txRiskDF);
+    // AddSheet(pkg, "User Risk",       _userRiskDF);
+    // AddSheet(pkg, "Benford",         _benfordDF);
+    // var bytes = pkg.GetAsByteArray();
+    // await JSRuntime.InvokeVoidAsync("downloadFile","JE_Audit_Report.xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",Convert.ToBase64String(bytes));
+    await JSRuntime.InvokeVoidAsync("alert", "Excel export requires EPPlus NuGet package. See code comments.");
+  }
+
+  private string AuditConclusion()
+  {
+    if (_exceptionsDF == null) return "Low";
+    int critical = _exceptionsDF.AsEnumerable().Count(r => r["Risk Level"].ToString() == "Critical");
+    int high     = _exceptionsDF.AsEnumerable().Count(r => r["Risk Level"].ToString() == "High");
+    if (critical >= 5 || high >= 20) return "Significant";
+    if (critical >= 1 || high >= 5)  return "Moderate";
+    return "Low";
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  Chart helpers (Plotly.js via JS interop)
+  // ─────────────────────────────────────────────────────────────────
+  protected override async Task OnAfterRenderAsync(bool firstRender)
+  {
+    if (_currentPage == "dashboard" && _runDone)
+      await RenderChartsAsync();
+  }
+
+  private async Task RenderChartsAsync()
+  {
+    try
+    {
+      if (_exceptionsDF != null && _exceptionsDF.Rows.Count > 0)
+      {
+        // Bar chart: exceptions by category
+        var catGroups = _exceptionsDF.AsEnumerable()
+          .GroupBy(r => r["Exception Category"].ToString())
+          .ToDictionary(g => g.Key!, g => g.Count());
+        var catJson = JsonSerializer.Serialize(new
+        {
+          x = catGroups.Keys.ToArray(),
+          y = catGroups.Values.ToArray(),
+          type = "bar",
+          marker = new { color = "#667eea" }
+        });
+        await JSRuntime.InvokeVoidAsync("renderPlotly", "chart-category", catJson, "Exception Count by Category");
+
+        // Pie: risk breakdown
+        var riskGroups = _exceptionsDF.AsEnumerable()
+          .GroupBy(r => r["Risk Level"].ToString())
+          .ToDictionary(g => g.Key!, g => g.Count());
+        var pieJson = JsonSerializer.Serialize(new
+        {
+          labels  = riskGroups.Keys.ToArray(),
+          values  = riskGroups.Values.ToArray(),
+          type    = "pie",
+          hole    = 0.4,
+          marker  = new { colors = new[]{ "#FF3B3B","#FF8C00","#F5A623","#4CAF50" } }
+        });
+        await JSRuntime.InvokeVoidAsync("renderPlotly", "chart-risk", pieJson, "Risk Distribution");
+
+        // User exception bar
+        if (_userRiskDF != null && _userRiskDF.Rows.Count > 0)
+        {
+          var top10Users = _userRiskDF.AsEnumerable().Take(10).ToList();
+          var userBarJson = JsonSerializer.Serialize(new
+          {
+            x    = top10Users.Select(r => r["User ID"].ToString()).ToArray(),
+            y    = top10Users.Select(r => Convert.ToDouble(r["Total Risk Score"])).ToArray(),
+            type = "bar",
+            marker = new { color = "#764ba2" }
+          });
+          await JSRuntime.InvokeVoidAsync("renderPlotly", "chart-users", userBarJson, "Top 10 Risky Users");
+        }
+
+        // Benford chart
+        if (_benfordDF != null && _benfordDF.Rows.Count > 0)
+        {
+          var digits   = Enumerable.Range(1, 9).Select(d => d.ToString()).ToArray();
+          var expected = _benfordDF.AsEnumerable().Select(r => Convert.ToDouble(r["Expected"])).ToArray();
+          var observed = _benfordDF.AsEnumerable().Select(r => Convert.ToDouble(r["Observed"])).ToArray();
+          var benfordJson = JsonSerializer.Serialize(new object[]
+          {
+            new { x=digits, y=expected, type="bar", name="Expected", marker=new{color="#667eea"} },
+            new { x=digits, y=observed, type="scatter", mode="lines+markers", name="Observed", line=new{color="#FF3B3B"} }
+          });
+          await JSRuntime.InvokeVoidAsync("renderPlotlyMulti", "chart-benford", benfordJson, "Benford's Law Analysis");
+        }
+      }
+    }
+    catch { /* JS interop may not be ready on first render */ }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  FILE UPLOAD HANDLERS
+  // ═══════════════════════════════════════════════════════════════════
+
+  private async Task OnGlFileChanged(InputFileChangeEventArgs e)
+  {
+    _uploadStatus = "⏳ Parsing file...";
+    StateHasChanged();
+    var file = e.File;
+    _df = await ParseFileToDataTable(file);
+    if (_df != null)
+    {
+      AutoMapColumns();
+      _uploadStatus = $"✅ Loaded {_df.Rows.Count:N0} rows × {_df.Columns.Count} columns from '{file.Name}'";
+    }
+  }
+
+  private async Task OnDocTypeFileChanged(InputFileChangeEventArgs e)
+  {
+    var dt = await ParseFileToDataTable(e.File);
+    if (dt != null && dt.Columns.Count >= 2)
+    {
+      _docTypeMap.Clear();
+      foreach (DataRow r in dt.Rows)
+      {
+        var k = r[0]?.ToString() ?? ""; var v = r[1]?.ToString() ?? "";
+        if (!string.IsNullOrWhiteSpace(k)) _docTypeMap[k] = v;
+      }
+      _docTypeStatus = $"✅ {_docTypeMap.Count} doc types loaded";
+    }
+  }
+
+  private async Task OnHolidayFileChanged(InputFileChangeEventArgs e)
+  {
+    var dt = await ParseFileToDataTable(e.File);
+    if (dt != null)
+    {
+      _customHolidays.Clear();
+      foreach (DataRow r in dt.Rows)
+        if (DateTime.TryParse(r[0]?.ToString(), out var d))
+          _customHolidays.Add(d.Date);
+      _holidayStatus = $"✅ {_customHolidays.Count} holidays loaded";
+    }
+  }
+
+  private async Task OnVendorFileChanged(InputFileChangeEventArgs e)
+  {
+    _vendorMasterDF = await ParseFileToDataTable(e.File);
+    _vendorStatus   = _vendorMasterDF != null
+      ? $"✅ {_vendorMasterDF.Rows.Count} vendor records loaded"
+      : "❌ Failed to parse vendor file";
+  }
+
+  private async Task OnRelatedPartyFileChanged(InputFileChangeEventArgs e)
+  {
+    var dt = await ParseFileToDataTable(e.File);
+    if (dt != null)
+    {
+      _relatedPartyList.Clear();
+      foreach (DataRow r in dt.Rows)
+      {
+        var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (int c = 0; c < dt.Columns.Count; c++)
+          d[dt.Columns[c].ColumnName] = r[c]?.ToString() ?? "";
+        _relatedPartyList.Add(d);
+      }
+      _relatedPartyStatus = $"✅ {_relatedPartyList.Count} related party records loaded";
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  RENDER FRAGMENTS — PAGE 1: UPLOAD DATA
+  // ═══════════════════════════════════════════════════════════════════
+
+  private RenderFragment RenderUploadPage() =>
+  @<div>
+    <div class="section-card">
+      <div class="section-title">📁 Upload Data Files</div>
+      <div class="alert alert-info">
+        Upload your GL / Journal Entry data along with reference master files.
+        Supported formats: <strong>.csv</strong>, <strong>.xlsx</strong> (EPPlus required for Excel).
+      </div>
+
+      @* ── GL / JE Data ── *@
+      <div class="form-group">
+        <label class="form-label">📊 GL / Journal Entry Data <span style="color:red">*</span></label>
+        <div class="upload-zone">
+          <div class="upload-icon">📂</div>
+          <div style="font-size:.9rem;color:#666;margin:.4rem 0;">Drag &amp; drop or click to browse</div>
+          <InputFile OnChange="OnGlFileChanged" accept=".csv,.xlsx,.xls" style="margin-top:.5rem;" />
+        </div>
+        @if (!string.IsNullOrEmpty(_uploadStatus))
+        {
+          <div class="alert @(_uploadStatus.StartsWith("✅") ? "alert-success" : _uploadStatus.StartsWith("❌") ? "alert-danger" : "alert-info")" style="margin-top:.4rem;">
+            @_uploadStatus
+          </div>
+        }
+      </div>
+
+      @* ── Data preview ── *@
+      @if (_df != null)
+      {
+        <div style="overflow-x:auto;max-height:260px;">
+          <table class="data-table">
+            <thead>
+              <tr>@foreach (DataColumn col in _df.Columns) { <th>@col.ColumnName</th> }</tr>
+            </thead>
+            <tbody>
+              @for (int r = 0; r < Math.Min(10, _df.Rows.Count); r++)
+              {
+                var row = _df.Rows[r];
+                <tr>@foreach (DataColumn col in _df.Columns) { <td>@row[col]</td> }</tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        @if (_df.Rows.Count > 10)
+        {
+          <div style="font-size:.8rem;color:#888;margin-top:.3rem;">
+            Showing 10 of @_df.Rows.Count rows
+          </div>
+        }
+      }
+    </div>
+
+    @* ── Reference Files ── *@
+    <div class="section-card">
+      <div class="section-title">📎 Reference / Master Files (Optional)</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+
+        <div class="form-group">
+          <label class="form-label">📄 Document Type Master</label>
+          <div class="upload-zone">
+            <InputFile OnChange="OnDocTypeFileChanged" accept=".csv,.xlsx,.xls" />
+          </div>
+          @if (!string.IsNullOrEmpty(_docTypeStatus))
+          {
+            <div class="alert alert-success" style="margin-top:.3rem;">@_docTypeStatus</div>
+          }
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">📅 Holiday List</label>
+          <div class="upload-zone">
+            <InputFile OnChange="OnHolidayFileChanged" accept=".csv,.xlsx,.xls" />
+          </div>
+          @if (!string.IsNullOrEmpty(_holidayStatus))
+          {
+            <div class="alert alert-success" style="margin-top:.3rem;">@_holidayStatus</div>
+          }
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">🏢 Vendor Master</label>
+          <div class="upload-zone">
+            <InputFile OnChange="OnVendorFileChanged" accept=".csv,.xlsx,.xls" />
+          </div>
+          @if (!string.IsNullOrEmpty(_vendorStatus))
+          {
+            <div class="alert alert-success" style="margin-top:.3rem;">@_vendorStatus</div>
+          }
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">🔗 Related Party List</label>
+          <div class="upload-zone">
+            <InputFile OnChange="OnRelatedPartyFileChanged" accept=".csv,.xlsx,.xls" />
+          </div>
+          @if (!string.IsNullOrEmpty(_relatedPartyStatus))
+          {
+            <div class="alert alert-success" style="margin-top:.3rem;">@_relatedPartyStatus</div>
+          }
+        </div>
+      </div>
+    </div>
+
+    <div style="text-align:right;">
+      <button class="btn btn-primary" @onclick='() => _currentPage = "mapping"'
+              disabled="@(_df == null)">
+        Next: Column Mapping →
+      </button>
+    </div>
+  </div>;
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  PAGE 2: COLUMN MAPPING
+  // ═══════════════════════════════════════════════════════════════════
+
+  private RenderFragment RenderMappingPage() =>
+  @<div>
+    <div class="section-card">
+      <div class="section-title">🔗 Column Mapping</div>
+      @if (_df == null)
+      {
+        <div class="alert alert-warning">Please upload GL data first (Upload Data page).</div>
+      }
+      else
+      {
+        <div class="alert alert-info">
+          Auto-mapping detected <strong>@_colMap.Count</strong> of @RequiredFields.Length fields.
+          Review and adjust the mappings below.
+        </div>
+
+        var availableCols = new[] { "(not mapped)" }.Concat(
+          _df.Columns.Cast<DataColumn>().Select(c => c.ColumnName)).ToArray();
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.7rem;">
+          @foreach (var field in RequiredFields)
+          {
+            _colMap.TryGetValue(field, out var mapped);
+            <div class="form-group" style="margin-bottom:.5rem;">
+              <label class="form-label" style="font-size:.8rem;">@field</label>
+              <select class="form-control"
+                      value="@(mapped ?? "(not mapped)")"
+                      @onchange='e => UpdateColMap(field, e.Value?.ToString())'>
+                @foreach (var col in availableCols)
+                {
+                  <option value="@col" selected="@(col == (mapped ?? "(not mapped)"))">@col</option>
+                }
+              </select>
+            </div>
+          }
+        </div>
+
+        <div style="margin-top:1rem;display:flex;gap:.7rem;flex-wrap:wrap;">
+          <button class="btn btn-secondary" @onclick="AutoMapColumns">🔄 Re-run Auto-Map</button>
+          <button class="btn btn-primary" @onclick='() => _currentPage = "params"'>
+            Next: Audit Parameters →
+          </button>
+        </div>
+      }
+    </div>
+  </div>;
+
+  private void UpdateColMap(string field, string? value)
+  {
+    if (value == null || value == "(not mapped)")
+      _colMap.Remove(field);
+    else
+      _colMap[field] = value;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  PAGE 3: AUDIT PARAMETERS
+  // ═══════════════════════════════════════════════════════════════════
+
+  private RenderFragment RenderParamsPage() =>
+  @<div>
+    <div class="section-card">
+      <div class="section-title">⚙️ Audit Parameters</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+
+        @* Client information *@
+        <div>
+          <div style="font-weight:700;color:#444;margin-bottom:.6rem;font-size:.95rem;">📋 Client Information</div>
+          <div class="form-group">
+            <label class="form-label">Client Name</label>
+            <input class="form-control" @bind="_clientName" placeholder="Enter client name" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Engagement Number</label>
+            <input class="form-control" @bind="_engagementNumber" placeholder="e.g. ENG-2024-001" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Audit Period Start</label>
+            <input class="form-control" type="date"
+                   value="@_periodStart.ToString("yyyy-MM-dd")"
+                   @onchange='e => DateTime.TryParse(e.Value?.ToString(), out _periodStart)' />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Audit Period End</label>
+            <input class="form-control" type="date"
+                   value="@_periodEnd.ToString("yyyy-MM-dd")"
+                   @onchange='e => DateTime.TryParse(e.Value?.ToString(), out _periodEnd)' />
+          </div>
+        </div>
+
+        @* Materiality *@
+        <div>
+          <div style="font-weight:700;color:#444;margin-bottom:.6rem;font-size:.95rem;">💰 Materiality Settings</div>
+          <div class="form-group">
+            <label class="form-label">Materiality Unit</label>
+            <select class="form-control" @bind="_materialityUnit">
+              <option>Rupees</option>
+              <option>Lakhs</option>
+              <option>Crores</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Materiality Value (@_materialityUnit)</label>
+            <input class="form-control" type="number" @bind="_materialityValue" min="0" step="0.01" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">High Risk Threshold (@_materialityUnit)</label>
+            <input class="form-control" type="number" @bind="_highRiskThreshold" min="0" step="0.01" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Large Transaction Threshold (@_materialityUnit)</label>
+            <input class="form-control" type="number" @bind="_largeTxThreshold" min="0" step="0.01" />
+          </div>
+        </div>
+
+        @* Control limits *@
+        <div>
+          <div style="font-weight:700;color:#444;margin-bottom:.6rem;font-size:.95rem;">🎛️ Control Limits</div>
+          <div class="form-group">
+            <label class="form-label">Round Amount Multiple</label>
+            <input class="form-control" type="number" @bind="_roundAmountMultiple" min="1" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Benford Significance Threshold (p-value)</label>
+            <input class="form-control" type="number" @bind="_benfordThreshold" min="0.01" max="0.2" step="0.01" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Sample Size (for sampling tool)</label>
+            <input class="form-control" type="number" @bind="_sampleSize" min="5" max="500" />
+          </div>
+        </div>
+
+        @* ML settings *@
+        <div>
+          <div style="font-weight:700;color:#444;margin-bottom:.6rem;font-size:.95rem;">🤖 ML Settings</div>
+          <div class="form-group" style="display:flex;align-items:center;gap:.5rem;margin-top:.8rem;">
+            <input type="checkbox" id="mlToggle" @bind="_enableML" style="accent-color:#667eea;width:18px;height:18px;" />
+            <label for="mlToggle" style="font-size:.9rem;cursor:pointer;">Enable ML Anomaly Detection</label>
+          </div>
+          @if (_enableML)
+          {
+            <div class="alert alert-info" style="margin-top:.5rem;font-size:.82rem;">
+              ML Anomaly Detection uses an Isolation Forest stub. For full ML.NET integration,
+              install the <strong>Microsoft.ML</strong> NuGet package and implement the
+              <code>RunIsolationForest</code> method.
+            </div>
+          }
+        </div>
+      </div>
+
+      <div style="margin-top:1rem;text-align:right;">
+        <button class="btn btn-primary" @onclick='() => { _runML = _enableML; _currentPage = "run"; }'>
+          Next: Run JE Tests →
+        </button>
+      </div>
+    </div>
+  </div>;
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  PAGE 4: RUN JE TESTS
+  // ═══════════════════════════════════════════════════════════════════
+
+  private RenderFragment RenderRunPage() =>
+  @<div>
+    <div class="section-card">
+      <div class="section-title">🚀 Run JE Tests</div>
+      @if (_df == null)
+      {
+        <div class="alert alert-warning">Please upload GL data before running tests.</div>
+      }
+      else
+      {
+        <div class="alert alert-info">
+          Dataset loaded: <strong>@_df.Rows.Count.ToString("N0")</strong> entries.
+          Select tests to execute and click <strong>Run Tests</strong>.
+        </div>
+
+        <div style="font-weight:700;color:#444;margin-bottom:.6rem;">Select Tests to Run:</div>
+        <div class="check-group" style="margin-bottom:1rem;">
+          <label class="check-item">
+            <input type="checkbox" @bind="_runAmount"  /> 💵 Amount Tests
+          </label>
+          <label class="check-item">
+            <input type="checkbox" @bind="_runTiming"  /> ⏰ Timing Tests
+          </label>
+          <label class="check-item">
+            <input type="checkbox" @bind="_runUser"    /> 👤 User &amp; Access Control
+          </label>
+          <label class="check-item">
+            <input type="checkbox" @bind="_runVendor"  /> 🏢 Vendor Master Data
+          </label>
+          <label class="check-item">
+            <input type="checkbox" @bind="_runBenford" /> 📐 Benford's Law
+          </label>
+          <label class="check-item">
+            <input type="checkbox" @bind="_runML" disabled="@(!_enableML)" /> 🤖 ML Anomaly Detection
+          </label>
+        </div>
+
+        @if (_isRunning)
+        {
+          <div style="margin-bottom:.8rem;">
+            <div style="font-size:.87rem;color:#555;margin-bottom:.3rem;">
+              Running tests… @_runProgress%
+            </div>
+            <div class="progress-bar-wrap">
+              <div class="progress-bar-fill" style="width:@(_runProgress)%;"></div>
+            </div>
+          </div>
+        }
+
+        <button class="btn btn-primary"
+                @onclick="async () => await RunAllTests()"
+                disabled="@_isRunning">
+          @(_isRunning ? "⏳ Running…" : "▶ Run Tests")
+        </button>
+
+        @if (!string.IsNullOrEmpty(_runLog))
+        {
+          <pre style="background:#1a1a2e;color:#c9d1e8;border-radius:.6rem;padding:.8rem;margin-top:1rem;font-size:.8rem;overflow-x:auto;white-space:pre-wrap;">@_runLog</pre>
+        }
+
+        @if (_runDone && _exceptionsDF != null)
+        {
+          <div style="margin-top:1rem;" class="kpi-grid">
+            @KpiCard("blue",   _df.Rows.Count.ToString("N0"),    "Total Entries")
+            @KpiCard("red",    _exceptionsDF.AsEnumerable().Count(r => r["Risk Level"].ToString() == "Critical").ToString(), "Critical")
+            @KpiCard("orange", _exceptionsDF.AsEnumerable().Count(r => r["Risk Level"].ToString() == "High").ToString(),     "High Risk")
+            @KpiCard("green",  _exceptionsDF.Rows.Count.ToString("N0"), "Total Exceptions")
+          </div>
+          <div style="text-align:right;margin-top:.5rem;">
+            <button class="btn btn-primary" @onclick='() => _currentPage = "results"'>
+              View Results →
+            </button>
+          </div>
+        }
+      }
+    </div>
+  </div>;
+
+  private RenderFragment KpiCard(string color, string value, string label) =>
+  @<div class="kpi-card @color">
+    <div class="kpi-val">@value</div>
+    <div class="kpi-lbl">@label</div>
+  </div>;
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  PAGE 5: EXCEPTION RESULTS
+  // ═══════════════════════════════════════════════════════════════════
+
+  private RenderFragment RenderResultsPage() =>
+  @<div>
+    @if (!_runDone || _exceptionsDF == null)
+    {
+      <div class="section-card">
+        <div class="alert alert-warning">Run JE Tests first to see exception results.</div>
+      </div>
+    }
+    else
+    {
+      @* ── KPI Summary ── *@
+      <div class="kpi-grid">
+        @KpiCard("blue",   _exceptionsDF.Rows.Count.ToString("N0"),                                                                    "Total Exceptions")
+        @KpiCard("red",    _exceptionsDF.AsEnumerable().Count(r => r["Risk Level"].ToString() == "Critical").ToString(),              "Critical")
+        @KpiCard("orange", _exceptionsDF.AsEnumerable().Count(r => r["Risk Level"].ToString() == "High").ToString(),                  "High")
+        @KpiCard("teal",   _exceptionsDF.AsEnumerable().Select(r => r["Exception Category"].ToString()).Distinct().Count().ToString(), "Categories")
+        @KpiCard("purple", (_userRiskDF?.Rows.Count ?? 0).ToString(),                                                                  "Risky Users")
+      </div>
+
+      @* ── Filters ── *@
+      <div class="section-card">
+        <div class="section-title">🔍 Filters</div>
+        <div style="display:flex;gap:.8rem;flex-wrap:wrap;align-items:flex-end;">
+          <div class="form-group" style="min-width:160px;margin:0;">
+            <label class="form-label">Category</label>
+            <select class="form-control" @bind="_filterCategory">
+              <option>All</option>
+              @foreach (var cat in ExceptionCategories)
+              { <option>@cat</option> }
+            </select>
+          </div>
+          <div class="form-group" style="min-width:120px;margin:0;">
+            <label class="form-label">Risk Level</label>
+            <select class="form-control" @bind="_filterRisk">
+              <option>All</option>
+              <option>Critical</option>
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+            </select>
+          </div>
+          <div class="form-group" style="flex:1;min-width:160px;margin:0;">
+            <label class="form-label">Keyword Search</label>
+            <input class="form-control" @bind="_filterKeyword" placeholder="Search types, details…" />
+          </div>
+        </div>
+      </div>
+
+      @* ── Exception table ── *@
+      <div class="section-card">
+        <div class="section-title">📋 Exception Details</div>
+        @{
+          var filtered = GetFilteredExceptions();
+          <div style="font-size:.83rem;color:#666;margin-bottom:.6rem;">
+            Showing @filtered.Rows.Count exception(s)
+          </div>
+          <div style="overflow-x:auto;max-height:380px;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Exception Type</th>
+                  <th>Category</th>
+                  <th>Risk Level</th>
+                  <th>Score</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                @{ int rowNum = 0; }
+                @foreach (DataRow r in filtered.Rows)
+                {
+                  rowNum++;
+                  <tr>
+                    <td>@rowNum</td>
+                    <td>@r["Exception Type"]</td>
+                    <td>@r["Exception Category"]</td>
+                    <td><span class="@RiskBadgeClass(r["Risk Level"]?.ToString() ?? "Low")">@r["Risk Level"]</span></td>
+                    <td>@r["Risk Score"]</td>
+                    <td style="max-width:320px;word-wrap:break-word;font-size:.8rem;">@r["Detail"]</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+
+      @* ── Top Risky Transactions ── *@
+      @if (_txRiskDF != null && _txRiskDF.Rows.Count > 0)
+      {
+        <div class="section-card">
+          <div class="section-title">🔥 Top Risky Transactions</div>
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  @foreach (DataColumn c in _txRiskDF.Columns)
+                  { <th>@c.ColumnName</th> }
+                </tr>
+              </thead>
+              <tbody>
+                @foreach (DataRow r in _txRiskDF.AsEnumerable().Take(20))
+                {
+                  <tr>
+                    @foreach (DataColumn c in _txRiskDF.Columns)
+                    {
+                      @if (c.ColumnName == "Risk Level")
+                      { <td><span class="@RiskBadgeClass(r[c]?.ToString() ?? "Low")">@r[c]</span></td> }
+                      else
+                      { <td>@r[c]</td> }
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+
+      @* ── User Risk Ranking ── *@
+      @if (_userRiskDF != null && _userRiskDF.Rows.Count > 0)
+      {
+        <div class="section-card">
+          <div class="section-title">👤 User Risk Ranking</div>
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  @foreach (DataColumn c in _userRiskDF.Columns)
+                  { <th>@c.ColumnName</th> }
+                </tr>
+              </thead>
+              <tbody>
+                @foreach (DataRow r in _userRiskDF.Rows)
+                {
+                  <tr>
+                    @foreach (DataColumn c in _userRiskDF.Columns)
+                    {
+                      @if (c.ColumnName == "Risk Rating")
+                      { <td><span class="@RiskBadgeClass(r[c]?.ToString() ?? "Low")">@r[c]</span></td> }
+                      else
+                      { <td>@r[c]</td> }
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      }
+
+      @* ── Sampling Tool ── *@
+      <div class="section-card">
+        <div class="section-title">🎲 Sampling Tool</div>
+        <div style="display:flex;gap:.8rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.8rem;">
+          <div class="form-group" style="min-width:120px;margin:0;">
+            <label class="form-label">Sample Size</label>
+            <input class="form-control" type="number" @bind="_sampleCount" min="1" max="500" />
+          </div>
+          <div class="form-group" style="min-width:140px;margin:0;">
+            <label class="form-label">Strategy</label>
+            <select class="form-control" @bind="_sampleStrategy">
+              <option>Random</option>
+              <option>Risk-Based</option>
+              <option>Systematic</option>
+            </select>
+          </div>
+          <button class="btn btn-primary btn-sm" @onclick="GenerateSample">Generate Sample</button>
+        </div>
+        @if (_sampleResult != null && _sampleResult.Rows.Count > 0)
+        {
+          <div style="overflow-x:auto;">
+            <table class="data-table">
+              <thead>
+                <tr>@foreach (DataColumn c in _sampleResult.Columns) { <th>@c.ColumnName</th> }</tr>
+              </thead>
+              <tbody>
+                @foreach (DataRow r in _sampleResult.Rows)
+                {
+                  <tr>
+                    @foreach (DataColumn c in _sampleResult.Columns)
+                    {
+                      @if (c.ColumnName == "Risk Level")
+                      { <td><span class="@RiskBadgeClass(r[c]?.ToString() ?? "Low")">@r[c]</span></td> }
+                      else
+                      { <td>@r[c]</td> }
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </div>
+    }
+  </div>;
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  PAGE 6: DASHBOARD
+  // ═══════════════════════════════════════════════════════════════════
+
+  private RenderFragment RenderDashboard() =>
+  @<div>
+    @if (!_runDone)
+    {
+      <div class="section-card">
+        <div class="alert alert-warning">Run JE Tests first to populate the dashboard.</div>
+      </div>
+    }
+    else
+    {
+      @* ── Summary KPIs ── *@
+      <div class="kpi-grid">
+        @KpiCard("blue",   (_df?.Rows.Count ?? 0).ToString("N0"),   "Total JE Entries")
+        @KpiCard("red",    (_exceptionsDF?.Rows.Count ?? 0).ToString("N0"), "Total Exceptions")
+        @if (_exceptionsDF != null)
+        {
+          @KpiCard("orange", _exceptionsDF.AsEnumerable().Count(r => r["Risk Level"].ToString() == "Critical").ToString(), "Critical Risks")
+          @KpiCard("green",  _exceptionsDF.AsEnumerable().Select(r=>r["Exception Category"].ToString()).Distinct().Count().ToString(), "Categories Hit")
+          var pct = _df != null && _df.Rows.Count > 0
+            ? (100.0 * _exceptionsDF.Rows.Count / _df.Rows.Count).ToString("N1") + "%"
+            : "—";
+          @KpiCard("teal", pct, "Exception Rate")
+        }
+        @KpiCard("purple", (_userRiskDF?.Rows.Count ?? 0).ToString(), "Risky Users")
+      </div>
+
+      @* ── Charts row 1 ── *@
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:1rem;margin-bottom:1rem;">
+        <div class="section-card" style="margin:0;">
+          <div class="section-title">📊 Exceptions by Category</div>
+          <div class="chart-container" id="chart-category"></div>
+        </div>
+        <div class="section-card" style="margin:0;">
+          <div class="section-title">🥧 Risk Distribution</div>
+          <div class="chart-container" id="chart-risk"></div>
+        </div>
+      </div>
+
+      @* ── Charts row 2 ── *@
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1rem;">
+        <div class="section-card" style="margin:0;">
+          <div class="section-title">👤 Top Risky Users</div>
+          <div class="chart-container" id="chart-users"></div>
+        </div>
+        <div class="section-card" style="margin:0;">
+          <div class="section-title">📐 Benford's Law</div>
+          <div class="chart-container" id="chart-benford"></div>
+        </div>
+      </div>
+
+      @* ── Benford chi-square summary ── *@
+      @if (_chi2DF != null && _chi2DF.Rows.Count > 0)
+      {
+        <div class="section-card">
+          <div class="section-title">χ² Benford Test Results</div>
+          <table class="data-table" style="max-width:400px;">
+            <thead><tr><th>Statistic</th><th>Value</th></tr></thead>
+            <tbody>
+              @foreach (DataRow r in _chi2DF.Rows)
+              {
+                <tr><td>@r["Statistic"]</td><td>@r["Value"]</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    }
+  </div>;
+
+  // ═══════════════════════════════════════════════════════════════════
+  //  PAGE 7: EXPORT RESULTS
+  // ═══════════════════════════════════════════════════════════════════
+
+  private RenderFragment RenderExportPage() =>
+  @<div>
+    @if (!_runDone)
+    {
+      <div class="section-card">
+        <div class="alert alert-warning">Run JE Tests first before exporting.</div>
+      </div>
+    }
+    else
+    {
+      @* ── Audit Working Paper ── *@
+      <div class="section-card">
+        <div class="section-title">📄 Audit Working Paper Preview</div>
+        @{
+          var conclusion   = AuditConclusion();
+          var conclColor   = conclusion == "Significant" ? "#FF3B3B" : conclusion == "Moderate" ? "#FF8C00" : "#4CAF50";
+          var criticalCnt  = _exceptionsDF?.AsEnumerable().Count(r => r["Risk Level"].ToString() == "Critical") ?? 0;
+          var highCnt      = _exceptionsDF?.AsEnumerable().Count(r => r["Risk Level"].ToString() == "High")     ?? 0;
+          var medCnt       = _exceptionsDF?.AsEnumerable().Count(r => r["Risk Level"].ToString() == "Medium")   ?? 0;
+          var lowCnt       = _exceptionsDF?.AsEnumerable().Count(r => r["Risk Level"].ToString() == "Low")      ?? 0;
+        }
+        <div style="background:#f8f9ff;border-radius:.8rem;padding:1.5rem;border:1px solid #e8eaf6;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:1rem;margin-bottom:1.2rem;">
+            <div>
+              <div style="font-size:1.3rem;font-weight:700;color:#1a1a2e;">JE Audit Working Paper</div>
+              <div style="color:#666;font-size:.88rem;margin-top:.2rem;">Journal Entry Analytics — Exception Summary</div>
+            </div>
+            <div style="text-align:right;">
+              @if (!string.IsNullOrWhiteSpace(_clientName))
+              { <div style="font-weight:600;">@_clientName</div> }
+              @if (!string.IsNullOrWhiteSpace(_engagementNumber))
+              { <div style="color:#666;font-size:.85rem;">Ref: @_engagementNumber</div> }
+              <div style="color:#666;font-size:.85rem;">Period: @_periodStart.ToString("dd MMM yyyy") – @_periodEnd.ToString("dd MMM yyyy")</div>
+              <div style="color:#666;font-size:.85rem;">Prepared: @DateTime.Today.ToString("dd MMM yyyy")</div>
+            </div>
+          </div>
+
+          <hr style="border-color:#e8eaf6;margin-bottom:1rem;" />
+
+          <div style="margin-bottom:1rem;">
+            <div style="font-weight:700;margin-bottom:.5rem;">Executive Summary</div>
+            <table class="data-table" style="max-width:460px;">
+              <tr><td>Total JE Entries Reviewed</td><td><strong>@(_df?.Rows.Count.ToString("N0") ?? "—")</strong></td></tr>
+              <tr><td>Total Exceptions Flagged</td><td><strong>@(_exceptionsDF?.Rows.Count.ToString("N0") ?? "0")</strong></td></tr>
+              <tr><td>Critical</td><td><span class="badge badge-critical">@criticalCnt</span></td></tr>
+              <tr><td>High</td><td><span class="badge badge-high">@highCnt</span></td></tr>
+              <tr><td>Medium</td><td><span class="badge badge-medium">@medCnt</span></td></tr>
+              <tr><td>Low</td><td><span class="badge badge-low">@lowCnt</span></td></tr>
+              <tr><td>Risky Users Identified</td><td><strong>@(_userRiskDF?.Rows.Count ?? 0)</strong></td></tr>
+            </table>
+          </div>
+
+          <div style="background:white;border-radius:.6rem;padding:1rem;border:2px solid @conclColor;">
+            <div style="font-size:.85rem;color:#666;margin-bottom:.2rem;">Overall Audit Conclusion</div>
+            <div style="font-size:1.5rem;font-weight:700;color:@conclColor;">@conclusion Risk</div>
+            <div style="font-size:.85rem;color:#555;margin-top:.4rem;">
+              @(conclusion == "Significant"
+                ? "Significant exceptions detected. Recommend further investigation and management escalation."
+                : conclusion == "Moderate"
+                ? "Moderate exceptions noted. Targeted follow-up procedures recommended."
+                : "Low level of exceptions detected. Standard monitoring controls appear effective.")
+            </div>
+          </div>
+        </div>
+      </div>
+
+      @* ── Export buttons ── *@
+      <div class="section-card">
+        <div class="section-title">⬇️ Export Options</div>
+        <div style="display:flex;gap:.8rem;flex-wrap:wrap;">
+          <button class="btn btn-success" @onclick="async () => await GenerateExcelReport()">
+            📊 Download Excel Report (.xlsx)
+          </button>
+          <button class="btn btn-primary" @onclick="async () => await GenerateCsvExport()">
+            📄 Download Exceptions CSV
+          </button>
+        </div>
+        <div class="alert alert-info" style="margin-top:.8rem;font-size:.82rem;">
+          <strong>Note:</strong> Excel export requires the <code>EPPlus</code> NuGet package.
+          CSV export works out-of-the-box. Add the JS helper below to <code>wwwroot/js/app.js</code>:
+          <pre style="margin:.5rem 0 0;font-size:.78rem;">window.downloadFile = (name, mime, b64) => {{ const a=document.createElement('a'); a.href=`data:${{mime}};base64,${{b64}}`; a.download=name; a.click(); }};</pre>
+        </div>
+      </div>
+    }
+  </div>;
+
+} @* end @code *@
+
+@* ─────────────────────────────────────────────────────────────────── *@
+@*  JS INTEROP HELPERS  (inline — alternatively put in wwwroot/js)     *@
+@* ─────────────────────────────────────────────────────────────────── *@
+<script>
+  // Plotly single-trace helper
+  window.renderPlotly = function (containerId, traceJson, title) {
+    var el = document.getElementById(containerId);
+    if (!el) return;
+    try {
+      var trace  = JSON.parse(traceJson);
+      var layout = { title: { text: title, font: { size: 13 } }, margin: { t: 36, l: 40, r: 16, b: 60 }, paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', height: 300 };
+      Plotly.newPlot(containerId, [trace], layout, { responsive: true, displayModeBar: false });
+    } catch(e) { console.warn('Plotly error', e); }
+  };
+
+  // Plotly multi-trace helper
+  window.renderPlotlyMulti = function (containerId, tracesJson, title) {
+    var el = document.getElementById(containerId);
+    if (!el) return;
+    try {
+      var traces = JSON.parse(tracesJson);
+      var layout = { title: { text: title, font: { size: 13 } }, margin: { t: 36, l: 40, r: 16, b: 60 }, paper_bgcolor: 'transparent', plot_bgcolor: 'transparent', height: 300, legend: { orientation: 'h', y: -0.2 } };
+      Plotly.newPlot(containerId, traces, layout, { responsive: true, displayModeBar: false });
+    } catch(e) { console.warn('Plotly error', e); }
+  };
+
+  // File download helper
+  window.downloadFile = function (filename, mime, base64) {
+    var a = document.createElement('a');
+    a.href = 'data:' + mime + ';base64,' + base64;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+</script>
