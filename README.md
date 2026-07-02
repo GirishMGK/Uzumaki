@@ -34,7 +34,22 @@ so you can run analysis immediately without building pivots first:
 The flat `Form 26AS - Part A` sheet remains the analysis-ready base table for
 your own pivots.
 
-## Run it locally
+## Easiest: double-click (Windows)
+
+1. Make sure **Python 3.9+** is installed (from
+   [python.org](https://www.python.org/downloads/) — tick *"Add Python to
+   PATH"* during install).
+2. **Double-click `Run-26AS-Formatter.bat`.**
+   - The first run sets everything up automatically (about a minute).
+   - A file picker opens — choose your 26AS file (`.txt`, `.xlsx`, `.pdf`, …).
+   - If it's a password-protected PDF, you'll be asked for the password
+     (your date of birth as `DDMMYYYY`, e.g. `15041985`).
+   - The formatted Excel is created next to your file and opens automatically.
+
+You can also **drag a 26AS file onto `Run-26AS-Formatter.bat`** to skip the
+picker.
+
+## Run from the command line
 
 ```bash
 # 1. (optional but recommended) create a virtual environment
