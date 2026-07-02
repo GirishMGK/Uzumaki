@@ -1,5 +1,5 @@
 """
-Disha Parquet Tool  —  Python / Streamlit port of the Sangir Analytics
+Uzumaki Parquet Tool  —  Python / Streamlit port of the Sangir Analytics
 WPF desktop application (DishaParquetTool).
 
 Rebuilds the desktop app's modules on the pandas / pyarrow / duckdb stack:
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import zipfile
 from datetime import datetime
 
@@ -349,26 +350,47 @@ def _page_analytics():
 # ══════════════════════════════════════════════════════════════════════════════
 # entry point
 # ══════════════════════════════════════════════════════════════════════════════
+def _header():
+    """Shared-theme hero header when available, plain fallback otherwise —
+    keeps this module runnable both inside the hub and stand-alone."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        from _pages.theme import page_header, footer
+    except Exception:
+        st.title("🗄️ Uzumaki Parquet Tool")
+        st.caption("CSV/Excel ↔ Parquet · Viewer · CSV Tools · DuckDB Analytics")
+        return lambda: None
+
+    page_header(
+        "🗄️", "Uzumaki Parquet Tool",
+        "CSV/Excel ↔ Parquet conversion, a schema/row-group viewer, CSV utilities, "
+        "and DuckDB SQL analytics — all in one place.",
+        badges=["Convert", "Viewer", "CSV Tools", "Analytics"],
+    )
+    return footer
+
+
 def render():
     """Mountable entry — called by the hub or by the stand-alone runner."""
-    st.title("Disha Parquet Tool")
-    st.caption("Sangir Analytics · CSV / Excel ↔ Parquet · Viewer · CSV Tools · DuckDB Analytics")
+    render_footer = _header()
     if not _HAS_ARROW:
         st.warning("`pyarrow` not found — parquet metadata is limited. Add `pyarrow` to requirements.txt.")
 
-    tab = st.radio("Module", ["Convert", "Viewer", "CSV Tools", "Analytics"],
-                   horizontal=True, key="pq_module")
-    st.divider()
-    if tab == "Convert":
+    tab_convert, tab_viewer, tab_csv, tab_analytics = st.tabs(
+        ["🔄 Convert", "👁️ Viewer", "🧰 CSV Tools", "📊 Analytics"]
+    )
+    with tab_convert:
         _page_convert()
-    elif tab == "Viewer":
+    with tab_viewer:
         _page_viewer()
-    elif tab == "CSV Tools":
+    with tab_csv:
         _page_csv_tools()
-    else:
+    with tab_analytics:
         _page_analytics()
+
+    render_footer()
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="Disha Parquet Tool", page_icon="🗄️", layout="wide")
+    st.set_page_config(page_title="Uzumaki Parquet Tool", page_icon="🗄️", layout="wide")
     render()

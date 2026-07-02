@@ -20,7 +20,7 @@ Runs automatically on every push/PR via `.github/workflows/ci.yml`.
 **Tools in the hub**
 | Tool | What it does |
 |------|--------------|
-| **Disha Parquet Tool** (`parquet_tool.py`) | Python/Streamlit port of the Sangir WPF app: Convert (CSV/Excel→Parquet w/ compression + type inference), Viewer (schema, row-groups, stats, filter, sort), CSV Tools (delimiter, encoding, merge, split-rows, schema-compare), Analytics (DuckDB SQL + query history). |
+| **Uzumaki Parquet Tool** (`parquet_tool.py`) | Python/Streamlit port of the Sangir WPF app: Convert (CSV/Excel→Parquet w/ compression + type inference), Viewer (schema, row-groups, stats, filter, sort), CSV Tools (delimiter, encoding, merge, split-rows, schema-compare), Analytics (DuckDB SQL + query history). |
 | **PF & Statutory** (`Combined_PF_Statutory.py`) | PF Challan / ECR Return / TRRN **and** ESI · PT · TDS · GSTR-1 · GSTR-3B extraction — already combined into one two-tab app (shared PDF-read/regex utilities). |
 | **Form 26AS Extractor** (`form26as_tool/`) | Flattens Form 26AS's nested Part A (TDS) into a flat, searchable table — every transaction row carries its deductor's Name and TAN. Combines multiple assessment years into one workbook (TRACES only lets you download one year at a time), with Summary-by-Year/Deductor/Section/Month rollup tabs. Auto-detects input format (caret-delimited `.txt`, `.xlsx`/`.xls`, HTML, password-protected PDF). Runs directly in the hub; also ships as a standalone CLI + double-click Windows GUI (`Run26ASFormatter.bat`). |
 | **PDF Tools** (`pdf_tools.py` + `tools/`) | Merge, split, edit (remove/insert/reorder pages) and PDF→Word. |
