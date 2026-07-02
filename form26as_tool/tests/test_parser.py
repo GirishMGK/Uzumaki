@@ -1,0 +1,73 @@
+"""End-to-end tests for the Form 26AS parser using a synthetic sample."""
+
+import os
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from form26as.loader import load_grid
+from form26as.parser import parse_part_a
+
+SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+SAMPLE = SAMPLES / "sample_26as.html"
+SAMPLE_TXT = SAMPLES / "sample_26as.txt"
+
+
+class TestParser(unittest.TestCase):
+    def setUp(self):
+        self.txns = parse_part_a(load_grid(SAMPLE))
+
+    def test_transaction_count(self):
+        # 2 transactions under the first deductor + 1 under the second.
+        self.assertEqual(len(self.txns), 3)
+
+    def test_deductor_attached_to_every_txn(self):
+        first = self.txns[0]
+        self.assertEqual(first.name_of_deductor, "ANIL KUMAR GANDHI")
+        self.assertEqual(first.tan_of_deductor, "AGRA10192A")
+        self.assertEqual(first.section, "194A")
+        self.assertEqual(first.transaction_date, "31-Mar-2026")
+        self.assertEqual(first.status_of_booking, "F")
+        self.assertEqual(first.date_of_booking, "01-Jun-2026")
+        self.assertEqual(first.amount_paid, 18786.32)
+        self.assertEqual(first.tax_deducted, 1879.00)
+        self.assertEqual(first.tds_deposited, 1879.00)
+        self.assertEqual(first.total_amount_paid, 299269.11)
+
+    def test_indian_number_format_parsed(self):
+        # "2,80,482.79" must parse to a float.
+        second = self.txns[1]
+        self.assertEqual(second.amount_paid, 280482.79)
+
+    def test_second_deductor(self):
+        third = self.txns[2]
+        self.assertEqual(third.name_of_deductor, "STATE BANK OF INDIA")
+        self.assertEqual(third.tan_of_deductor, "MUMS12345B")
+        self.assertEqual(third.amount_paid, 50000.00)
+
+
+class TestCaretDelimitedText(unittest.TestCase):
+    def setUp(self):
+        self.txns = parse_part_a(load_grid(SAMPLE_TXT))
+
+    def test_only_part_a_collected(self):
+        # 3 Part A transactions; Part A1 and Part B rows must be excluded.
+        self.assertEqual(len(self.txns), 3)
+        tans = {t.tan_of_deductor for t in self.txns}
+        self.assertIn("AGRA10192A", tans)
+        self.assertIn("MUMS12345B", tans)
+        self.assertNotIn("DELS99999Z", tans)  # Part A1 (15G/15H)
+        self.assertNotIn("JPRS55555Q", tans)  # Part B (TCS)
+
+    def test_fields_from_text(self):
+        first = self.txns[0]
+        self.assertEqual(first.name_of_deductor, "ANIL KUMAR GANDHI")
+        self.assertEqual(first.section, "194A")
+        self.assertEqual(first.amount_paid, 18786.32)
+        self.assertEqual(first.tds_deposited, 1879.00)
+
+
+if __name__ == "__main__":
+    unittest.main()

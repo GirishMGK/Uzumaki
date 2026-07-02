@@ -48,6 +48,11 @@ _TOOLS = [
         "desc": "PF Challan / ECR / TRRN, plus ESI · PT · TDS · GSTR-1 · GSTR-3B extraction and reconciliation.",
     },
     {
+        "group": "Statutory & Payroll",
+        "icon": "🧮", "title": "Form 26AS Extractor", "tag": "Streamlit",
+        "desc": "Flatten one or more Form 26AS downloads (Part A / TDS) into a single searchable, multi-year workbook.",
+    },
+    {
         "group": "Finance & Loan Audit",
         "icon": "📊", "title": "SOA · RPS · Reconcile", "tag": "Flask app",
         "desc": "L&T Finance SOA extractor with TOC/TOD validation, RPS parser, and SOA-vs-RPS reconciliation.",
@@ -94,7 +99,7 @@ def home():
             <p>A unified workspace for loan-audit, statutory-compliance, and document-processing
             tools — everything runs locally, nothing is uploaded to a server you don't control.</p>
             <div class="sa-badges">
-                <span class="sa-badge">7 tools</span>
+                <span class="sa-badge">8 tools</span>
                 <span class="sa-badge">Local-only processing</span>
                 <span class="sa-badge">Streamlit · Flask · Desktop · .NET</span>
             </div>
@@ -149,6 +154,7 @@ nav = st.navigation(
         "Tools": [
             st.Page("_pages/parquet.py", title="Disha Parquet Tool", icon="🗄️"),
             st.Page("_pages/pf_statutory.py", title="PF & Statutory", icon="🧾"),
+            st.Page("_pages/form26as_page.py", title="Form 26AS Extractor", icon="🧮"),
             st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),

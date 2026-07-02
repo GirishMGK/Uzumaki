@@ -1,0 +1,19 @@
+ASSESSMENT YEAR^2026-27
+PART A - Details of Tax Deducted at Source
+Sr. No.^Name of Deductor^TAN of Deductor^Total Amount Paid/Credited^Total Tax Deducted^Total TDS Deposited
+Sr. No.^Section^Transaction Date^Status of Booking^Date of Booking^Remarks^Amount Paid/Credited^Tax Deducted^TDS Deposited
+1^ANIL KUMAR GANDHI^AGRA10192A^299269.11^29926.00^29926.00
+1^194A^31-Mar-2026^F^01-Jun-2026^-^18786.32^1879.00^1879.00
+2^194A^31-Dec-2025^F^10-Feb-2026^-^2,80,482.79^28047.00^28047.00
+2^STATE BANK OF INDIA^MUMS12345B^50000.00^5000.00^5000.00
+1^194A^30-Jun-2025^F^15-Jul-2025^-^50000.00^5000.00^5000.00
+PART A1 - Details of Tax Deducted at Source for 15G / 15H
+Sr. No.^Name of Deductor^TAN of Deductor^Total Amount Paid/Credited^Total Tax Deducted^Total TDS Deposited
+Sr. No.^Section^Transaction Date^Status of Booking^Date of Booking^Remarks^Amount Paid/Credited^Tax Deducted^TDS Deposited
+1^SOME PAYER LTD^DELS99999Z^10000.00^0.00^0.00
+1^194A^01-Jan-2026^F^01-Feb-2026^-^10000.00^0.00^0.00
+PART B - Details of Tax Collected at Source
+Sr. No.^Name of Collector^TAN of Collector^Total Amount Paid/Debited^Total Tax Collected^Total TCS Deposited
+Sr. No.^Section^Transaction Date^Status of Booking^Date of Booking^Remarks^Amount Paid/Debited^Tax Collected^TCS Deposited
+1^SOME COLLECTOR LTD^JPRS55555Q^5000.00^500.00^500.00
+1^206C^01-Mar-2026^F^01-Apr-2026^-^5000.00^500.00^500.00

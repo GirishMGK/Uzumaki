@@ -17,3 +17,5 @@ xlsxwriter
 xlrd
 scikit-learn
 python-calamine
+beautifulsoup4
+lxml
