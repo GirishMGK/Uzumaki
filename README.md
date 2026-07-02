@@ -22,6 +22,18 @@ Amounts (including Indian-format numbers like `2,80,482.79`) are parsed to real
 numbers, and dates like `31-Mar-2026` are parsed to real dates, so sorting and
 filtering in Excel work correctly.
 
+## Summary tabs
+
+The Excel output also includes ready-made rollups (each with a grand-total row)
+so you can run analysis immediately without building pivots first:
+
+- **Summary by Deductor** — transactions and totals per Name/TAN
+- **Summary by Section** — totals per TDS section (194A, 192, …)
+- **Summary by Month** — totals per transaction month
+
+The flat `Form 26AS - Part A` sheet remains the analysis-ready base table for
+your own pivots.
+
 ## Install
 
 ```bash

@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 from typing import List
 
+from . import summary as _summary
 from .parser import COLUMNS, Transaction
 
 _NUMERIC_COLS = {
@@ -87,4 +88,64 @@ def write_xlsx(transactions: List[Transaction], path: str | Path) -> None:
     last_col = get_column_letter(len(COLUMNS))
     ws.auto_filter.ref = f"A1:{last_col}{max(ws.max_row, 1)}"
 
+    _write_summary_sheets(wb, transactions)
+
     wb.save(str(path))
+
+
+def _write_summary_sheets(wb, transactions: List[Transaction]) -> None:
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill("solid", fgColor="1F6390")
+    header_font = Font(bold=True, color="FFFFFF")
+    total_font = Font(bold=True)
+    money_cols = {"Amount Paid/Credited", "Tax Deducted", "TDS Deposited"}
+
+    grand = _summary.totals(transactions)
+
+    def add_sheet(title, key_headers, rows):
+        ws = wb.create_sheet(title=title)
+        headers = list(key_headers) + [
+            "Transactions",
+            "Amount Paid/Credited",
+            "Tax Deducted",
+            "TDS Deposited",
+        ]
+        ws.append(headers)
+        for col_idx in range(1, len(headers) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        for r in rows:
+            ws.append(list(r.key) + [r.count, r.amount_paid, r.tax_deducted, r.tds_deposited])
+
+        # Grand total row.
+        pad = [""] * (len(key_headers) - 1)
+        ws.append(["Total"] + pad + [grand.count, grand.amount_paid,
+                                     grand.tax_deducted, grand.tds_deposited])
+        for col_idx in range(1, len(headers) + 1):
+            ws.cell(row=ws.max_row, column=col_idx).font = total_font
+
+        # Money formatting + column widths.
+        for col_idx, name in enumerate(headers, start=1):
+            letter = get_column_letter(col_idx)
+            if name in money_cols:
+                for row_idx in range(2, ws.max_row + 1):
+                    ws.cell(row=row_idx, column=col_idx).number_format = "#,##0.00"
+            longest = len(name)
+            for row_idx in range(2, ws.max_row + 1):
+                value = ws.cell(row=row_idx, column=col_idx).value
+                if value is not None:
+                    longest = max(longest, len(str(value)))
+            ws.column_dimensions[letter].width = min(max(longest + 2, 12), 40)
+
+        ws.freeze_panes = "A2"
+        last = get_column_letter(len(headers))
+        ws.auto_filter.ref = f"A1:{last}{max(ws.max_row, 1)}"
+
+    add_sheet("Summary by Deductor", ("Name of Deductor", "TAN"), _summary.by_deductor(transactions))
+    add_sheet("Summary by Section", ("Section",), _summary.by_section(transactions))
+    add_sheet("Summary by Month", ("Month",), _summary.by_month(transactions))
