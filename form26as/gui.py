@@ -130,7 +130,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         if not transactions:
             messagebox.showwarning(
                 "No transactions found",
-                "None of the selected files produced any Part A (TDS) "
+                "None of the selected files produced any TDS/TCS "
                 "transactions.\n\n" + summary_text + "\n\n"
                 "Re-run from the command line with --debug for details.",
             )

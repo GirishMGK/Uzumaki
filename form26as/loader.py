@@ -38,6 +38,28 @@ def _looks_like_html(head: bytes) -> bool:
     return b"<html" in lowered or b"<table" in lowered or b"<!doctype html" in lowered
 
 
+def _xlsx_cell_to_str(value: object) -> str:
+    """Stringify a cell, keeping real date/datetime cells parseable downstream.
+
+    Excel stores dates as datetime objects (a too-narrow column just shows
+    "####" visually, the underlying value is a real date). str(datetime) adds
+    a " 00:00:00" suffix that the parser's date formats don't match, silently
+    downgrading the column to unparsed text - format date-only values as
+    plain ISO dates instead so they parse the same as every other input type.
+    """
+    import datetime as _dt
+
+    if value is None:
+        return ""
+    if isinstance(value, _dt.datetime):
+        if value.time() == _dt.time.min:
+            return value.strftime("%Y-%m-%d")
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(value, _dt.date):
+        return value.strftime("%Y-%m-%d")
+    return str(value).strip()
+
+
 def _load_xlsx(path: Path, password: Optional[str] = None) -> Grid:
     from openpyxl import load_workbook
 
@@ -52,7 +74,7 @@ def _load_xlsx(path: Path, password: Optional[str] = None) -> Grid:
     grid: Grid = []
     for ws in wb.worksheets:
         for row in ws.iter_rows(values_only=True):
-            grid.append(["" if c is None else str(c).strip() for c in row])
+            grid.append([_xlsx_cell_to_str(c) for c in row])
     wb.close()
     return grid
 
@@ -154,7 +176,7 @@ def _split_on_wide_gaps(line: str) -> List[str]:
 
 
 def _load_pdf(path: Path, password: Optional[str] = None) -> Grid:
-    """Extract Part-A-style tables from a (possibly password-protected) PDF.
+    """Extract TDS/TCS-style tables from a (possibly password-protected) PDF.
 
     Prefers pdfplumber's ruled-table extraction; if a page has no detectable
     table it falls back to splitting text lines on wide whitespace gaps.

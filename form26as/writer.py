@@ -12,11 +12,11 @@ from .parser import COLUMNS, Transaction
 
 _NUMERIC_COLS = {
     "Total Amount Paid/Credited",
-    "Total Tax Deducted",
-    "Total TDS Deposited",
+    "Total Tax Deducted/Collected",
+    "Total TDS/TCS Deposited",
     "Amount Paid/Credited",
-    "Tax Deducted",
-    "TDS Deposited",
+    "Tax Deducted/Collected",
+    "TDS/TCS Deposited",
 }
 _DATE_COLS = {"Transaction Date", "Date of Booking"}
 
@@ -46,7 +46,7 @@ def write_xlsx(transactions: List[Transaction], path: str | Path) -> None:
     path = Path(path)
     wb = Workbook()
     ws = wb.active
-    ws.title = "Form 26AS - Part A"
+    ws.title = "Form 26AS - TDS & TCS"
 
     header_fill = PatternFill("solid", fgColor="1F6390")
     header_font = Font(bold=True, color="FFFFFF")
@@ -100,7 +100,7 @@ def _write_summary_sheets(wb, transactions: List[Transaction]) -> None:
     header_fill = PatternFill("solid", fgColor="1F6390")
     header_font = Font(bold=True, color="FFFFFF")
     total_font = Font(bold=True)
-    money_cols = {"Amount Paid/Credited", "Tax Deducted", "TDS Deposited"}
+    money_cols = {"Amount Paid/Credited", "Tax Deducted/Collected", "TDS/TCS Deposited"}
 
     grand = _summary.totals(transactions)
 
@@ -109,8 +109,8 @@ def _write_summary_sheets(wb, transactions: List[Transaction]) -> None:
         headers = list(key_headers) + [
             "Transactions",
             "Amount Paid/Credited",
-            "Tax Deducted",
-            "TDS Deposited",
+            "Tax Deducted/Collected",
+            "TDS/TCS Deposited",
         ]
         ws.append(headers)
         for col_idx in range(1, len(headers) + 1):
@@ -146,9 +146,16 @@ def _write_summary_sheets(wb, transactions: List[Transaction]) -> None:
         last = get_column_letter(len(headers))
         ws.auto_filter.ref = f"A1:{last}{max(ws.max_row, 1)}"
 
+    categories = {t.category for t in transactions if t.category}
+    if len(categories) > 1:
+        add_sheet("Summary by Category", ("Category",), _summary.by_category(transactions))
     years = {t.assessment_year for t in transactions if t.assessment_year}
     if len(years) > 1:
         add_sheet("Summary by Year", ("Assessment Year",), _summary.by_year(transactions))
-    add_sheet("Summary by Deductor", ("Name of Deductor", "TAN"), _summary.by_deductor(transactions))
+    add_sheet(
+        "Summary by Deductor",
+        ("Category", "Name of Deductor/Collector", "TAN"),
+        _summary.by_deductor(transactions),
+    )
     add_sheet("Summary by Section", ("Section",), _summary.by_section(transactions))
     add_sheet("Summary by Month", ("Month",), _summary.by_month(transactions))

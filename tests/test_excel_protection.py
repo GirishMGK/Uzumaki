@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from form26as.loader import EncryptedExcelError, LegacyExcelError, load_grid
-from form26as.parser import parse_part_a
+from form26as.parser import parse_transactions
 
 try:
     from openpyxl import Workbook
@@ -62,7 +62,7 @@ class TestEncryptedExcel(unittest.TestCase):
             path = Path(d) / "26AS.xlsx"
             _build_encrypted_xlsx(path, "15041985")
             grid = load_grid(path, password="15041985")
-            txns = parse_part_a(grid)
+            txns = parse_transactions(grid)
         self.assertEqual(len(txns), 1)
         self.assertEqual(txns[0].name_of_deductor, "ANIL KUMAR GANDHI")
         self.assertEqual(txns[0].amount_paid, 18786.32)

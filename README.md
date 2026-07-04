@@ -1,43 +1,46 @@
 # Uzumaki — Form 26AS Formatter
 
 A small tool that takes one or more **Form 26AS** downloads (text, Excel, HTML,
-or PDF) and turns their nested **Part A** (Details of Tax Deducted at Source)
+or PDF) and turns their nested **TDS** (Part I) and **TCS** (Part VI) sections
 into a **flat, searchable table** — including combining **multiple years into
 a single workbook**, since TRACES only ever lets you download one assessment
 year at a time.
 
-In a raw 26AS, each deductor is a summary block with its transactions listed
-underneath, so the deductor's **Name** and **TAN** are not on the same row as
+In a raw 26AS, each deductor/collector is a summary block with its
+transactions listed underneath, so the Name and TAN are not on the same row as
 each transaction — which makes searching and filtering painful. This tool
-flattens everything so **every transaction row carries its deductor's Name and
-TAN**, then writes a clean Excel file (with AutoFilter + frozen header) and/or a
-CSV.
+flattens everything so **every transaction row carries its deductor/collector's
+Name and TAN**, then writes a clean Excel file (with AutoFilter + frozen
+header) and/or a CSV.
 
 ## Output columns
 
-Each row = one transaction, with deductor **and source file/year** context attached:
+Each row = one transaction, with deductor/collector **and source file/year/category** context attached:
 
-| Assessment Year | Source File | Deductor Sr. No. | Name of Deductor | TAN of Deductor | Total Amount Paid/Credited | Total Tax Deducted | Total TDS Deposited | Txn Sr. No. | Section | Transaction Date | Status of Booking | Date of Booking | Remarks | Amount Paid/Credited | Tax Deducted | TDS Deposited |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Assessment Year | Source File | Category | Deductor/Collector Sr. No. | Name of Deductor/Collector | TAN of Deductor/Collector | Total Amount Paid/Credited | Total Tax Deducted/Collected | Total TDS/TCS Deposited | Txn Sr. No. | Section | Transaction Date | Status of Booking | Date of Booking | Remarks | Amount Paid/Credited | Tax Deducted/Collected | TDS/TCS Deposited |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 
-Amounts (including Indian-format numbers like `2,80,482.79`) are parsed to real
-numbers, and dates like `31-Mar-2026` are parsed to real dates, so sorting and
-filtering in Excel work correctly. **Assessment Year** is auto-detected from
-each file's contents (falling back to a year found in the filename), so when
-you combine several years the rows stay distinguishable.
+**Category** is `TDS` or `TCS` so you can filter/pivot either on its own or
+together. Amounts (including Indian-format numbers like `2,80,482.79`) are
+parsed to real numbers, and dates (whether text like `31-Mar-2026` or a native
+Excel date cell) are parsed to real dates, so sorting and filtering in Excel
+work correctly. **Assessment Year** is auto-detected from each file's contents
+(falling back to a year found in the filename), so when you combine several
+years the rows stay distinguishable.
 
 ## Summary tabs
 
 The Excel output also includes ready-made rollups (each with a grand-total row)
 so you can run analysis immediately without building pivots first:
 
+- **Summary by Category** — TDS vs. TCS totals (only added when a file has both)
 - **Summary by Year** — totals per assessment year (only added when you convert more than one year at once)
-- **Summary by Deductor** — transactions and totals per Name/TAN
-- **Summary by Section** — totals per TDS section (194A, 192, …)
+- **Summary by Deductor** — transactions and totals per Category/Name/TAN (kept separate per category, since one entity can be both a TDS deductor and a TCS collector)
+- **Summary by Section** — totals per section (194A, 192, 206CL, 206CR, …)
 - **Summary by Month** — totals per transaction month
 
-The flat `Form 26AS - Part A` sheet remains the analysis-ready base table for
-your own pivots.
+The flat `Form 26AS - TDS & TCS` sheet remains the analysis-ready base table
+for your own pivots.
 
 ## Easiest: double-click (Windows)
 
@@ -135,8 +138,13 @@ genuine pre-2007 binary `.xls` file (as opposed to modern `.xlsx`) can't be
 read directly — you'll get a clear message asking you to re-save it as
 `.xlsx` from Excel, rather than a silent "0 transactions" result.
 
-Only **Part A** (TDS) is summarized; Part A1/A2/B/C rows are detected and
-skipped so they don't pollute the TDS totals.
+**TDS and TCS are both summarized.** Real TRACES exports label these sections
+"PART-I" (TDS) and "PART-VI" (TCS); older exports sometimes use "PART A" /
+"PART B" instead — both conventions are recognized. Everything else — PART-II
+(15G/15H declarations, where no tax was actually deducted), PART-III/IV/V
+(TDS on property/rent/virtual digital assets, which use a different column
+layout keyed by a TDS Certificate Number instead of a TAN) — is detected and
+skipped so it can't be mis-parsed into the TDS/TCS totals.
 
 > **Tip:** if you download the `.txt` from TRACES, run the tool directly on it —
 > no need to manually convert it to Excel first.
@@ -146,12 +154,17 @@ skipped so they don't pollute the TDS totals.
 1. **Load** the file into a uniform grid of cells (delimited text split on `^`,
    `openpyxl` for workbooks, BeautifulSoup for HTML, `pdfplumber` for PDF;
    content is sniffed so a mislabeled HTML "Excel" file still works).
-2. **Detect** Part A's two header rows by their labels, so column positions are
-   found dynamically rather than hard-coded.
-3. **Walk** the rows: a row with a TAN in the TAN column starts a new deductor;
-   rows with a valid section code (`194A`, `192`, `195`, …) are that deductor's
-   transactions.
-4. **Write** one flat row per transaction.
+2. **Track which section is active** by watching for a "PART-..." boundary row,
+   classifying it as TDS, TCS, or "other" (skipped) from its Roman-numeral/letter
+   code.
+3. **Detect** each section's two header rows by their labels (TDS calls them
+   "Name/TAN of Deductor" and "Tax Deducted"; TCS calls the identical layout
+   "Name/TAN of Collector" and "Tax Collected") so column positions are found
+   dynamically rather than hard-coded.
+4. **Walk** the rows: a row with a TAN in the TAN column starts a new
+   deductor/collector; rows with a valid section code (`194A`, `192`, `206CL`,
+   …) *while inside a recognized TDS/TCS section* are its transactions.
+5. **Write** one flat row per transaction, tagged with its Category.
 
 ## Tests
 
@@ -166,7 +179,10 @@ not installed.
 
 ## Note on other parts / layout variations
 
-This currently targets **Part A**, matching the common layout. Real 26AS files
-vary by source and year (and include Part A1/A2/B/C/etc.). If your file doesn't
-parse cleanly, run with `--debug` and share the (redacted) output — the header
-detection and section list can be extended to match.
+This targets **TDS (Part I) and TCS (Part VI)**, matching the common layout.
+Real 26AS files vary by source and year (and include other parts like
+property/rent TDS under a TDS Certificate Number, or 15G/15H declarations)
+that are intentionally skipped since they need a different column layout to
+parse correctly. If your file doesn't parse cleanly, run with `--debug` and
+share the (redacted) output — the header detection and section list can be
+extended to match.

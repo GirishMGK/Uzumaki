@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"error: could not read {name}: {r['error']}{hint}", file=sys.stderr)
         elif r["count"] == 0:
             print(
-                f"warning: no Part A transactions found in {name} "
+                f"warning: no TDS/TCS transactions found in {name} "
                 f"(detected year: {r['year']}).",
                 file=sys.stderr,
             )

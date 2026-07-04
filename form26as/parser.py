@@ -1,16 +1,25 @@
-"""Flatten Form 26AS Part A (Details of Tax Deducted at Source) into rows.
+"""Flatten Form 26AS TDS (Part I) and TCS (Part VI) sections into rows.
 
-Part A is nested: for each deductor there is a summary row (name, TAN, totals)
-followed by one or more transaction rows (section, dates, amounts). This module
-walks the loaded grid and emits one flat ``Transaction`` per transaction row,
-copying the deductor's name and TAN onto every transaction so the result is
-directly searchable/filterable.
+Both sections share the same nested shape: for each deductor/collector there
+is a summary row (name, TAN, totals) followed by one or more transaction rows
+(section, dates, amounts). This module walks the loaded grid and emits one
+flat ``Transaction`` per transaction row, copying the deductor/collector's
+name and TAN onto every transaction and tagging it with a Category (TDS/TCS)
+so the result is directly searchable/filterable.
+
+Real TRACES exports label these sections "PART-I" / "PART-VI" (Roman
+numerals); older documentation and some exports instead use "PART A" /
+"PART B". Both conventions are recognized. Everything else - PART-II
+(15G/15H declarations, no tax actually deducted), PART-III/IV/V (TDS on
+property/rent/virtual digital assets, which use a different column layout
+keyed by a TDS Certificate Number rather than a TAN), and so on - is
+explicitly walked past rather than risking a mismatched-column misparse.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -20,7 +29,7 @@ from .loader import Grid
 TAN_RE = re.compile(r"^[A-Z]{4}[0-9]{5}[A-Z]$")
 
 # TDS/TCS section codes: a numeric family prefix optionally followed by letters
-# (e.g. 192, 194A, 194IA, 195, 206CA). Deliberately generous.
+# (e.g. 192, 194A, 194IA, 195, 206CL, 206CR). Deliberately generous.
 SECTION_RE = re.compile(r"^(19[0-9]|20[0-9])[A-Z]{0,3}$")
 
 _DATE_FORMATS = ("%d-%b-%Y", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d")
@@ -30,6 +39,7 @@ _DATE_FORMATS = ("%d-%b-%Y", "%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d")
 class Transaction:
     assessment_year: str = ""
     source_file: str = ""
+    category: str = ""  # "TDS" or "TCS"
     deductor_sr_no: str = ""
     name_of_deductor: str = ""
     tan_of_deductor: str = ""
@@ -50,6 +60,7 @@ class Transaction:
         return [
             self.assessment_year,
             self.source_file,
+            self.category,
             self.deductor_sr_no,
             self.name_of_deductor,
             self.tan_of_deductor,
@@ -71,12 +82,13 @@ class Transaction:
 COLUMNS = [
     "Assessment Year",
     "Source File",
-    "Deductor Sr. No.",
-    "Name of Deductor",
-    "TAN of Deductor",
+    "Category",
+    "Deductor/Collector Sr. No.",
+    "Name of Deductor/Collector",
+    "TAN of Deductor/Collector",
     "Total Amount Paid/Credited",
-    "Total Tax Deducted",
-    "Total TDS Deposited",
+    "Total Tax Deducted/Collected",
+    "Total TDS/TCS Deposited",
     "Txn Sr. No.",
     "Section",
     "Transaction Date",
@@ -84,8 +96,8 @@ COLUMNS = [
     "Date of Booking",
     "Remarks",
     "Amount Paid/Credited",
-    "Tax Deducted",
-    "TDS Deposited",
+    "Tax Deducted/Collected",
+    "TDS/TCS Deposited",
 ]
 
 ASSESSMENT_YEAR_RE = re.compile(r"^(20\d{2})-(\d{2})$")
@@ -154,6 +166,15 @@ def _find_col(cells: List[str], *keywords: str) -> Optional[int]:
     return None
 
 
+def _find_col_any(cells: List[str], *keyword_sets: tuple) -> Optional[int]:
+    """First column matching any of several alternative keyword combinations."""
+    for keywords in keyword_sets:
+        idx = _find_col(cells, *keywords)
+        if idx is not None:
+            return idx
+    return None
+
+
 @dataclass
 class _DeductorHeader:
     sr_no: Optional[int] = None
@@ -178,7 +199,9 @@ class _TxnHeader:
 
 
 def _detect_deductor_header(cells: List[str]) -> Optional[_DeductorHeader]:
-    name = _find_col(cells, "name", "deductor")
+    # TDS calls this "Name of Deductor" / "TAN of Deductor"; TCS calls the
+    # identical layout "Name of Collector" / "TAN of Collector".
+    name = _find_col_any(cells, ("name", "deductor"), ("name", "collector"))
     tan = _find_col(cells, "tan")
     if name is None or tan is None:
         return None
@@ -188,7 +211,7 @@ def _detect_deductor_header(cells: List[str]) -> Optional[_DeductorHeader]:
         tan=tan,
         total_amount=_find_col(cells, "total", "amount"),
         total_tax=_find_col(cells, "total", "tax"),
-        total_tds=_find_col(cells, "total", "tds"),
+        total_tds=_find_col_any(cells, ("total", "tds"), ("total", "tcs")),
     )
 
 
@@ -205,8 +228,10 @@ def _detect_txn_header(cells: List[str]) -> Optional[_TxnHeader]:
         booking_date=_find_col(cells, "date", "booking"),
         remarks=_find_col(cells, "remark"),
         amount=_find_col(cells, "amount", "paid"),
-        tax=_find_col(cells, "tax", "deducted"),
-        tds=_find_col(cells, "tds", "deposited"),
+        # TDS calls this "Tax Deducted" / "TDS Deposited"; TCS calls the
+        # identical column "Tax Collected" / "TCS Deposited".
+        tax=_find_col_any(cells, ("tax", "deducted"), ("tax", "collected")),
+        tds=_find_col_any(cells, ("tds", "deposited"), ("tcs", "deposited")),
     )
 
 
@@ -216,46 +241,52 @@ def _get(cells: List[str], idx: Optional[int]) -> str:
     return cells[idx]
 
 
-def _part_marker(cells: List[str]) -> Optional[str]:
-    """Return the 26AS part a marker line announces ('A', 'A1', 'B', ...), else None."""
-    joined = _norm(" ".join(cells))
-    if "part a1" in joined:
-        return "A1"
-    if "part a2" in joined:
-        return "A2"
-    if re.search(r"\bpart b\b", joined):
-        return "B"
-    if re.search(r"\bpart c\b", joined):
-        return "C"
-    if re.search(r"\bpart d\b", joined):
-        return "D"
-    if re.search(r"\bpart a\b", joined) and "tax deducted at source" in joined:
-        return "A"
-    return None
+# Real TRACES exports label sections with Roman numerals ("PART-I", "PART-VI");
+# some documentation and older exports use letters ("PART A", "PART B"). Both
+# are recognized. Anything else (PART-II 15G/15H, PART-III/IV/V property/
+# rent/virtual-digital-asset TDS, etc.) is classified "OTHER" and skipped -
+# those use a materially different column layout (a TDS Certificate Number
+# instead of a TAN) that this generic TDS/TCS row-shape can't safely parse.
+_PART_TOKEN_RE = re.compile(r"\bpart[\s\-]*([a-z0-9]+)", re.IGNORECASE)
+_TDS_PART_TOKENS = {"I", "A"}
+_TCS_PART_TOKENS = {"VI", "B"}
 
 
-def parse_part_a(grid: Grid) -> List[Transaction]:
-    """Parse Part A of a loaded 26AS grid into flat transaction rows."""
+def _part_category(cells: List[str]) -> Optional[str]:
+    """Return 'TDS'/'TCS'/'OTHER' if this row announces a new part, else None."""
+    joined = " ".join(cells)
+    m = _PART_TOKEN_RE.search(joined)
+    if not m:
+        return None
+    token = m.group(1).upper()
+    if token in _TDS_PART_TOKENS:
+        return "TDS"
+    if token in _TCS_PART_TOKENS:
+        return "TCS"
+    return "OTHER"
+
+
+def parse_transactions(grid: Grid) -> List[Transaction]:
+    """Parse the TDS (Part I) and TCS (Part VI) sections of a 26AS grid."""
     dhdr: Optional[_DeductorHeader] = None
     thdr: Optional[_TxnHeader] = None
     current: Optional[Transaction] = None
-    # None until a part marker is seen. Files without explicit markers (e.g.
-    # some Excel/HTML exports) stay None and are treated as Part A.
-    part: Optional[str] = None
+    # "OTHER" until a recognized TDS/TCS part boundary is seen. Files without
+    # explicit part markers (e.g. some minimal Excel/HTML exports) never see
+    # one, so default to TDS to preserve behavior for those simple exports.
+    category = "TDS"
     out: List[Transaction] = []
 
     for cells in grid:
-        marker = _part_marker(cells)
+        marker = _part_category(cells)
         if marker is not None:
-            part = marker
+            category = marker
             continue
 
-        # Only Part A (TDS) is collected; once another part begins, stop
-        # emitting until/unless Part A is seen again.
-        in_part_a = part in (None, "A")
+        in_scope = category in ("TDS", "TCS")
 
-        # Refresh header maps whenever a header row appears (Part A headers may
-        # repeat, and column positions can differ between parts).
+        # Refresh header maps whenever a header row appears (column positions
+        # can differ between parts, and between TDS's and TCS's own layout).
         maybe_dhdr = _detect_deductor_header(cells)
         if maybe_dhdr is not None:
             dhdr = maybe_dhdr
@@ -265,10 +296,11 @@ def parse_part_a(grid: Grid) -> List[Transaction]:
             thdr = maybe_thdr
             continue
 
-        # Deductor summary row: a TAN sitting in the TAN column.
+        # Deductor/collector summary row: a TAN sitting in the TAN column.
         tan_val = _get(cells, dhdr.tan) if dhdr else ""
-        if dhdr and TAN_RE.match(tan_val.upper()):
+        if in_scope and dhdr and TAN_RE.match(tan_val.upper()):
             current = Transaction(
+                category=category,
                 deductor_sr_no=_get(cells, dhdr.sr_no),
                 name_of_deductor=_get(cells, dhdr.name),
                 tan_of_deductor=tan_val.upper(),
@@ -280,9 +312,16 @@ def parse_part_a(grid: Grid) -> List[Transaction]:
 
         # Transaction row: a valid section code in the section column.
         section_val = _get(cells, thdr.section) if thdr else ""
-        if in_part_a and thdr and current and SECTION_RE.match(section_val.upper()):
+        if (
+            in_scope
+            and thdr
+            and current
+            and current.category == category
+            and SECTION_RE.match(section_val.upper())
+        ):
             out.append(
                 Transaction(
+                    category=category,
                     deductor_sr_no=current.deductor_sr_no,
                     name_of_deductor=current.name_of_deductor,
                     tan_of_deductor=current.tan_of_deductor,

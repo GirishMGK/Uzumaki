@@ -1,6 +1,5 @@
 """End-to-end tests for the Form 26AS parser using a synthetic sample."""
 
-import os
 import sys
 import unittest
 from pathlib import Path
@@ -8,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from form26as.loader import load_grid
-from form26as.parser import parse_part_a
+from form26as.parser import parse_transactions
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 SAMPLE = SAMPLES / "sample_26as.html"
@@ -17,7 +16,7 @@ SAMPLE_TXT = SAMPLES / "sample_26as.txt"
 
 class TestParser(unittest.TestCase):
     def setUp(self):
-        self.txns = parse_part_a(load_grid(SAMPLE))
+        self.txns = parse_transactions(load_grid(SAMPLE))
 
     def test_transaction_count(self):
         # 2 transactions under the first deductor + 1 under the second.
@@ -25,6 +24,7 @@ class TestParser(unittest.TestCase):
 
     def test_deductor_attached_to_every_txn(self):
         first = self.txns[0]
+        self.assertEqual(first.category, "TDS")
         self.assertEqual(first.name_of_deductor, "ANIL KUMAR GANDHI")
         self.assertEqual(first.tan_of_deductor, "AGRA10192A")
         self.assertEqual(first.section, "194A")
@@ -49,17 +49,35 @@ class TestParser(unittest.TestCase):
 
 
 class TestCaretDelimitedText(unittest.TestCase):
-    def setUp(self):
-        self.txns = parse_part_a(load_grid(SAMPLE_TXT))
+    """Covers a file with explicit PART markers: PART A (TDS), PART A1
+    (15G/15H - no tax actually deducted), and PART B (TCS)."""
 
-    def test_only_part_a_collected(self):
-        # 3 Part A transactions; Part A1 and Part B rows must be excluded.
-        self.assertEqual(len(self.txns), 3)
+    def setUp(self):
+        self.txns = parse_transactions(load_grid(SAMPLE_TXT))
+
+    def test_tds_and_tcs_collected_other_parts_excluded(self):
+        # 3 PART A (TDS) transactions + 1 PART B (TCS) transaction.
+        # PART A1 (15G/15H) must be excluded - no tax was actually deducted.
+        self.assertEqual(len(self.txns), 4)
         tans = {t.tan_of_deductor for t in self.txns}
         self.assertIn("AGRA10192A", tans)
         self.assertIn("MUMS12345B", tans)
-        self.assertNotIn("DELS99999Z", tans)  # Part A1 (15G/15H)
-        self.assertNotIn("JPRS55555Q", tans)  # Part B (TCS)
+        self.assertIn("JPRS55555Q", tans)  # PART B (TCS) - now included
+        self.assertNotIn("DELS99999Z", tans)  # PART A1 (15G/15H) - excluded
+
+    def test_categories_are_tagged_correctly(self):
+        by_tan = {t.tan_of_deductor: t.category for t in self.txns}
+        self.assertEqual(by_tan["AGRA10192A"], "TDS")
+        self.assertEqual(by_tan["MUMS12345B"], "TDS")
+        self.assertEqual(by_tan["JPRS55555Q"], "TCS")
+
+    def test_tcs_fields_parsed(self):
+        tcs = next(t for t in self.txns if t.tan_of_deductor == "JPRS55555Q")
+        self.assertEqual(tcs.name_of_deductor, "SOME MOTORS LTD")
+        self.assertEqual(tcs.section, "206CE")
+        self.assertEqual(tcs.amount_paid, 1000000.00)
+        self.assertEqual(tcs.tax_deducted, 10000.00)
+        self.assertEqual(tcs.tds_deposited, 10000.00)
 
     def test_fields_from_text(self):
         first = self.txns[0]

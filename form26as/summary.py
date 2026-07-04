@@ -39,8 +39,19 @@ def _aggregate(
     return list(buckets.values())
 
 
+def by_category(transactions: List[Transaction]) -> List[SummaryRow]:
+    rows = _aggregate(transactions, lambda t: (t.category or "Unknown",))
+    rows.sort(key=lambda r: r.key[0])
+    return rows
+
+
 def by_deductor(transactions: List[Transaction]) -> List[SummaryRow]:
-    rows = _aggregate(transactions, lambda t: (t.name_of_deductor, t.tan_of_deductor))
+    # Keyed on category too: an entity can be both a TDS deductor and a TCS
+    # collector under the same TAN, and blending those totals would be
+    # misleading ("tax withheld from you" vs. "tax collected by you").
+    rows = _aggregate(
+        transactions, lambda t: (t.category or "Unknown", t.name_of_deductor, t.tan_of_deductor)
+    )
     rows.sort(key=lambda r: r.tds_deposited, reverse=True)
     return rows
 

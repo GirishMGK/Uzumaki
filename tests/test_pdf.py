@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from form26as.loader import load_grid
-from form26as.parser import parse_part_a
+from form26as.parser import parse_transactions
 
 try:
     from reportlab.lib import colors
@@ -59,7 +59,7 @@ class TestPdf(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             pdf = Path(d) / "s.pdf"
             _build_pdf(pdf)
-            txns = parse_part_a(load_grid(pdf))
+            txns = parse_transactions(load_grid(pdf))
         self.assertEqual(len(txns), 3)
         self.assertEqual(txns[0].name_of_deductor, "ANIL KUMAR GANDHI")
         self.assertEqual(txns[0].tan_of_deductor, "AGRA10192A")
@@ -70,7 +70,7 @@ class TestPdf(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             pdf = Path(d) / "enc.pdf"
             _build_pdf(pdf, password="15041985")
-            txns = parse_part_a(load_grid(pdf, password="15041985"))
+            txns = parse_transactions(load_grid(pdf, password="15041985"))
         self.assertEqual(len(txns), 3)
         self.assertEqual(txns[1].amount_paid, 280482.79)
 

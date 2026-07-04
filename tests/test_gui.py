@@ -21,8 +21,8 @@ class TestGuiCore(unittest.TestCase):
             src = Path(d) / "26AS.txt"
             shutil.copy(SAMPLE_TXT, src)
             transactions, results = parse_files([src])
-            self.assertEqual(len(transactions), 3)
-            self.assertEqual(results[0]["count"], 3)
+            self.assertEqual(len(transactions), 4)  # 3 TDS + 1 TCS
+            self.assertEqual(results[0]["count"], 4)
             self.assertIsNone(results[0]["error"])
 
             out_path = src.with_name("26AS_formatted.xlsx")
@@ -37,7 +37,7 @@ class TestGuiCore(unittest.TestCase):
             shutil.copy(SAMPLE_HTML, f2)
 
             transactions, results = parse_files([f1, f2])
-            self.assertEqual(len(transactions), 6)  # 3 + 3
+            self.assertEqual(len(transactions), 7)  # (3 TDS + 1 TCS) + 3 TDS
             self.assertEqual({r["path"] for r in results}, {f1, f2})
 
             # f1 carries the assessment year embedded in the file, f2 falls
@@ -56,7 +56,7 @@ class TestGuiCore(unittest.TestCase):
             missing = Path(d) / "does_not_exist.txt"
 
             transactions, results = parse_files([good, missing])
-            self.assertEqual(len(transactions), 3)
+            self.assertEqual(len(transactions), 4)  # 3 TDS + 1 TCS
             by_path = {r["path"]: r for r in results}
             self.assertIsNotNone(by_path[missing]["error"])
             self.assertIsNone(by_path[good]["error"])

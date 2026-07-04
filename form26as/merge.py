@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, TypedDict
 
 from .loader import EncryptedExcelError, load_grid
-from .parser import Transaction, detect_assessment_year, parse_part_a, year_from_filename
+from .parser import Transaction, detect_assessment_year, parse_transactions, year_from_filename
 
 
 class FileResult(TypedDict):
@@ -65,7 +65,7 @@ def parse_files(
                 print(f"  [{i}] {row}", file=sys.stderr)
 
         year = detect_assessment_year(grid) or year_from_filename(path)
-        txns = parse_part_a(grid)
+        txns = parse_transactions(grid)
         for t in txns:
             t.assessment_year = year
             t.source_file = path.name
