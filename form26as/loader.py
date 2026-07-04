@@ -16,22 +16,91 @@ from typing import List, Optional
 
 Grid = List[List[str]]
 
+# Signature of the OLE Compound File Binary Format, used by both a
+# password-protected OOXML (.xlsx) file and a legacy pre-2007 binary (.xls)
+# workbook. openpyxl cannot read either directly, and mistaking one for a
+# corrupt/mislabeled workbook (and silently falling back to HTML parsing)
+# used to produce an empty grid with no explanation - see EncryptedExcelError
+# / LegacyExcelError below for the fix.
+_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+class EncryptedExcelError(Exception):
+    """A password-protected Excel file was opened without (or with the wrong) password."""
+
+
+class LegacyExcelError(Exception):
+    """A pre-2007 binary .xls file was given; openpyxl can only read .xlsx/.xlsm."""
+
 
 def _looks_like_html(head: bytes) -> bool:
     lowered = head.lower()
     return b"<html" in lowered or b"<table" in lowered or b"<!doctype html" in lowered
 
 
-def _load_xlsx(path: Path) -> Grid:
+def _load_xlsx(path: Path, password: Optional[str] = None) -> Grid:
     from openpyxl import load_workbook
 
-    wb = load_workbook(filename=str(path), read_only=True, data_only=True)
+    with open(path, "rb") as fh:
+        head = fh.read(8)
+
+    source = str(path)
+    if head == _OLE_SIGNATURE:
+        source = _decrypt_ole_excel(path, password)
+
+    wb = load_workbook(filename=source, read_only=True, data_only=True)
     grid: Grid = []
     for ws in wb.worksheets:
         for row in ws.iter_rows(values_only=True):
             grid.append(["" if c is None else str(c).strip() for c in row])
     wb.close()
     return grid
+
+
+def _decrypt_ole_excel(path: Path, password: Optional[str]):
+    """Return a file-like object openpyxl can read from an OLE-format .xlsx.
+
+    Raises EncryptedExcelError if it's encrypted and no/wrong password was
+    given, or LegacyExcelError if it's a genuine pre-2007 .xls that no
+    password can help with.
+    """
+    import io
+
+    import msoffcrypto
+    from msoffcrypto.exceptions import DecryptionError
+
+    with open(path, "rb") as fh:
+        office_file = msoffcrypto.OfficeFile(fh)
+        try:
+            is_encrypted = office_file.is_encrypted()
+        except Exception:
+            is_encrypted = False
+
+        if not is_encrypted:
+            raise LegacyExcelError(
+                f"{path.name} looks like an old-format (.xls) Excel file, which this "
+                "tool can't read directly. Open it in Excel and use File > Save As > "
+                "'Excel Workbook (*.xlsx)', then run this tool on the new file."
+            )
+
+        if not password:
+            raise EncryptedExcelError(
+                f"{path.name} is a password-protected Excel file. Provide its "
+                "password with --password (or enter it when prompted)."
+            )
+
+        fh.seek(0)
+        office_file = msoffcrypto.OfficeFile(fh)
+        try:
+            office_file.load_key(password=password)
+            decrypted = io.BytesIO()
+            office_file.decrypt(decrypted)
+        except DecryptionError as exc:
+            raise EncryptedExcelError(
+                f"{path.name} could not be decrypted with the given password: {exc}"
+            ) from exc
+        decrypted.seek(0)
+        return decrypted
 
 
 def _load_text(path: Path) -> Grid:
@@ -137,16 +206,26 @@ def load_grid(path: str | Path, password: Optional[str] = None) -> Grid:
         return _load_text(path)
 
     if suffix in {".xlsx", ".xlsm", ".xls"}:
-        try:
-            return _load_xlsx(path)
-        except Exception:
-            # Genuine-looking extension but not a real workbook — fall back.
-            return _load_html(path)
+        return _load_xlsx_or_fallback(path, password)
     if suffix in {".html", ".htm"}:
         return _load_html(path)
 
     # Unknown extension: try workbook, then HTML.
+    return _load_xlsx_or_fallback(path, password)
+
+
+def _load_xlsx_or_fallback(path: Path, password: Optional[str]) -> Grid:
+    import zipfile
+
+    from openpyxl.utils.exceptions import InvalidFileException
+
     try:
-        return _load_xlsx(path)
-    except Exception:
+        return _load_xlsx(path, password)
+    except (EncryptedExcelError, LegacyExcelError):
+        # These mean we correctly identified the problem - surface it as-is
+        # rather than obscuring it behind a doomed HTML-parse attempt.
+        raise
+    except (zipfile.BadZipFile, InvalidFileException):
+        # Not a real workbook and not an OLE file either - most likely HTML
+        # mislabeled with an .xls/.xlsx extension (common from TRACES).
         return _load_html(path)

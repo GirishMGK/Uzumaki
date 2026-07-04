@@ -74,30 +74,33 @@ def main(argv: Optional[list[str]] = None) -> int:
             return 0
 
         paths = [Path(s) for s in selected]
+        protectable = {".pdf", ".xlsx", ".xls", ".xlsm"}
 
-        # TRACES PDFs for the same person share one password (date of birth),
-        # so one prompt up front covers a whole multi-year batch.
+        # TRACES PDFs/Excel files for the same person share one password (date
+        # of birth), so one prompt up front covers a whole multi-year batch.
         passwords = {}
-        if any(p.suffix.lower() == ".pdf" for p in paths):
+        if any(p.suffix.lower() in protectable for p in paths):
             pw = simpledialog.askstring(
-                "PDF password",
-                "One or more selected files are PDFs.\n\n"
-                "If they're password-protected, enter the password now "
+                "Password",
+                "One or more selected files are PDF/Excel.\n\n"
+                "If any are password-protected, enter the password now "
                 "(TRACES uses your date of birth as DDMMYYYY, e.g. 15041985).\n"
-                "Leave this blank if they aren't protected.",
+                "Leave this blank if none are protected.",
                 show="*",
             )
             if pw:
-                passwords = {p: pw for p in paths if p.suffix.lower() == ".pdf"}
+                passwords = {p: pw for p in paths if p.suffix.lower() in protectable}
 
         transactions, results = parse_files(paths, passwords=passwords)
 
-        # Give any PDF that still failed (e.g. a different password for one
-        # year) one more chance, one file at a time.
+        # Give any file that failed specifically for password reasons (e.g. a
+        # different password for one year) one more chance, one at a time.
+        # A LegacyExcelError (old .xls format) is never fixed by a password,
+        # so those are left alone and just reported.
         for i, r in enumerate(results):
-            if r["error"] and r["path"].suffix.lower() == ".pdf":
+            if r["error"] and r["needs_password"]:
                 pw2 = simpledialog.askstring(
-                    "PDF password",
+                    "Password",
                     f"Could not open:\n{r['path'].name}\n\n({r['error']})\n\n"
                     "Enter its password (or leave blank to skip this file):",
                     show="*",

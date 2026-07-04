@@ -120,15 +120,20 @@ does not stop the rest of the batch from being combined.
 ### Supported input (auto-detected)
 
 - **Caret (`^`) delimited `.txt`** — the native TRACES download (also tab/comma)
-- Genuine `.xlsx` / `.xls` workbooks
-- **PDF** — including the password-protected TRACES download. Pass
-  `--password` (TRACES uses your **date of birth as `DDMMYYYY`**, e.g.
-  `15041985`). Table-based PDFs extract best; if a PDF isn't ruled, the loader
-  falls back to whitespace-based column splitting.
+- Genuine `.xlsx` / `.xlsm` workbooks, **including password-protected ones** —
+  pass `--password` (TRACES/bank exports use your **date of birth as
+  `DDMMYYYY`**, e.g. `15041985`), same as for PDFs. Merged header/data cells
+  (common in these reports) are handled automatically.
+- **PDF** — including the password-protected TRACES download. Table-based
+  PDFs extract best; if a PDF isn't ruled, the loader falls back to
+  whitespace-based column splitting.
 - HTML exports (including TRACES "Excel" files that are really HTML with an
   `.xls`/`.xlsx` extension)
 
-The format is detected from the file's contents, not just its extension.
+The format is detected from the file's contents, not just its extension. A
+genuine pre-2007 binary `.xls` file (as opposed to modern `.xlsx`) can't be
+read directly — you'll get a clear message asking you to re-save it as
+`.xlsx` from Excel, rather than a silent "0 transactions" result.
 
 Only **Part A** (TDS) is summarized; Part A1/A2/B/C rows are detected and
 skipped so they don't pollute the TDS totals.

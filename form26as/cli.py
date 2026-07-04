@@ -40,8 +40,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--password",
-        help="Password applied to any encrypted PDF inputs (TRACES 26AS PDFs "
-        "use your date of birth as DDMMYYYY, e.g. 15041985).",
+        help="Password applied to any encrypted PDF or Excel inputs (TRACES "
+        "26AS downloads use your date of birth as DDMMYYYY, e.g. 15041985).",
     )
     p.add_argument(
         "--debug",
@@ -66,9 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     for r in results:
         name = r["path"].name
         if r["error"]:
-            hint = ""
-            if r["path"].suffix.lower() == ".pdf":
-                hint = " (if it's password-protected, pass --password)"
+            hint = " (if it's password-protected, pass --password)" if r["needs_password"] else ""
             print(f"error: could not read {name}: {r['error']}{hint}", file=sys.stderr)
         elif r["count"] == 0:
             print(

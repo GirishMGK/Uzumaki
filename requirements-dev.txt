@@ -1,3 +1,4 @@
-# Extra dependencies for running the test suite (generating sample PDFs).
+# Extra dependencies for running the test suite (generating sample PDFs/Excel fixtures).
 -r requirements.txt
 reportlab>=4.0
+xlwt>=1.3
