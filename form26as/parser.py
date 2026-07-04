@@ -247,7 +247,13 @@ def _get(cells: List[str], idx: Optional[int]) -> str:
 # rent/virtual-digital-asset TDS, etc.) is classified "OTHER" and skipped -
 # those use a materially different column layout (a TDS Certificate Number
 # instead of a TAN) that this generic TDS/TCS row-shape can't safely parse.
-_PART_TOKEN_RE = re.compile(r"\bpart[\s\-]*([a-z0-9]+)", re.IGNORECASE)
+#
+# The match REQUIRES "... Detail(s) of ..." right after the part token, not
+# just the word "part" anywhere in the row - a bare substring match once
+# misfired on a deductor literally named "PARTH ..." (matched as "PART" +
+# token "H"), which silently reclassified the rest of the file as an
+# unrecognized part and dropped every row after it.
+_PART_HEADER_RE = re.compile(r"\bpart[\s\-]*([a-z0-9]+)[\s\-–:]*detail", re.IGNORECASE)
 _TDS_PART_TOKENS = {"I", "A"}
 _TCS_PART_TOKENS = {"VI", "B"}
 
@@ -255,7 +261,7 @@ _TCS_PART_TOKENS = {"VI", "B"}
 def _part_category(cells: List[str]) -> Optional[str]:
     """Return 'TDS'/'TCS'/'OTHER' if this row announces a new part, else None."""
     joined = " ".join(cells)
-    m = _PART_TOKEN_RE.search(joined)
+    m = _PART_HEADER_RE.search(joined)
     if not m:
         return None
     token = m.group(1).upper()

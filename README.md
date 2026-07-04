@@ -154,9 +154,12 @@ skipped so it can't be mis-parsed into the TDS/TCS totals.
 1. **Load** the file into a uniform grid of cells (delimited text split on `^`,
    `openpyxl` for workbooks, BeautifulSoup for HTML, `pdfplumber` for PDF;
    content is sniffed so a mislabeled HTML "Excel" file still works).
-2. **Track which section is active** by watching for a "PART-..." boundary row,
-   classifying it as TDS, TCS, or "other" (skipped) from its Roman-numeral/letter
-   code.
+2. **Track which section is active** by watching for a "PART-... - Details
+   of ..." boundary row, classifying it as TDS, TCS, or "other" (skipped) from
+   its Roman-numeral/letter code. The full "- Details of" phrase is required,
+   not just the word "part" - a deductor literally named e.g. "PARTH ..." or
+   "PARTNERS ..." must never be mistaken for a section boundary (this was a
+   real bug: it silently truncated the deductor list at that row).
 3. **Detect** each section's two header rows by their labels (TDS calls them
    "Name/TAN of Deductor" and "Tax Deducted"; TCS calls the identical layout
    "Name/TAN of Collector" and "Tax Collected") so column positions are found
