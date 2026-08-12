@@ -25,6 +25,35 @@ st.set_page_config(page_title="Sangir Analytics · Tools", page_icon="🧰", lay
 inject_css()
 
 
+# ── on-open update notification ─────────────────────────────────────────────
+# launcher.py (Uzumaki.exe's entry point) sets these two env vars after its
+# self-update check, before handing off to Streamlit. When run from source
+# via `streamlit run Home.py` directly (no launcher involved) they're absent,
+# so this defaults to a quiet "current, unknown version" toast.
+_UPDATE_MESSAGES = {
+    "updated": ("Uzumaki updated to v{v}", "✅"),
+    "current": ("Uzumaki v{v} — you're on the latest version", "🍥"),
+    "offline": ("Uzumaki v{v} — couldn't check for updates (offline)", "📴"),
+    "update_failed": ("Uzumaki v{v} — an update is available but the download failed", "⚠️"),
+}
+
+
+def _update_notice(status: str, version: str) -> tuple[str, str]:
+    """Pure (status, version) -> (message, icon) for the on-open toast. No
+    Streamlit calls here so this stays unit-testable without a live session."""
+    template, icon = _UPDATE_MESSAGES.get(status, _UPDATE_MESSAGES["current"])
+    return template.format(v=version), icon
+
+
+if "_update_notice_shown" not in st.session_state:
+    st.session_state["_update_notice_shown"] = True
+    _msg, _icon = _update_notice(
+        os.environ.get("UZUMAKI_UPDATE_STATUS", "current"),
+        os.environ.get("UZUMAKI_VERSION", "dev"),
+    )
+    st.toast(_msg, icon=_icon)
+
+
 # ── tool catalogue ──────────────────────────────────────────────────────────────
 _TOOLS = [
     {

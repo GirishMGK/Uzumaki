@@ -25,6 +25,14 @@ updated — see `.github/workflows/build-exe.yml`), it downloads it, swaps
 itself out, and relaunches automatically. A failed or offline check never
 blocks the app — it just launches whatever version you already have.
 
+**On-open notification:** every time the app opens (fresh launch, or the
+relaunch right after a self-update) it shows a one-time toast in the browser
+tab telling you what happened — *"Uzumaki updated to vX"*, *"you're on the
+latest version"*, *"couldn't check for updates (offline)"*, or *"an update is
+available but the download failed"*. `launcher.py` hands the outcome to
+`Home.py` via the `UZUMAKI_UPDATE_STATUS` / `UZUMAKI_VERSION` env vars; see
+`Home.py`'s `_update_notice()`.
+
 ### Building the .exe yourself
 
 ```bash

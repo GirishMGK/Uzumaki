@@ -128,3 +128,31 @@ def test_redaction_page_calls_real_functions():
     src = open(os.path.join(REPO_ROOT, "_pages", "redaction.py"), encoding="utf-8").read()
     for fn in ["RedactionEngine(", "get_active_patterns(", "process_files("]:
         assert fn in src, f"_pages/redaction.py no longer calls {fn} — the tool may be disconnected"
+
+
+# ── Home.py: on-open update-status toast ────────────────────────────────────
+def test_update_notice_covers_every_launcher_status():
+    """Every STATUS_* launcher.py can hand off must produce a distinct,
+    version-substituted toast — a status Home.py doesn't recognize silently
+    falls back to the "current" message, which would misreport a failed or
+    just-installed update as nothing happening."""
+    pytest.importorskip("streamlit")
+    sys.path.insert(0, REPO_ROOT)
+    import importlib
+
+    import launcher
+    Home = importlib.import_module("Home")
+
+    for status in [launcher.STATUS_UPDATED, launcher.STATUS_CURRENT,
+                   launcher.STATUS_OFFLINE, launcher.STATUS_UPDATE_FAILED]:
+        msg, icon = Home._update_notice(status, "1.2.3")
+        assert "1.2.3" in msg
+        assert icon
+
+    updated_msg, _ = Home._update_notice(launcher.STATUS_UPDATED, "1.2.3")
+    current_msg, _ = Home._update_notice(launcher.STATUS_CURRENT, "1.2.3")
+    assert updated_msg != current_msg
+
+    # Unknown status must not crash — falls back to the "current" message.
+    fallback_msg, _ = Home._update_notice("not-a-real-status", "1.2.3")
+    assert fallback_msg == current_msg
