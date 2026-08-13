@@ -156,3 +156,27 @@ def test_update_notice_covers_every_launcher_status():
     # Unknown status must not crash — falls back to the "current" message.
     fallback_msg, _ = Home._update_notice("not-a-real-status", "1.2.3")
     assert fallback_msg == current_msg
+
+
+# ── Uzumaki.spec: ROOT must resolve to the repo root, not its parent ───────────
+def test_spec_root_resolves_to_repo_root_not_its_parent():
+    """
+    Regression guard for the bug that made every build-exe.yml run fail:
+    PyInstaller injects SPECPATH as the *directory already containing* the
+    .spec file, so `os.path.dirname(os.path.abspath(SPECPATH))` walks one
+    level too far up (repo root's *parent*) and every `datas` entry built from
+    it 404s — "ERROR: Unable to find '<parent>/Home.py' when adding binary
+    and data files." Simulate PyInstaller's exec environment with the real
+    SPECPATH and check the resulting ROOT actually contains Home.py.
+    """
+    src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    root_line = next(line for line in src.splitlines() if line.startswith("ROOT ="))
+    assert "dirname(os.path.abspath(SPECPATH))" not in root_line, (
+        "Uzumaki.spec's ROOT must not take dirname() of SPECPATH — SPECPATH is "
+        "already the directory containing the .spec file"
+    )
+    namespace = {"SPECPATH": REPO_ROOT, "os": os}
+    exec(compile(root_line, "<spec-root-line>", "exec"), namespace)
+    assert os.path.exists(os.path.join(namespace["ROOT"], "Home.py")), (
+        "Uzumaki.spec's ROOT must resolve to the repo root (containing Home.py)"
+    )

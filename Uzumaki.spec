@@ -14,7 +14,7 @@ Output: dist/Uzumaki.exe
 
 import os
 
-ROOT = os.path.dirname(os.path.abspath(SPECPATH))
+ROOT = os.path.abspath(SPECPATH)  # SPECPATH is already the dir containing this .spec file
 
 
 def _tree(src_name: str):
