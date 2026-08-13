@@ -89,9 +89,15 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX-compressed executables are disproportionately flagged by Windows
+    # Defender/AV heuristics (malware also uses UPX to evade signature
+    # scanning) — off by default trades a larger .exe for fewer false
+    # positives. This alone doesn't make an unsigned exe "trusted"; see
+    # README's "Windows flags the .exe" section for the full picture.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,
     icon=None,
+    version=os.path.join(ROOT, "version_info.txt"),
 )

@@ -33,6 +33,23 @@ available but the download failed"*. `launcher.py` hands the outcome to
 `Home.py` via the `UZUMAKI_UPDATE_STATUS` / `UZUMAKI_VERSION` env vars; see
 `Home.py`'s `_update_notice()`.
 
+**Windows flags the .exe ("Windows protected your PC" / Defender warning):**
+this is expected for now, not a sign anything's wrong with the download. The
+`.exe` is unsigned and freshly published, and PyInstaller's `--onefile`
+bootloader (self-extracts a bundled Python archive into a temp folder at
+launch) structurally resembles how droppers behave, so SmartScreen/Defender
+heuristics flag it regardless of what's actually inside. To run it anyway:
+- SmartScreen dialog → **More info** → **Run anyway**, or
+- Right-click `Uzumaki.exe` → **Properties** → check **Unblock** → OK, or
+- PowerShell: `Unblock-File .\Uzumaki.exe`
+
+`Uzumaki.spec` already turns off UPX compression and embeds proper version
+metadata (company/product/description) — both reduce false-positive risk —
+but only code-signing plus enough download history actually clears
+SmartScreen's warning. If you'd rather avoid the prompt entirely, build from
+source instead (see "Run from source" above) or build the `.exe` yourself
+below.
+
 ### Building the .exe yourself
 
 ```bash
