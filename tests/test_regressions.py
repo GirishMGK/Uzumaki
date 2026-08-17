@@ -158,6 +158,26 @@ def test_update_notice_covers_every_launcher_status():
     assert fallback_msg == current_msg
 
 
+# ── Home.py: manual "check for updates now" sidebar control ────────────────
+def test_home_check_for_updates_wires_real_launcher_functions():
+    """
+    The sidebar button must actually drive launcher.py's update machinery
+    (not just print a message) and must force a real process exit via
+    os._exit(0) when SystemExit is caught — a plain sys.exit(0) raised
+    inside Streamlit's per-session worker thread only kills that thread,
+    leaving the frozen .exe running and the relaunch helper stuck waiting
+    to delete a file that's still locked.
+    """
+    src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    for fn in ["launcher._is_frozen(", "launcher._remote_version(",
+               "launcher._local_version(", "launcher._self_update_and_relaunch("]:
+        assert fn in src, f"Home.py's update-check control no longer calls {fn}"
+    assert "except SystemExit" in src and "os._exit(0)" in src, (
+        "Home.py's manual update-check must force a real process exit "
+        "(os._exit(0)) after catching SystemExit — see _check_for_updates_now"
+    )
+
+
 # ── Uzumaki.spec: ROOT must resolve to the repo root, not its parent ───────────
 def test_spec_root_resolves_to_repo_root_not_its_parent():
     """

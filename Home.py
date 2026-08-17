@@ -20,6 +20,7 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _pages.theme import inject_css, footer  # noqa: E402
+import launcher  # noqa: E402 — reused for the manual "check for updates" control below
 
 st.set_page_config(page_title="Sangir Analytics · Tools", page_icon="🧰", layout="wide")
 inject_css()
@@ -52,6 +53,45 @@ if "_update_notice_shown" not in st.session_state:
         os.environ.get("UZUMAKI_VERSION", "dev"),
     )
     st.toast(_msg, icon=_icon)
+
+
+# ── manual "check for updates now" control (sidebar, visible on every page) ─
+def _check_for_updates_now() -> None:
+    """Button handler — check GitHub immediately instead of waiting for the
+    next launch, and self-update+relaunch in place if a newer build exists.
+
+    This runs inside Streamlit's per-session script-runner thread, not the
+    main thread. launcher._self_update_and_relaunch() ends with a plain
+    sys.exit(0) — fine when launcher.py calls it at startup (main thread,
+    kills the whole process), but a SystemExit raised in a *non-main* thread
+    only kills that thread, leaving the frozen .exe still running and the
+    relaunch helper script stuck waiting to delete a file that's still
+    locked. Catching it here and forcing os._exit(0) achieves the same full
+    process exit regardless of which thread triggered it.
+    """
+    if not launcher._is_frozen():
+        st.info("Running from source — pull the latest with `git pull`.")
+        return
+    with st.spinner("Checking GitHub for a newer build…"):
+        remote = launcher._remote_version()
+    local = launcher._local_version()
+    if remote is None:
+        st.warning("Couldn't reach GitHub — check your connection and try again.")
+    elif remote == local:
+        st.success(f"You're already on the latest version (v{local}).")
+    else:
+        st.info(f"Update found (v{remote}) — downloading and restarting…")
+        try:
+            launcher._self_update_and_relaunch()
+        except SystemExit:
+            os._exit(0)
+
+
+with st.sidebar:
+    st.divider()
+    st.caption(f"Uzumaki v{os.environ.get('UZUMAKI_VERSION', launcher._local_version())}")
+    if st.button("🔄 Check for updates", use_container_width=True):
+        _check_for_updates_now()
 
 
 # ── tool catalogue ──────────────────────────────────────────────────────────────

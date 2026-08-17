@@ -33,6 +33,14 @@ available but the download failed"*. `launcher.py` hands the outcome to
 `Home.py` via the `UZUMAKI_UPDATE_STATUS` / `UZUMAKI_VERSION` env vars; see
 `Home.py`'s `_update_notice()`.
 
+**Manual "check for updates" button:** don't want to wait for the next
+launch? Every page has a **🔄 Check for updates** button at the bottom of the
+sidebar (next to the current version number). Click it to check GitHub right
+now — it downloads and self-updates immediately if a newer build exists, same
+as the on-launch check, just on demand. Running from source instead of the
+`.exe`? The button tells you to `git pull` rather than trying to self-replace
+a script that isn't a frozen binary.
+
 **Windows flags the .exe ("Windows protected your PC" / Defender warning):**
 this is expected for now, not a sign anything's wrong with the download. The
 `.exe` is unsigned and freshly published, and PyInstaller's `--onefile`
