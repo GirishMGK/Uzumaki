@@ -10,6 +10,12 @@ Two jobs, in order:
      check must never block launching the app.
   2. Launch the Streamlit hub (Home.py) in-process and open the browser.
 
+The outcome of step 1 (updated / already current / couldn't reach GitHub /
+update found but the download failed) is handed to Home.py via environment
+variables (UZUMAKI_UPDATE_STATUS, UZUMAKI_VERSION) so it can show a one-time
+toast notification every time the app is opened — see Home.py's
+`_update_notice()`.
+
 This file is the sole PyInstaller entry point (see Uzumaki.spec) — everything
 else (Home.py, _pages/, tools/, redaction_tool/, je_audit_tool/,
 form26as_tool/, and the root-level extractor modules) ships as bundled data
@@ -34,6 +40,18 @@ _GH_RELEASE_BASE = f"https://github.com/{OWNER}/{REPO}/releases/download/{RELEAS
 _VERSION_URL = f"{_GH_RELEASE_BASE}/version.txt"
 _EXE_URL = f"{_GH_RELEASE_BASE}/Uzumaki.exe"
 _TIMEOUT = 6  # seconds — an update check must never meaningfully delay launch
+
+# Update-status outcomes, handed to Home.py via the UZUMAKI_UPDATE_STATUS env
+# var so it knows what to say in the on-open toast notification.
+STATUS_UPDATED = "updated"            # just self-updated and relaunched
+STATUS_CURRENT = "current"            # already on the latest version
+STATUS_OFFLINE = "offline"            # couldn't reach GitHub to check
+STATUS_UPDATE_FAILED = "update_failed"  # newer build exists but download failed
+
+# Set (with value "1") on the relaunched process's environment by
+# _self_update_and_relaunch so it can report STATUS_UPDATED without hitting
+# the network a second time.
+_JUST_UPDATED_ENV = "UZUMAKI_JUST_UPDATED"
 
 
 def _is_frozen() -> bool:
@@ -73,7 +91,12 @@ def _download(url: str, dest: str) -> bool:
 
 
 def _self_update_and_relaunch() -> None:
-    """Download the new exe, swap it in via a detached helper, then exit."""
+    """Download the new exe, swap it in via a detached helper, then exit.
+
+    Marks the relaunched process's environment with _JUST_UPDATED_ENV so it
+    reports STATUS_UPDATED (and Home.py shows the "updated" toast) instead of
+    silently re-checking and reporting STATUS_CURRENT.
+    """
     exe_path = os.path.abspath(sys.executable)
     exe_dir = os.path.dirname(exe_path)
     new_path = os.path.join(exe_dir, "Uzumaki_new.exe")
@@ -96,6 +119,7 @@ def _self_update_and_relaunch() -> None:
                 "  goto retry\r\n"
                 ")\r\n"
                 f'move /y "{new_path}" "{exe_path}" >nul\r\n'
+                f'set "{_JUST_UPDATED_ENV}=1"\r\n'
                 f'start "" "{exe_path}"\r\n'
                 'del /f /q "%~f0"\r\n'
             )
@@ -109,20 +133,31 @@ def _self_update_and_relaunch() -> None:
         # helper script needed since the OS allows overwriting a running file.
         os.replace(new_path, exe_path)
         os.chmod(exe_path, 0o755)
-        subprocess.Popen([exe_path])
+        subprocess.Popen([exe_path], env={**os.environ, _JUST_UPDATED_ENV: "1"})
 
     print("Restarting with the new version…")
     sys.exit(0)
 
 
-def check_for_update() -> None:
+def check_for_update() -> str:
+    """Check GitHub for a newer build and self-update if one exists.
+
+    Returns the STATUS_* outcome for *this* process to launch with — the
+    caller stashes it in UZUMAKI_UPDATE_STATUS for Home.py's on-open toast.
+    A successful self-update never returns (the process exits and a new one
+    takes over); that new process short-circuits here via _JUST_UPDATED_ENV.
+    """
+    if os.environ.get(_JUST_UPDATED_ENV) == "1":
+        return STATUS_UPDATED
     if not _is_frozen():
-        return  # nothing to self-replace when running from source
+        return STATUS_CURRENT  # nothing to self-replace when running from source
     remote = _remote_version()
     if remote is None:
-        return  # offline or GitHub unreachable — just launch what we have
+        return STATUS_OFFLINE  # offline or GitHub unreachable — just launch what we have
     if remote != _local_version():
-        _self_update_and_relaunch()
+        _self_update_and_relaunch()  # exits on success; falls through only if the download failed
+        return STATUS_UPDATE_FAILED
+    return STATUS_CURRENT
 
 
 def run_app() -> None:
@@ -139,6 +174,12 @@ def run_app() -> None:
     sys.exit(stcli.main())
 
 
-if __name__ == "__main__":
-    check_for_update()
+def main() -> None:
+    status = check_for_update()
+    os.environ["UZUMAKI_UPDATE_STATUS"] = status
+    os.environ["UZUMAKI_VERSION"] = _local_version()
     run_app()
+
+
+if __name__ == "__main__":
+    main()

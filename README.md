@@ -25,6 +25,39 @@ updated — see `.github/workflows/build-exe.yml`), it downloads it, swaps
 itself out, and relaunches automatically. A failed or offline check never
 blocks the app — it just launches whatever version you already have.
 
+**On-open notification:** every time the app opens (fresh launch, or the
+relaunch right after a self-update) it shows a one-time toast in the browser
+tab telling you what happened — *"Uzumaki updated to vX"*, *"you're on the
+latest version"*, *"couldn't check for updates (offline)"*, or *"an update is
+available but the download failed"*. `launcher.py` hands the outcome to
+`Home.py` via the `UZUMAKI_UPDATE_STATUS` / `UZUMAKI_VERSION` env vars; see
+`Home.py`'s `_update_notice()`.
+
+**Manual "check for updates" button:** don't want to wait for the next
+launch? Every page has a **🔄 Check for updates** button at the bottom of the
+sidebar (next to the current version number). Click it to check GitHub right
+now — it downloads and self-updates immediately if a newer build exists, same
+as the on-launch check, just on demand. Running from source instead of the
+`.exe`? The button tells you to `git pull` rather than trying to self-replace
+a script that isn't a frozen binary.
+
+**Windows flags the .exe ("Windows protected your PC" / Defender warning):**
+this is expected for now, not a sign anything's wrong with the download. The
+`.exe` is unsigned and freshly published, and PyInstaller's `--onefile`
+bootloader (self-extracts a bundled Python archive into a temp folder at
+launch) structurally resembles how droppers behave, so SmartScreen/Defender
+heuristics flag it regardless of what's actually inside. To run it anyway:
+- SmartScreen dialog → **More info** → **Run anyway**, or
+- Right-click `Uzumaki.exe` → **Properties** → check **Unblock** → OK, or
+- PowerShell: `Unblock-File .\Uzumaki.exe`
+
+`Uzumaki.spec` already turns off UPX compression and embeds proper version
+metadata (company/product/description) — both reduce false-positive risk —
+but only code-signing plus enough download history actually clears
+SmartScreen's warning. If you'd rather avoid the prompt entirely, build from
+source instead (see "Run from source" above) or build the `.exe` yourself
+below.
+
 ### Building the .exe yourself
 
 ```bash

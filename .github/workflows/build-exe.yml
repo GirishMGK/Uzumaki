@@ -5,6 +5,13 @@ on:
     branches: ["main"]
   workflow_dispatch: {}
 
+# The repo's default GITHUB_TOKEN permissions are read-only, which makes the
+# release-publish step 403 ("Resource not accessible by integration") even
+# though the PyInstaller build itself succeeds. Grant contents:write so
+# softprops/action-gh-release can create/update the rolling "latest" release.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest

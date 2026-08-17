@@ -128,3 +128,75 @@ def test_redaction_page_calls_real_functions():
     src = open(os.path.join(REPO_ROOT, "_pages", "redaction.py"), encoding="utf-8").read()
     for fn in ["RedactionEngine(", "get_active_patterns(", "process_files("]:
         assert fn in src, f"_pages/redaction.py no longer calls {fn} — the tool may be disconnected"
+
+
+# ── Home.py: on-open update-status toast ────────────────────────────────────
+def test_update_notice_covers_every_launcher_status():
+    """Every STATUS_* launcher.py can hand off must produce a distinct,
+    version-substituted toast — a status Home.py doesn't recognize silently
+    falls back to the "current" message, which would misreport a failed or
+    just-installed update as nothing happening."""
+    pytest.importorskip("streamlit")
+    sys.path.insert(0, REPO_ROOT)
+    import importlib
+
+    import launcher
+    Home = importlib.import_module("Home")
+
+    for status in [launcher.STATUS_UPDATED, launcher.STATUS_CURRENT,
+                   launcher.STATUS_OFFLINE, launcher.STATUS_UPDATE_FAILED]:
+        msg, icon = Home._update_notice(status, "1.2.3")
+        assert "1.2.3" in msg
+        assert icon
+
+    updated_msg, _ = Home._update_notice(launcher.STATUS_UPDATED, "1.2.3")
+    current_msg, _ = Home._update_notice(launcher.STATUS_CURRENT, "1.2.3")
+    assert updated_msg != current_msg
+
+    # Unknown status must not crash — falls back to the "current" message.
+    fallback_msg, _ = Home._update_notice("not-a-real-status", "1.2.3")
+    assert fallback_msg == current_msg
+
+
+# ── Home.py: manual "check for updates now" sidebar control ────────────────
+def test_home_check_for_updates_wires_real_launcher_functions():
+    """
+    The sidebar button must actually drive launcher.py's update machinery
+    (not just print a message) and must force a real process exit via
+    os._exit(0) when SystemExit is caught — a plain sys.exit(0) raised
+    inside Streamlit's per-session worker thread only kills that thread,
+    leaving the frozen .exe running and the relaunch helper stuck waiting
+    to delete a file that's still locked.
+    """
+    src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    for fn in ["launcher._is_frozen(", "launcher._remote_version(",
+               "launcher._local_version(", "launcher._self_update_and_relaunch("]:
+        assert fn in src, f"Home.py's update-check control no longer calls {fn}"
+    assert "except SystemExit" in src and "os._exit(0)" in src, (
+        "Home.py's manual update-check must force a real process exit "
+        "(os._exit(0)) after catching SystemExit — see _check_for_updates_now"
+    )
+
+
+# ── Uzumaki.spec: ROOT must resolve to the repo root, not its parent ───────────
+def test_spec_root_resolves_to_repo_root_not_its_parent():
+    """
+    Regression guard for the bug that made every build-exe.yml run fail:
+    PyInstaller injects SPECPATH as the *directory already containing* the
+    .spec file, so `os.path.dirname(os.path.abspath(SPECPATH))` walks one
+    level too far up (repo root's *parent*) and every `datas` entry built from
+    it 404s — "ERROR: Unable to find '<parent>/Home.py' when adding binary
+    and data files." Simulate PyInstaller's exec environment with the real
+    SPECPATH and check the resulting ROOT actually contains Home.py.
+    """
+    src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    root_line = next(line for line in src.splitlines() if line.startswith("ROOT ="))
+    assert "dirname(os.path.abspath(SPECPATH))" not in root_line, (
+        "Uzumaki.spec's ROOT must not take dirname() of SPECPATH — SPECPATH is "
+        "already the directory containing the .spec file"
+    )
+    namespace = {"SPECPATH": REPO_ROOT, "os": os}
+    exec(compile(root_line, "<spec-root-line>", "exec"), namespace)
+    assert os.path.exists(os.path.join(namespace["ROOT"], "Home.py")), (
+        "Uzumaki.spec's ROOT must resolve to the repo root (containing Home.py)"
+    )
