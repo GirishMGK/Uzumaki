@@ -14,7 +14,38 @@ Output: dist/Uzumaki.exe
 
 import os
 
-ROOT = os.path.dirname(os.path.abspath(SPECPATH))
+from PyInstaller.utils.hooks import copy_metadata, collect_data_files
+
+# SPECPATH is already the directory containing this spec file (not the file
+# path itself) -- PyInstaller sets it that way. dirname()'ing it, as an
+# earlier version of this file did, walks one directory too high and breaks
+# every path below (e.g. looking for Home.py next to the repo instead of
+# inside it).
+ROOT = os.path.abspath(SPECPATH)
+
+# PyInstaller doesn't bundle installed-package metadata (.dist-info) by
+# default. Streamlit (and several of its own dependents, e.g. altair,
+# pydeck) call importlib.metadata.version(...) on themselves at import time
+# -- without this, `import streamlit` raises PackageNotFoundError inside the
+# frozen exe even though the module itself is bundled fine.
+_METADATA_PACKAGES = [
+    "streamlit", "altair", "pydeck", "click", "packaging", "pandas",
+    "gitpython", "protobuf", "tenacity", "toml", "tornado", "watchdog",
+    "cachetools", "blinker", "requests", "pillow", "pyarrow",
+]
+metadata_datas = []
+for _pkg in _METADATA_PACKAGES:
+    try:
+        metadata_datas += copy_metadata(_pkg)
+    except Exception:
+        pass  # optional dep not installed in this build env -- skip
+
+# Streamlit's actual frontend (the compiled React SPA it serves at "/") ships
+# as non-Python data files (streamlit/static/*) inside its own package.
+# PyInstaller's import-graph analysis only follows .py code, so without this
+# the frozen exe's server starts fine but every route 404s -- there's no
+# index.html to serve.
+streamlit_data = collect_data_files("streamlit")
 
 
 def _tree(src_name: str):
@@ -38,7 +69,7 @@ datas = [
     _tree("redaction_tool"),
     _tree("je_audit_tool"),
     _tree("form26as_tool"),
-]
+] + metadata_datas + streamlit_data
 
 hiddenimports = [
     "streamlit", "streamlit.web.cli", "streamlit.runtime.scriptrunner",
