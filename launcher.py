@@ -125,7 +125,27 @@ def check_for_update() -> None:
         _self_update_and_relaunch()
 
 
+def _accept_streamlit_credentials() -> None:
+    """
+    Pre-seed ~/.streamlit/credentials.toml so Streamlit skips its first-run
+    "Enter your email" prompt. That prompt reads from stdin — fine for a
+    terminal, but a double-clicked .exe has no stdin to read from, so
+    without this it hangs forever on first launch instead of opening the
+    browser. --browser.gatherUsageStats=false does not skip this prompt by
+    itself; only a pre-existing credentials file does.
+    """
+    from streamlit.file_util import get_streamlit_file_path
+
+    conf_file = get_streamlit_file_path("credentials.toml")
+    if os.path.exists(conf_file):
+        return
+    os.makedirs(os.path.dirname(conf_file), exist_ok=True)
+    with open(conf_file, "w", encoding="utf-8") as f:
+        f.write('[general]\nemail = ""\n')
+
+
 def run_app() -> None:
+    _accept_streamlit_credentials()
     home = os.path.join(base_dir(), "Home.py")
     sys.argv = [
         "streamlit", "run", home,
