@@ -1,2 +1,7 @@
-# Extra dependency for building Uzumaki.exe — not needed to just run the app.
+# Extra dependencies for building Uzumaki.exe — not needed to just run the app.
 pyinstaller>=6.0
+# Bundled transitively via streamlit's scriptrunner submodules; PyInstaller's
+# own runtime hook for pkg_resources hard-requires this to be importable in
+# the build env, or the frozen exe crashes on every launch before reaching
+# any of this app's own code.
+platformdirs

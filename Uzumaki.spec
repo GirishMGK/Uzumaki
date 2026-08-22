@@ -14,7 +14,7 @@ Output: dist/Uzumaki.exe
 
 import os
 
-from PyInstaller.utils.hooks import copy_metadata, collect_data_files
+from PyInstaller.utils.hooks import copy_metadata, collect_data_files, collect_submodules
 
 # SPECPATH is already the directory containing this spec file (not the file
 # path itself) -- PyInstaller sets it that way. dirname()'ing it, as an
@@ -32,6 +32,7 @@ _METADATA_PACKAGES = [
     "streamlit", "altair", "pydeck", "click", "packaging", "pandas",
     "gitpython", "protobuf", "tenacity", "toml", "tornado", "watchdog",
     "cachetools", "blinker", "requests", "pillow", "pyarrow",
+    "setuptools", "platformdirs",
 ]
 metadata_datas = []
 for _pkg in _METADATA_PACKAGES:
@@ -46,6 +47,20 @@ for _pkg in _METADATA_PACKAGES:
 # the frozen exe's server starts fine but every route 404s -- there's no
 # index.html to serve.
 streamlit_data = collect_data_files("streamlit")
+
+# Streamlit imports some of its own submodules dynamically at script-run
+# time rather than via top-level `import` statements PyInstaller's static
+# analysis can follow -- e.g. streamlit.runtime.scriptrunner.magic_funcs,
+# needed for every script run (not just ones that visibly use "magic"
+# commands), only surfaced once a real user ran the exe on Windows:
+#   ModuleNotFoundError: No module named
+#   'streamlit.runtime.scriptrunner.magic_funcs'
+# collect_submodules("streamlit") (the whole package) was tried first but
+# pulled in enough of streamlit's optional/back-compat surface to trigger an
+# unrelated pkg_resources->platformdirs runtime-hook failure at startup, so
+# scope this to just the scriptrunner package where the actual missing
+# module lives.
+streamlit_submodules = collect_submodules("streamlit.runtime.scriptrunner")
 
 
 def _tree(src_name: str):
@@ -88,7 +103,13 @@ hiddenimports = [
     "sklearn.ensemble", "sklearn.preprocessing", "scipy.stats",
     "plotly", "plotly.express", "plotly.graph_objects", "plotly.subplots",
     "bs4", "lxml", "python_calamine",
-]
+    # setuptools' vendored pkg_resources ends up bundled transitively (via
+    # streamlit's scriptrunner submodules) and PyInstaller's own runtime hook
+    # for it (pyi_rth_pkgres.py) hard-requires platformdirs to be importable
+    # -- without this the exe crashes on every launch before reaching
+    # launcher.py at all, regardless of anything this app itself does.
+    "platformdirs",
+] + streamlit_submodules
 
 a = Analysis(
     ["launcher.py"],
