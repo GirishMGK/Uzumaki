@@ -128,3 +128,55 @@ def test_redaction_page_calls_real_functions():
     src = open(os.path.join(REPO_ROOT, "_pages", "redaction.py"), encoding="utf-8").read()
     for fn in ["RedactionEngine(", "get_active_patterns(", "process_files("]:
         assert fn in src, f"_pages/redaction.py no longer calls {fn} — the tool may be disconnected"
+
+
+# ── _pages/_runner.py: run_name must be "__main__" ──────────────────────────────
+def test_runner_uses_main_run_name():
+    """
+    Regression guard for a real bug found while integration-testing Firm RMS:
+    _pages/_runner.py ran legacy tool scripts via
+    runpy.run_path(path, run_name="__hub_page__"). pdf_tools.py gates its
+    actual page-dispatch call behind `if __name__ == "__main__":` (it began
+    life as a standalone `streamlit run pdf_tools.py` app) -- any run_name
+    other than "__main__" leaves that guard permanently False. The result
+    was a silently blank PDF Tools page: no exception, no error box, HTTP
+    200 either way -- the script ran far enough to inject its own CSS and
+    define its functions, then simply never called any of them. Only caught
+    by inspecting the live DOM (or, as here, Streamlit's own AppTest), not
+    by an HTTP status check.
+    """
+    src = open(os.path.join(REPO_ROOT, "_pages", "_runner.py"), encoding="utf-8").read()
+    assert 'run_name="__main__"' in src, (
+        '_pages/_runner.py must use run_name="__main__" -- anything else '
+        "silently breaks any wrapped script that gates its entry point "
+        'behind `if __name__ == "__main__":` (e.g. pdf_tools.py)'
+    )
+
+
+def test_pdf_tools_page_actually_renders_content():
+    """
+    Behavioral companion to test_runner_uses_main_run_name(): actually drives
+    the page via Streamlit's own AppTest and checks real widgets came out,
+    not just that the script exited without raising. Before the run_name
+    fix, this page executed cleanly (no exception) but produced only its own
+    CSS block -- zero buttons -- which is exactly what an HTTP-level or
+    py_compile check cannot tell apart from success.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(os.path.join(REPO_ROOT, "_pages", "pdf_tools_page.py"))
+    at.run(timeout=15)
+    assert not at.exception, f"pdf_tools_page raised: {at.exception}"
+    # Home view: sidebar nav (5) + 4 "Open X PDF" card buttons = 9. A blank
+    # page (the bug) produces 0.
+    assert len(at.button) >= 5, (
+        f"expected real page-dispatch content (multiple buttons), got {len(at.button)} "
+        "— pdf_tools.py's main() may not be executing"
+    )
+
+
+# ── _pages/firm_rms.py: must actually start & embed the vendored backend ───────
+def test_firm_rms_page_calls_real_functions():
+    src = open(os.path.join(REPO_ROOT, "_pages", "firm_rms.py"), encoding="utf-8").read()
+    for fn in ["startup_seed.run(", "uvicorn.run(", "st.components.v1.iframe("]:
+        assert fn in src, f"_pages/firm_rms.py no longer calls {fn} — the tool may be disconnected"

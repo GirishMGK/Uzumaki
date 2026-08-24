@@ -33,6 +33,10 @@ _METADATA_PACKAGES = [
     "gitpython", "protobuf", "tenacity", "toml", "tornado", "watchdog",
     "cachetools", "blinker", "requests", "pillow", "pyarrow",
     "setuptools", "platformdirs",
+    # Firm RMS backend (FastAPI) -- same importlib.metadata.version() pattern
+    # as streamlit above.
+    "fastapi", "starlette", "uvicorn", "pydantic", "pydantic-settings",
+    "sqlmodel", "sqlalchemy",
 ]
 metadata_datas = []
 for _pkg in _METADATA_PACKAGES:
@@ -62,6 +66,13 @@ streamlit_data = collect_data_files("streamlit")
 # module lives.
 streamlit_submodules = collect_submodules("streamlit.runtime.scriptrunner")
 
+# passlib resolves its hash-scheme handlers (bcrypt, etc.) dynamically by
+# name at runtime, same pattern as streamlit.runtime.scriptrunner above --
+# collect the whole package rather than chase individual handler modules.
+passlib_submodules = collect_submodules("passlib")
+reportlab_submodules = collect_submodules("reportlab")
+reportlab_data = collect_data_files("reportlab")  # bundled fonts/AFM metrics
+
 
 def _tree(src_name: str):
     """(source_dir, dest_dir) pair copying a whole subfolder 1:1 into the bundle."""
@@ -84,7 +95,8 @@ datas = [
     _tree("redaction_tool"),
     _tree("je_audit_tool"),
     _tree("form26as_tool"),
-] + metadata_datas + streamlit_data
+    _tree("firm_rms_tool"),
+] + metadata_datas + streamlit_data + reportlab_data
 
 hiddenimports = [
     "streamlit", "streamlit.web.cli", "streamlit.runtime.scriptrunner",
@@ -109,7 +121,21 @@ hiddenimports = [
     # -- without this the exe crashes on every launch before reaching
     # launcher.py at all, regardless of anything this app itself does.
     "platformdirs",
-] + streamlit_submodules
+    # Firm RMS backend (FastAPI + uvicorn + SQLModel) -- resolves backends/
+    # plugins via importlib rather than a plain top-level import, so
+    # PyInstaller's static analysis can't discover them on its own. Carried
+    # over from firm_rms_tool's own already-working desktop/firm_rms.spec
+    # (see docs/user-guide.md#windows-desktop-app in the originating repo).
+    "uvicorn.loops.auto", "uvicorn.loops.asyncio",
+    "uvicorn.protocols.http.auto", "uvicorn.protocols.http.h11_impl",
+    "uvicorn.protocols.websockets.auto", "uvicorn.protocols.websockets.wsproto_impl",
+    "uvicorn.lifespan.on", "uvicorn.lifespan.off",
+    "passlib.handlers.bcrypt", "bcrypt", "email_validator",
+    "apscheduler.triggers.cron", "apscheduler.triggers.interval",
+    "apscheduler.executors.pool", "apscheduler.jobstores.memory",
+    "jwt", "multipart", "sqlmodel", "pydantic", "pydantic_settings",
+    "rapidfuzz",
+] + streamlit_submodules + passlib_submodules + reportlab_submodules
 
 # Three hub pages (_pages/pdf_tools_page.py, je_audit.py, pf_statutory.py)
 # don't `import` their tool script -- they hand its filename to
@@ -127,14 +153,22 @@ hiddenimports = [
 # real import graphs too, then trim a.scripts back down to just launcher.py
 # before EXE() -- their imports still land in the shared pyz/a.pure, but only
 # launcher.py actually runs at startup.
+# firm_rms_tool/backend/app/main.py is imported lazily (inside a function,
+# not at _pages/firm_rms.py's module top level -- see _start_backend()) so
+# it's *discoverable* by PyInstaller's AST-scanning static analysis either
+# way, but its own third-party imports (fastapi, sqlmodel, ...) still need
+# an entry point for that analysis to actually trace from -- same reasoning
+# as the runpy-invisible scripts above, applied to a plain lazy import.
 a = Analysis(
     ["launcher.py", "pdf_tools.py",
-     os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py"],
+     os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py",
+     os.path.join("firm_rms_tool", "backend", "app", "main.py")],
     pathex=[
         ROOT,
         os.path.join(ROOT, "redaction_tool"),
         os.path.join(ROOT, "je_audit_tool"),
         os.path.join(ROOT, "form26as_tool"),
+        os.path.join(ROOT, "firm_rms_tool", "backend"),
     ],
     binaries=[],
     datas=datas,
