@@ -1,5 +1,5 @@
 """
-Sangir Analytics — unified Tools hub.
+Uzumaki — unified Tools hub.
 
 A single Streamlit application that groups every tool under a **Tools** section
 in the sidebar; each tool opens as its own page.
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _pages.theme import inject_css, footer  # noqa: E402
 
-st.set_page_config(page_title="Sangir Analytics · Tools", page_icon="🧰", layout="wide")
+st.set_page_config(page_title="Uzumaki · Tools", page_icon="🧰", layout="wide")
 inject_css()
 
 
