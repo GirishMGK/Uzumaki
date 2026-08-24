@@ -1,5 +1,5 @@
 """
-Shared design system for the Sangir Analytics hub.
+Shared design system for the Uzumaki hub.
 
 Injected once from Home.py — since all pages run inside the same Streamlit
 session/DOM, the CSS cascades to every page without each one re-declaring it.
@@ -148,7 +148,7 @@ def footer() -> None:
     st.markdown(
         """
         <div class="sa-footer">
-            <div>Sangir Analytics · Tools Hub</div>
+            <div>Uzumaki · Tools Hub</div>
             <div>All processing runs locally — no data leaves this session.</div>
         </div>
         """,
