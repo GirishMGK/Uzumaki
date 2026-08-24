@@ -62,9 +62,14 @@ _TOOLS = [
         "icon": "🔍", "title": "JE Audit Analytics", "tag": "Streamlit",
         "desc": "Journal Entry exception testing — amount, timing, user, vendor, and Benford's Law checks.",
     },
+    {
+        "group": "Workforce & Scheduling",
+        "icon": "🧑‍💼", "title": "Firm RMS", "tag": "FastAPI (in-process)",
+        "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
+    },
 ]
 
-_GROUP_ORDER = ["Finance & Loan Audit", "Statutory & Payroll", "Documents & PDFs", "Data Engineering"]
+_GROUP_ORDER = ["Finance & Loan Audit", "Statutory & Payroll", "Documents & PDFs", "Data Engineering", "Workforce & Scheduling"]
 
 _DEP_CHECKS = [
     ("pandas", "pandas"), ("pyarrow", "PyArrow"), ("duckdb", "DuckDB"),
@@ -94,9 +99,9 @@ def home():
             <p>A unified workspace for loan-audit, statutory-compliance, and document-processing
             tools — everything runs locally, nothing is uploaded to a server you don't control.</p>
             <div class="sa-badges">
-                <span class="sa-badge">7 tools</span>
+                <span class="sa-badge">8 tools</span>
                 <span class="sa-badge">Local-only processing</span>
-                <span class="sa-badge">One framework — Streamlit</span>
+                <span class="sa-badge">One app — one .exe</span>
             </div>
         </div>
         """,
@@ -154,6 +159,7 @@ nav = st.navigation(
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
+            st.Page("_pages/firm_rms.py", title="Firm RMS", icon="🧑‍💼"),
         ],
     }
 )

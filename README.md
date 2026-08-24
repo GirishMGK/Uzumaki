@@ -63,6 +63,7 @@ users who prefer that, but it's optional, not required to use the tool.
 | **SOA · RPS · Reconcile** (`extract_soa.py` / `extract_rps.py` / `reconcile.py`) | L&T Finance SOA extractor with TOC/TOD audit, RPS parser, and auto-reconciliation by Agreement No. Also ships as a standalone Flask app (`app.py`, SSE live progress) for users who prefer that UI. |
 | **Document Redaction** (`redaction_tool/`) | Auto-detect + redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email plus custom keywords across PDF (true redaction via PyMuPDF), DOCX, XLSX, and images (Tesseract OCR). Also ships as a standalone tkinter desktop app (`redaction_tool/main.py`). |
 | **JE Audit Analytics** (`je_audit_tool/`) | Journal Entry exception testing for statutory/forensic audit: Amount (duplicates, high-value, split transactions), Timing (weekend/holiday, year-end cutoff, reversals), User & Access Control (SOD violations, dormant users, related parties), Vendor Master Data (duplicate GSTIN/PAN, MSME delay, inactive vendors), Benford's Law (chi-square digit analysis). DuckDB-backed for large GL dumps; exports a multi-sheet Excel audit report + working paper. |
+| **Firm RMS** (`firm_rms_tool/`) | Manpower/resource management — scheduler board, capacity dashboards, report library, timesheets/actuals, forecasting, RBAC. Unlike every other tool above, this one is a **stateful multi-session app with its own database and login**, not a one-shot file processor — see "Firm RMS is different" below. |
 
 > A separate .NET/Blazor Server port of the JE Audit workflow exists at
 > `je_audit_tool_blazor/JEAuditApp.razor` for reference, but is not part of
@@ -72,6 +73,33 @@ users who prefer that, but it's optional, not required to use the tool.
 > **PF + Statutory combinable?** Yes — they already share `_read_pdf_text`,
 > `_g`/`normalize_period` helpers and live together in `Combined_PF_Statutory.py`
 > as two tabs, so the hub mounts that single file.
+
+### Firm RMS is different
+
+Every other tool in this hub is stateless — upload a file, process it,
+download the result, nothing persists. Firm RMS (vendored from a separate
+`Manpower-Tracker` repo) is a full resource-management system with its own
+FastAPI backend, SQLite database, JWT login, and background jobs — genuinely
+different architecture, not just a bigger version of the same pattern.
+
+It's still folded into one process/one `.exe` rather than shipped as a
+second installer: `_pages/firm_rms.py` starts the vendored backend
+(`firm_rms_tool/backend/`) on a background thread the first time you open
+the page, waits for it to come up, then embeds its already-built frontend
+(`firm_rms_tool/frontend_dist/`) via an iframe on the same origin/port — so
+from the outside it behaves like any other page in the hub: one click, no
+separate server to run. Data lives in a per-user app-data directory
+(`%LOCALAPPDATA%\FirmRMS` on Windows), independent of the app's own install
+location, so it survives an `Uzumaki.exe` self-update.
+
+Default login on first run: `admin@firm.local` / `ChangeMe!2026`.
+
+**Sharing one Python environment**: Firm RMS's own `backend/requirements.txt`
+pins `fastapi==0.115.0`, which conflicts with the `starlette` version
+Streamlit itself now requires internally (Streamlit embeds a Starlette-based
+server). `requirements.txt` at the repo root leaves `fastapi` unpinned so pip
+resolves one version set both apps share — see the comment there before
+reintroducing a pin.
 
 ---
 

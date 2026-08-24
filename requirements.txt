@@ -19,3 +19,24 @@ scikit-learn
 python-calamine
 beautifulsoup4
 lxml
+
+# Firm RMS (firm_rms_tool/) -- vendored FastAPI backend, run in-process by
+# _pages/firm_rms.py. Left unpinned like everything else above so pip
+# resolves one version set shared with streamlit's own requirements
+# (notably starlette/websockets/python-multipart) -- the original repo's
+# pinned fastapi==0.115.0 conflicts with the starlette version streamlit
+# itself now requires internally; letting fastapi float resolves a version
+# compatible with both. psycopg is deliberately omitted: SQLAlchemy only
+# imports a DB driver based on the connection URL's scheme at engine-creation
+# time, and the desktop/in-process mode this hub uses always connects via
+# sqlite:///..., so nothing in app code ever imports it.
+fastapi
+uvicorn[standard]
+sqlmodel
+passlib[bcrypt]
+bcrypt
+pyjwt
+apscheduler
+rapidfuzz
+reportlab
+email-validator
