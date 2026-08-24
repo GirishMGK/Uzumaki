@@ -102,7 +102,7 @@ hiddenimports = [
     "docx", "openpyxl", "xlsxwriter", "xlrd", "pytesseract", "PIL",
     "sklearn.ensemble", "sklearn.preprocessing", "scipy.stats",
     "plotly", "plotly.express", "plotly.graph_objects", "plotly.subplots",
-    "bs4", "lxml", "python_calamine",
+    "bs4", "lxml", "python_calamine", "pypdf",
     # setuptools' vendored pkg_resources ends up bundled transitively (via
     # streamlit's scriptrunner submodules) and PyInstaller's own runtime hook
     # for it (pyi_rth_pkgres.py) hard-requires platformdirs to be importable
@@ -111,8 +111,25 @@ hiddenimports = [
     "platformdirs",
 ] + streamlit_submodules
 
+# Three hub pages (_pages/pdf_tools_page.py, je_audit.py, pf_statutory.py)
+# don't `import` their tool script -- they hand its filename to
+# runpy.run_path() at runtime (_pages/_runner.py:run_script), because those
+# legacy scripts call st.set_page_config() at module level and can only be
+# entered that way. PyInstaller's static analysis walks literal `import`
+# statements reachable from the entry script; a filename passed to
+# runpy.run_path() is invisible to it, so *everything* pdf_tools.py,
+# je_audit_tool/app.py, and Combined_PF_Statutory.py import -- their own
+# top-level imports and every transitive one -- was missing from the bundle.
+# (pypdf, used by tools/merger.py etc., was the first one a user actually
+# hit; there was no reason more wouldn't follow.)
+#
+# Fix: list them as additional Analysis() scripts so PyInstaller traces their
+# real import graphs too, then trim a.scripts back down to just launcher.py
+# before EXE() -- their imports still land in the shared pyz/a.pure, but only
+# launcher.py actually runs at startup.
 a = Analysis(
-    ["launcher.py"],
+    ["launcher.py", "pdf_tools.py",
+     os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py"],
     pathex=[
         ROOT,
         os.path.join(ROOT, "redaction_tool"),
@@ -127,6 +144,7 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
+a.scripts = [s for s in a.scripts if s[0] == "launcher"]
 
 pyz = PYZ(a.pure)
 
