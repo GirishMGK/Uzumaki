@@ -63,6 +63,11 @@ _TOOLS = [
         "desc": "Journal Entry exception testing — amount, timing, user, vendor, and Benford's Law checks.",
     },
     {
+        "group": "Finance & Loan Audit",
+        "icon": "📒", "title": "Tally Extractions", "tag": "Streamlit",
+        "desc": "Pull every ledger's full transaction history out of a Tally JSON export in one shot, with running balances and a control-total check.",
+    },
+    {
         "group": "Workforce & Scheduling",
         "icon": "🧑‍💼", "title": "Firm RMS", "tag": "FastAPI (in-process)",
         "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
@@ -99,7 +104,7 @@ def home():
             <p>A unified workspace for loan-audit, statutory-compliance, and document-processing
             tools — everything runs locally, nothing is uploaded to a server you don't control.</p>
             <div class="sa-badges">
-                <span class="sa-badge">8 tools</span>
+                <span class="sa-badge">9 tools</span>
                 <span class="sa-badge">Local-only processing</span>
                 <span class="sa-badge">One app — one .exe</span>
             </div>
@@ -159,6 +164,7 @@ nav = st.navigation(
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
+            st.Page("_pages/tally_extractions.py", title="Tally Extractions", icon="📒"),
             st.Page("_pages/firm_rms.py", title="Firm RMS", icon="🧑‍💼"),
         ],
     }
