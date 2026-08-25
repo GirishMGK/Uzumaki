@@ -19,6 +19,7 @@ scikit-learn
 python-calamine
 beautifulsoup4
 lxml
+ijson
 
 # Firm RMS (firm_rms_tool/) -- vendored FastAPI backend, run in-process by
 # _pages/firm_rms.py. Left unpinned like everything else above so pip

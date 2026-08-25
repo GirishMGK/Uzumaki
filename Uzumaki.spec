@@ -73,6 +73,11 @@ passlib_submodules = collect_submodules("passlib")
 reportlab_submodules = collect_submodules("reportlab")
 reportlab_data = collect_data_files("reportlab")  # bundled fonts/AFM metrics
 
+# ijson picks one of several JSON-parsing backends (a C extension when
+# available, else pure-Python) via a try/except import chain at runtime,
+# same dynamic-import pattern as everything else on this list.
+ijson_submodules = collect_submodules("ijson")
+
 
 def _tree(src_name: str):
     """(source_dir, dest_dir) pair copying a whole subfolder 1:1 into the bundle."""
@@ -96,6 +101,7 @@ datas = [
     _tree("je_audit_tool"),
     _tree("form26as_tool"),
     _tree("firm_rms_tool"),
+    _tree("tally_tool"),
 ] + metadata_datas + streamlit_data + reportlab_data
 
 hiddenimports = [
@@ -134,8 +140,8 @@ hiddenimports = [
     "apscheduler.triggers.cron", "apscheduler.triggers.interval",
     "apscheduler.executors.pool", "apscheduler.jobstores.memory",
     "jwt", "multipart", "sqlmodel", "pydantic", "pydantic_settings",
-    "rapidfuzz",
-] + streamlit_submodules + passlib_submodules + reportlab_submodules
+    "rapidfuzz", "ijson",
+] + streamlit_submodules + passlib_submodules + reportlab_submodules + ijson_submodules
 
 # Three hub pages (_pages/pdf_tools_page.py, je_audit.py, pf_statutory.py)
 # don't `import` their tool script -- they hand its filename to
@@ -162,13 +168,15 @@ hiddenimports = [
 a = Analysis(
     ["launcher.py", "pdf_tools.py",
      os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py",
-     os.path.join("firm_rms_tool", "backend", "app", "main.py")],
+     os.path.join("firm_rms_tool", "backend", "app", "main.py"),
+     os.path.join("tally_tool", "extract_ledgers.py")],
     pathex=[
         ROOT,
         os.path.join(ROOT, "redaction_tool"),
         os.path.join(ROOT, "je_audit_tool"),
         os.path.join(ROOT, "form26as_tool"),
         os.path.join(ROOT, "firm_rms_tool", "backend"),
+        os.path.join(ROOT, "tally_tool"),
     ],
     binaries=[],
     datas=datas,

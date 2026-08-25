@@ -180,3 +180,97 @@ def test_firm_rms_page_calls_real_functions():
     src = open(os.path.join(REPO_ROOT, "_pages", "firm_rms.py"), encoding="utf-8").read()
     for fn in ["startup_seed.run(", "uvicorn.run(", "st.components.v1.iframe("]:
         assert fn in src, f"_pages/firm_rms.py no longer calls {fn} — the tool may be disconnected"
+
+
+# ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────
+def test_tally_page_calls_real_functions():
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    for fn in ["ensure_utf8(", "extract(", "build_tables(", "write_output("]:
+        assert fn in src, f"_pages/tally_extractions.py no longer calls {fn} — the tool may be disconnected"
+
+
+def _tally_fixture():
+    """A minimal but real Tally 'JSON (Data Interchange)' export: one ledger
+    master list plus a handful of vouchers, including a deliberately
+    mismatched isdeemedpositive flag (see extract_ledgers.py's own docstring
+    on why the amount's sign is used instead) and a cancelled voucher."""
+    return {
+        "tallymessage": [
+            {"metadata": {"type": "Ledger", "name": "Cash"},
+             "parent": "Cash-in-Hand", "openingbalance": "50000"},
+            {"metadata": {"type": "Ledger", "name": "Sales Account"},
+             "parent": "Sales Accounts", "openingbalance": "0"},
+            {"metadata": {"type": "Ledger", "name": "TDS Payable"},
+             "parent": "Duties & Taxes", "openingbalance": "0"},
+            {"metadata": {"type": "Ledger", "name": "Dormant Ledger"},
+             "parent": "Sundry Creditors", "openingbalance": "0"},
+            {"metadata": {"type": "Voucher", "vchtype": "Payment", "remoteid": "guid-1"},
+             "date": "20260410", "vouchertypename": "Bank Payment", "vouchernumber": "BP/001",
+             "reference": "", "partyledgername": "Cash", "narration": "Consultancy fee w/ TDS",
+             "masterid": "1", "iscancelled": False, "isoptional": False,
+             "allledgerentries": [
+                 {"ledgername": "Cash", "amount": "-9000", "isdeemedpositive": True},
+                 # isdeemedpositive is deliberately "wrong" here -- the amount's
+                 # sign (negative = Debit) is what must win.
+                 {"ledgername": "TDS Payable", "amount": "-1000", "isdeemedpositive": False},
+                 {"ledgername": "Sales Account", "amount": "10000", "isdeemedpositive": False},
+             ]},
+            {"metadata": {"type": "Voucher", "vchtype": "Payment", "remoteid": "guid-2"},
+             "date": "20260415", "vouchertypename": "Payment", "vouchernumber": "P/CANC",
+             "reference": "", "partyledgername": "Cash", "narration": "Cancelled voucher",
+             "masterid": "2", "iscancelled": True, "isoptional": False,
+             "allledgerentries": [
+                 {"ledgername": "Cash", "amount": "-500", "isdeemedpositive": True},
+                 {"ledgername": "Sales Account", "amount": "500", "isdeemedpositive": False},
+             ]},
+        ]
+    }
+
+
+def test_tally_extractor_uses_amount_sign_not_isdeemedpositive(tmp_path):
+    """The core, easy-to-regress behavior: extract_ledgers.py must classify
+    Debit/Credit from the SIGNED amount, not the isdeemedpositive flag --
+    reverting to the flag would silently misclassify statutory/duty lines on
+    migrated vouchers (see the module's own docstring)."""
+    import json
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    from extract_ledgers import extract, build_tables
+
+    src_path = tmp_path / "export.json"
+    src_path.write_text(json.dumps(_tally_fixture()), encoding="utf-8")
+
+    ledger_master, rows = extract(str(src_path))
+    df, summary = build_tables(ledger_master, rows, include_cancelled=False,
+                                from_date=None, to_date=None, ledger_filter=None)
+
+    tds_row = df[df["Ledger Name"] == "TDS Payable"].iloc[0]
+    assert tds_row["Debit"] == 1000.0 and tds_row["Credit"] == 0.0, (
+        "TDS Payable's isdeemedpositive flag says Credit, but its amount sign "
+        "says Debit -- the amount sign must win"
+    )
+
+    # Cancelled voucher excluded by default.
+    assert "P/CANC" not in df["Voucher No"].values
+
+    # Dormant ledger (no vouchers at all) still appears in the summary.
+    assert "Dormant Ledger" in summary["Ledger Name"].values
+    dormant = summary[summary["Ledger Name"] == "Dormant Ledger"].iloc[0]
+    assert dormant["Transaction Count"] == 0
+
+    # Control total: every real double-entry voucher must sum to zero.
+    assert abs(df["Debit"].sum() - df["Credit"].sum()) < 0.01
+
+
+def test_tally_extractor_include_cancelled_flag(tmp_path):
+    import json
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    from extract_ledgers import extract, build_tables
+
+    src_path = tmp_path / "export.json"
+    src_path.write_text(json.dumps(_tally_fixture()), encoding="utf-8")
+
+    ledger_master, rows = extract(str(src_path))
+    df, _ = build_tables(ledger_master, rows, include_cancelled=True,
+                          from_date=None, to_date=None, ledger_filter=None)
+    assert "P/CANC" in df["Voucher No"].values
+    assert "Cancelled" in df.columns
