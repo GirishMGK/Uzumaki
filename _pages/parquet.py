@@ -1,4 +1,4 @@
-"""Hub page: Uzumaki Tool."""
+"""Hub page: Parquet Tool."""
 import parquet_tool
 
 parquet_tool.render()
