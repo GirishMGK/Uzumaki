@@ -29,7 +29,7 @@ inject_css()
 _TOOLS = [
     {
         "group": "Data Engineering",
-        "icon": "🗄️", "title": "Uzumaki Tool", "tag": "Streamlit",
+        "icon": "🗄️", "title": "Parquet Tool", "tag": "Streamlit",
         "desc": "CSV/Excel ↔ Parquet conversion, schema viewer, CSV utilities, DuckDB SQL analytics.",
     },
     {
@@ -152,7 +152,7 @@ nav = st.navigation(
     {
         "Home": [st.Page(home, title="Home", icon="🏠", default=True)],
         "Tools": [
-            st.Page("_pages/parquet.py", title="Uzumaki Tool", icon="🗄️"),
+            st.Page("_pages/parquet.py", title="Parquet Tool", icon="🗄️"),
             st.Page("_pages/pf_statutory.py", title="PF & Statutory", icon="🧾"),
             st.Page("_pages/form26as_page.py", title="Form 26AS Extractor", icon="🧮"),
             st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
