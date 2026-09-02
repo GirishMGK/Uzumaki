@@ -1,27 +1,35 @@
 """Hub page: Tally extraction tool.
 
 Pulls every ledger's full transaction history out of Tally in one shot,
-instead of opening and exporting each ledger one by one. Two ways in:
+instead of opening and exporting each ledger one by one. Three tabs:
 
-  - **Upload a JSON export** — wraps tally_tool/extract_ledgers.py's real
-    functions directly (encoding detection, streaming parse, running-balance
-    and control-total logic), same as the standalone CLI.
+  - **Upload a JSON or XML export** — wraps tally_tool/extract_ledgers.py's
+    real functions directly (encoding detection, streaming parse,
+    running-balance and control-total logic), same as the standalone CLI.
   - **Connect to Tally (live)** — wraps tally_tool/tally_connector.py, which
-    pulls the same data straight from a running TallyPrime instance over its
-    XML/HTTP interface, no manual export step. Requires Tally to be open
-    locally with ODBC/XML Server enabled (F12 -> Advanced Configuration) --
-    see the "Connect to Tally" tab for details. NOTE: the live-connect path
-    has not been exercised against a real Tally instance (this environment
-    has none to test with) -- expect to iterate after trying it for real.
+    pulls the same ledger-wise data straight from a running TallyPrime
+    instance over its XML/HTTP interface, no manual export step. Requires
+    Tally to be open locally with ODBC/XML Server enabled (F12 -> Advanced
+    Configuration).
+  - **Sales & Purchase Register** — also live, but item-wise (stock item,
+    qty, rate, amount) rather than ledger-wise, via
+    tally_connector.fetch_voucher_register().
 
-Both paths converge on the same build_tables()/write_output() and
-control-total display, so the output workbook is identical either way.
+Verified against a real TallyPrime instance (2026-09-02): the ledger-wise
+live pull required an explicit date range and ALLLEDGERENTRIES.LIST in
+FETCH to return real data at all -- both bugs found and fixed. The Sales &
+Purchase Register tab reuses the same request pattern and has been tested
+locally against a fabricated response matching the real captured shape, but
+not yet against a live Tally instance itself -- expect a similar round of
+fixes once tried for real.
 """
 import datetime
+import io
 import os
 import sys
 import tempfile
 
+import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -78,7 +86,9 @@ def _render_results(df, summary, tmpdir):
         )
 
 
-tab_upload, tab_live = st.tabs(["📤 Upload export file", "🔌 Connect to Tally (live)"])
+tab_upload, tab_live, tab_register = st.tabs(
+    ["📤 Upload export file", "🔌 Connect to Tally (live)", "🧾 Sales & Purchase Register"]
+)
 
 # ── Tab 1: upload a JSON or XML export ──────────────────────────────────────
 with tab_upload:
@@ -101,9 +111,15 @@ ledger-entry detail — everything this tool needs, in either format.
     with c1:
         include_cancelled_u = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_upload")
     with c2:
-        from_date_u = st.date_input("From date (optional)", value=None, format="YYYY-MM-DD", key="fd_upload")
+        from_date_u = st.date_input(
+            "From date (optional)", value=None, format="YYYY-MM-DD", key="fd_upload",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
     with c3:
-        to_date_u = st.date_input("To date (optional)", value=None, format="YYYY-MM-DD", key="td_upload")
+        to_date_u = st.date_input(
+            "To date (optional)", value=None, format="YYYY-MM-DD", key="td_upload",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
 
     ledger_filter_u = st.text_input(
         "Only these ledgers (optional — exact names, comma-separated)",
@@ -202,11 +218,13 @@ right (empty fields, connection errors), that's expected on the first try; repor
         include_cancelled_l = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_live")
     with c2:
         from_date_l = st.date_input(
-            "From date", value=datetime.date(2000, 1, 1), format="YYYY-MM-DD", key="fd_live"
+            "From date", value=datetime.date(2000, 1, 1), format="YYYY-MM-DD", key="fd_live",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
         )
     with c3:
         to_date_l = st.date_input(
-            "To date", value=datetime.date.today(), format="YYYY-MM-DD", key="td_live"
+            "To date", value=datetime.date.today(), format="YYYY-MM-DD", key="td_live",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
         )
 
     ledger_filter_l = st.text_input(
@@ -245,6 +263,110 @@ right (empty fields, connection errors), that's expected on the first try; repor
 
             _render_results(df, summary, tmpdir)
 
+# ── Tab 3: Sales / Purchase Register (item-wise, live pull) ────────────────
+with tab_register:
+    st.caption(
+        "Item-wise Sales/Purchase register pulled live from Tally — same XML/HTTP "
+        "interface as the Connect tab above, so the same setup applies: Tally open "
+        "locally, ODBC/XML Server enabled, both dates required."
+    )
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        host_r = st.text_input("Tally host", value="localhost", key="host_reg")
+    with c2:
+        port_r = st.number_input(
+            "Port", value=tally_connector.DEFAULT_PORT, min_value=1, max_value=65535, step=1, key="port_reg"
+        )
+
+    if "tally_companies_reg" not in st.session_state:
+        st.session_state.tally_companies_reg = []
+
+    if st.button("Test Connection", key="test_reg"):
+        with st.spinner("Contacting Tally…"):
+            ok, message = tally_connector.test_connection(host_r, int(port_r))
+        if ok:
+            st.success(message)
+            try:
+                st.session_state.tally_companies_reg = tally_connector.list_companies(host_r, int(port_r))
+            except tally_connector.TallyConnectionError:
+                st.session_state.tally_companies_reg = []
+        else:
+            st.error(message)
+            st.session_state.tally_companies_reg = []
+
+    if st.session_state.tally_companies_reg:
+        company_r = st.selectbox("Company", st.session_state.tally_companies_reg, key="company_sel_reg")
+    else:
+        company_r = st.text_input(
+            "Company name (optional — leave blank to use whichever company is currently open)",
+            key="company_manual_reg",
+        ) or None
+
+    register_type = st.radio("Register", ["Sales", "Purchase"], horizontal=True, key="register_type")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        include_cancelled_r = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_reg")
+    with c2:
+        from_date_r = st.date_input(
+            "From date", value=datetime.date(2000, 1, 1), format="YYYY-MM-DD", key="fd_reg",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
+    with c3:
+        to_date_r = st.date_input(
+            "To date", value=datetime.date.today(), format="YYYY-MM-DD", key="td_reg",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
+
+    if st.button(f"Pull {register_type} Register", type="primary", key="pull_reg"):
+        try:
+            with st.spinner(f"Pulling {register_type} vouchers from Tally…"):
+                rows = tally_connector.fetch_voucher_register(
+                    host_r, int(port_r), company_r, {register_type},
+                    from_date_r if isinstance(from_date_r, datetime.date) else None,
+                    to_date_r if isinstance(to_date_r, datetime.date) else None,
+                    include_cancelled=include_cancelled_r,
+                )
+        except tally_connector.TallyConnectionError as e:
+            st.error(str(e))
+            st.stop()
+        except Exception as e:
+            st.error(f"Pull failed: {e}")
+            st.stop()
+
+        if not rows:
+            st.warning(f"No {register_type} vouchers found in this date range/company.")
+            st.stop()
+
+        df_reg = pd.DataFrame(rows)
+        unique_vouchers = df_reg.drop_duplicates(subset=["Voucher No", "Voucher GUID"])
+        total_value = unique_vouchers["Voucher Total"].sum()
+
+        st.divider()
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Vouchers", len(unique_vouchers))
+        k2.metric("Item lines", len(df_reg))
+        k3.metric(f"Total {register_type} value", f"{total_value:,.2f}")
+
+        st.dataframe(df_reg.head(500), use_container_width=True, hide_index=True)
+        if len(df_reg) > 500:
+            st.caption(f"Showing first 500 of {len(df_reg):,} rows — download the workbook for the full data.")
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df_reg.to_excel(writer, sheet_name=f"{register_type} Register", index=False)
+            voucher_summary = unique_vouchers[
+                ["Date", "Voucher Type", "Voucher No", "Party Ledger", "Reference", "Voucher Total"]
+            ]
+            voucher_summary.to_excel(writer, sheet_name="Voucher Summary", index=False)
+        st.download_button(
+            f"⬇ Download {register_type} Register workbook",
+            buf.getvalue(),
+            file_name=f"tally_{register_type.lower()}_register.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
 with st.expander("What this does"):
     st.markdown(
         """
@@ -264,6 +386,10 @@ with st.expander("What this does"):
 - **Live connect** pulls the same fields directly from a running Tally instance over its
   XML/HTTP interface — no manual export step, but Tally must be open locally with
   ODBC/XML Server enabled.
+- **Sales & Purchase Register** (separate tab) pulls the same vouchers item-wise instead
+  of ledger-wise — Stock Item, Quantity, Rate, Item Amount, plus each voucher's overall
+  value (the GST-inclusive invoice total, from the non-party ledger entries) for a
+  cross-check. Cancelled/optional vouchers excluded by default, same as the ledger tabs.
 
 **Command line** (for scripting/large batches):
 ```bash
