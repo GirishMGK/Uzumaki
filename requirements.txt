@@ -20,6 +20,8 @@ python-calamine
 beautifulsoup4
 lxml
 ijson
+requests  # Tally live-connect (tally_tool/tally_connector.py) -- was already a
+          # transitive dep of streamlit, now imported directly too
 
 # Firm RMS (firm_rms_tool/) -- vendored FastAPI backend, run in-process by
 # _pages/firm_rms.py. Left unpinned like everything else above so pip

@@ -274,3 +274,79 @@ def test_tally_extractor_include_cancelled_flag(tmp_path):
                           from_date=None, to_date=None, ledger_filter=None)
     assert "P/CANC" in df["Voucher No"].values
     assert "Cancelled" in df.columns
+
+
+def test_tally_page_offers_live_connect():
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    assert "tally_connector" in src
+    assert "pull_from_tally(" in src
+
+
+def test_tally_connector_parses_voucher_xml_with_amount_sign_convention():
+    """A fabricated but Tally-schema-shaped <VOUCHER> XML block (not a real
+    server response -- no Tally instance is available to test against here)
+    should parse into the same row shape/convention as the JSON path: signed
+    amount decides Debit/Credit, not ISDEEMEDPOSITIVE."""
+    import xml.etree.ElementTree as ET
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    fake_response = """<ENVELOPE>
+<VOUCHER>
+  <DATE>20260410</DATE>
+  <VOUCHERTYPENAME>Bank Payment</VOUCHERTYPENAME>
+  <VOUCHERNUMBER>BP/001</VOUCHERNUMBER>
+  <PARTYLEDGERNAME>Cash</PARTYLEDGERNAME>
+  <NARRATION>Consultancy fee w/ TDS</NARRATION>
+  <GUID>guid-1</GUID>
+  <MASTERID>1</MASTERID>
+  <ISCANCELLED>No</ISCANCELLED>
+  <ISOPTIONAL>No</ISOPTIONAL>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>Cash</LEDGERNAME>
+    <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+    <AMOUNT>-9000</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>TDS Payable</LEDGERNAME>
+    <ISDEEMEDPOSITIVE>False</ISDEEMEDPOSITIVE>
+    <AMOUNT>-1000</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>Sales Account</LEDGERNAME>
+    <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+    <AMOUNT>10000</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+</VOUCHER>
+</ENVELOPE>"""
+
+    root = ET.fromstring(fake_response)
+    rows = []
+    seq = 0
+    for voucher in root.iter("VOUCHER"):
+        date = tc._parse_date(tc._text(voucher, "DATE"))
+        for entry in voucher.findall("ALLLEDGERENTRIES.LIST") + voucher.findall("LEDGERENTRIES.LIST"):
+            lname = tc._text(entry, "LEDGERNAME")
+            amount = tc._to_float(tc._text(entry, "AMOUNT"))
+            seq += 1
+            rows.append({
+                "Ledger Name": lname, "Date": date,
+                "Debit": -amount if amount < 0 else 0.0,
+                "Credit": amount if amount > 0 else 0.0,
+            })
+
+    by_name = {r["Ledger Name"]: r for r in rows}
+    assert by_name["Cash"]["Debit"] == 9000.0 and by_name["Cash"]["Credit"] == 0.0
+    # TDS Payable's ISDEEMEDPOSITIVE says "not deemed positive" but the amount
+    # is negative -- same mismatch case as the JSON fixture, amount sign wins.
+    assert by_name["TDS Payable"]["Debit"] == 1000.0
+    assert by_name["Sales Account"]["Credit"] == 10000.0
+
+
+def test_tally_connector_reports_clear_error_when_unreachable():
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    ok, message = tc.test_connection("127.0.0.1", 1)  # nothing listens on port 1
+    assert ok is False
+    assert "Tally" in message

@@ -141,6 +141,14 @@ hiddenimports = [
     "apscheduler.executors.pool", "apscheduler.jobstores.memory",
     "jwt", "multipart", "sqlmodel", "pydantic", "pydantic_settings",
     "rapidfuzz", "ijson",
+    # tally_tool/tally_connector.py (live-connect to a running Tally instance)
+    # is only reachable from _pages/tally_extractions.py, which -- like every
+    # _pages/*.py hub page -- is exec'd by Streamlit's own page runner from a
+    # file path string, invisible to PyInstaller's static analysis the same
+    # way runpy-invoked scripts are. requests itself is already bundled
+    # transitively (streamlit depends on it, already in _METADATA_PACKAGES
+    # above), but list it explicitly here too as belt-and-suspenders.
+    "requests",
 ] + streamlit_submodules + passlib_submodules + reportlab_submodules + ijson_submodules
 
 # Three hub pages (_pages/pdf_tools_page.py, je_audit.py, pf_statutory.py)
