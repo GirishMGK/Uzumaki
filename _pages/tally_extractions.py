@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from _pages.theme import page_header, footer
 
-from extract_ledgers import ensure_utf8, extract, build_tables, write_output
+from extract_ledgers import ensure_utf8, extract_any, build_tables, write_output
 import tally_connector
 
 page_header(
@@ -80,7 +80,7 @@ def _render_results(df, summary, tmpdir):
 
 tab_upload, tab_live = st.tabs(["📤 Upload export file", "🔌 Connect to Tally (live)"])
 
-# ── Tab 1: upload a JSON export ─────────────────────────────────────────────
+# ── Tab 1: upload a JSON or XML export ──────────────────────────────────────
 with tab_upload:
     with st.expander("How to export from Tally", expanded=False):
         st.markdown(
@@ -88,14 +88,14 @@ with tab_upload:
 1. **Gateway of Tally → Display → Day Book** (or any report/period covering everything you need)
 2. **Alt+F2** → set the date range to the full period (e.g. the full financial year)
 3. **F12** (Configure) → make sure narrations and full ledger-entry detail are shown
-4. **Alt+E** (Export) → Format: **JSON (Data Interchange)** → Yes to "Export All"
+4. **Alt+E** (Export) → Format: **JSON (Data Interchange)** or **XML (Data Interchange)** → Yes to "Export All"
 
 This single file contains every **Ledger master** and every **Voucher** with its full
-ledger-entry detail — everything this tool needs.
+ledger-entry detail — everything this tool needs, in either format.
 """
         )
 
-    uploaded = st.file_uploader("Tally JSON export", type=["json"])
+    uploaded = st.file_uploader("Tally export (JSON or XML)", type=["json", "xml"])
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -122,7 +122,7 @@ ledger-entry detail — everything this tool needs.
                     utf8_path = ensure_utf8(in_path)
 
                 with st.spinner("Streaming the export (this can take a while for large files)…"):
-                    ledger_master, rows = extract(utf8_path)
+                    ledger_master, rows = extract_any(utf8_path)
 
                 with st.spinner("Building ledger tables and running balances…"):
                     df, summary = build_tables(
