@@ -91,15 +91,18 @@ def ensure_utf8(path: str) -> str:
     elif head.startswith(codecs.BOM_UTF16_BE):
         src_encoding = "utf-16-be"
         bom_len = 2
-    elif head[:2] == b"{\x00":
-        src_encoding = "utf-16-le"  # no BOM, but starts with '{' as UTF-16LE
-    elif head[:2] == b"\x00{":
-        src_encoding = "utf-16-be"  # no BOM, but starts with '{' as UTF-16BE
+    # No BOM, but a leading '{' (JSON export) or '<' (XML export) as UTF-16
+    # is itself detectable -- every other byte in that pair is the encoded
+    # NUL half of a 2-byte UTF-16 code unit.
+    elif head[:2] in (b"{\x00", b"<\x00"):
+        src_encoding = "utf-16-le"
+    elif head[:2] in (b"\x00{", b"\x00<"):
+        src_encoding = "utf-16-be"
     else:
         # No BOM detected -- assume it's already UTF-8/ASCII.
         return path
 
-    cache_path = path + ".utf8.json"
+    cache_path = path + ".utf8" + (os.path.splitext(path)[1] or ".json")
     if os.path.exists(cache_path) and os.path.getmtime(cache_path) >= os.path.getmtime(path):
         print(f"  Using cached UTF-8 copy: {cache_path}")
         return cache_path
@@ -247,6 +250,128 @@ def extract(utf8_path: str):
 
 
 # --------------------------------------------------------------------------
+# Step 2 + 3 (XML variant): same as extract() above, but for Tally's "XML
+# (Data Interchange)" export format instead of "JSON (Data Interchange)".
+# Tally wraps each master/voucher in its own <TALLYMESSAGE> under
+# ENVELOPE/BODY/*/REQUESTDATA -- <LEDGER NAME="..."> for masters,
+# <VOUCHER VCHTYPE="..."> for vouchers, with per-entry <ALLLEDGERENTRIES.LIST>
+# / <LEDGERENTRIES.LIST> blocks -- functionally the same fields as the JSON
+# export's tallymessage.item records, just XML-shaped. Uses iterparse (not
+# a full ET.parse) so a hundreds-of-MB export doesn't have to fit in memory
+# at once, same reasoning as ijson's streaming for the JSON path -- each
+# LEDGER/VOUCHER element is cleared right after use.
+# --------------------------------------------------------------------------
+def extract_xml(utf8_path: str):
+    import xml.etree.ElementTree as ET
+
+    def _text(el, tag, default=""):
+        child = el.find(tag)
+        if child is None or child.text is None:
+            return default
+        return child.text.strip()
+
+    def _yes(el, tag):
+        return _text(el, tag).strip().lower() in ("yes", "true", "1")
+
+    ledger_master: dict[str, dict] = {}
+    rows: list[dict] = []
+
+    voucher_count = 0
+    entry_count = 0
+    seq = 0
+    t0 = time.time()
+
+    for _event, elem in ET.iterparse(utf8_path, events=("end",)):
+        tag = elem.tag
+
+        if tag == "LEDGER":
+            name = clean_str(elem.get("NAME") or _text(elem, "NAME"))
+            if name:
+                ledger_master[name] = {
+                    "group": clean_str(_text(elem, "PARENT")),
+                    "opening_balance": clean_num(_text(elem, "OPENINGBALANCE")),
+                }
+            elem.clear()
+
+        elif tag == "VOUCHER":
+            voucher_count += 1
+            date = parse_tally_date(_text(elem, "DATE"))
+            vch_type = clean_str(_text(elem, "VOUCHERTYPENAME") or elem.get("VCHTYPE"))
+            vch_no = clean_str(_text(elem, "VOUCHERNUMBER"))
+            reference = clean_str(_text(elem, "REFERENCE"))
+            party = clean_str(_text(elem, "PARTYLEDGERNAME"))
+            narration = clean_str(_text(elem, "NARRATION"))
+            guid = clean_str(_text(elem, "GUID") or _text(elem, "REMOTEID"))
+            master_id = clean_str(_text(elem, "MASTERID"))
+            is_cancelled = _yes(elem, "ISCANCELLED")
+            is_optional = _yes(elem, "ISOPTIONAL")
+
+            entries = elem.findall("ALLLEDGERENTRIES.LIST") + elem.findall("LEDGERENTRIES.LIST")
+            for e in entries:
+                lname = clean_str(_text(e, "LEDGERNAME"))
+                if not lname:
+                    continue
+                # Same rule as extract(): the signed amount decides Debit/Credit,
+                # not ISDEEMEDPOSITIVE -- see extract()'s note above.
+                signed_amt = clean_num(_text(e, "AMOUNT"))
+                bill_ref = "; ".join(
+                    clean_str(_text(b, "NAME")) for b in e.findall("BILLALLOCATIONS.LIST")
+                    if _text(b, "NAME")
+                )
+
+                seq += 1
+                entry_count += 1
+                rows.append(
+                    {
+                        "Ledger Name": lname,
+                        "Date": date,
+                        "Voucher Type": vch_type,
+                        "Voucher No": vch_no,
+                        "Reference": reference,
+                        "Party Ledger": party,
+                        "Narration": narration,
+                        "Debit": -signed_amt if signed_amt < 0 else 0.0,
+                        "Credit": signed_amt if signed_amt > 0 else 0.0,
+                        "Bill Reference": bill_ref,
+                        "Cancelled": is_cancelled,
+                        "Optional": is_optional,
+                        "Voucher GUID": guid,
+                        "Master ID": master_id,
+                        "_seq": seq,
+                    }
+                )
+
+            if voucher_count % 2000 == 0:
+                elapsed = time.time() - t0
+                print(f"  ...{voucher_count:,} vouchers / {entry_count:,} ledger entries "
+                      f"processed ({elapsed:.0f}s elapsed)")
+            elem.clear()
+
+    elapsed = time.time() - t0
+    print(f"  Finished streaming: {len(ledger_master):,} ledger masters, "
+          f"{voucher_count:,} vouchers, {entry_count:,} ledger-entry rows ({elapsed:.0f}s)")
+    return ledger_master, rows
+
+
+def sniff_format(utf8_path: str) -> str:
+    """Returns 'json' or 'xml' by peeking at the first non-whitespace byte --
+    Tally's JSON export starts with '{', its XML export with '<'/'<?xml'."""
+    with open(utf8_path, "rb") as f:
+        chunk = f.read(256).lstrip()
+    if chunk.startswith(b"<"):
+        return "xml"
+    return "json"
+
+
+def extract_any(utf8_path: str):
+    """Dispatches to extract() or extract_xml() based on the file's actual
+    content, so callers (CLI, Streamlit page) don't need to know or guess
+    which export format the user gave them."""
+    fmt = sniff_format(utf8_path)
+    return extract_xml(utf8_path) if fmt == "xml" else extract(utf8_path)
+
+
+# --------------------------------------------------------------------------
 # Step 4: build the flat table + running balances
 # --------------------------------------------------------------------------
 def build_tables(ledger_master: dict, rows: list, include_cancelled: bool,
@@ -387,7 +512,7 @@ def print_control_total(df: pd.DataFrame):
 # --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(description="Extract all Tally ledgers into one columnar table.")
-    ap.add_argument("--input", required=True, help="Path to Tally's JSON (Data Interchange) export")
+    ap.add_argument("--input", required=True, help="Path to Tally's JSON or XML (Data Interchange) export")
     ap.add_argument("--output", required=True, help="Output file path (e.g. ledgers_output.xlsx)")
     ap.add_argument("--format", choices=["xlsx", "csv", "both"], default="xlsx")
     ap.add_argument("--include-cancelled", action="store_true",
@@ -406,8 +531,8 @@ def main():
     print("Step 1/4: checking encoding...")
     utf8_path = ensure_utf8(args.input)
 
-    print("Step 2/4: streaming the JSON export...")
-    ledger_master, rows = extract(utf8_path)
+    print("Step 2/4: streaming the export...")
+    ledger_master, rows = extract_any(utf8_path)
 
     print("Step 3/4: building the ledger tables and running balances...")
     df, summary = build_tables(
