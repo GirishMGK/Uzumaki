@@ -34,6 +34,7 @@ ijson
 fastapi
 uvicorn[standard]
 sqlmodel
+pydantic-settings
 passlib[bcrypt]
 bcrypt
 pyjwt
