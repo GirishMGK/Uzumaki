@@ -101,9 +101,15 @@ ledger-entry detail — everything this tool needs, in either format.
     with c1:
         include_cancelled_u = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_upload")
     with c2:
-        from_date_u = st.date_input("From date (optional)", value=None, format="YYYY-MM-DD", key="fd_upload")
+        from_date_u = st.date_input(
+            "From date (optional)", value=None, format="YYYY-MM-DD", key="fd_upload",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
     with c3:
-        to_date_u = st.date_input("To date (optional)", value=None, format="YYYY-MM-DD", key="td_upload")
+        to_date_u = st.date_input(
+            "To date (optional)", value=None, format="YYYY-MM-DD", key="td_upload",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
 
     ledger_filter_u = st.text_input(
         "Only these ledgers (optional — exact names, comma-separated)",
@@ -202,11 +208,13 @@ right (empty fields, connection errors), that's expected on the first try; repor
         include_cancelled_l = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_live")
     with c2:
         from_date_l = st.date_input(
-            "From date", value=datetime.date(2000, 1, 1), format="YYYY-MM-DD", key="fd_live"
+            "From date", value=datetime.date(2000, 1, 1), format="YYYY-MM-DD", key="fd_live",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
         )
     with c3:
         to_date_l = st.date_input(
-            "To date", value=datetime.date.today(), format="YYYY-MM-DD", key="td_live"
+            "To date", value=datetime.date.today(), format="YYYY-MM-DD", key="td_live",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
         )
 
     ledger_filter_l = st.text_input(

@@ -389,6 +389,21 @@ def test_tally_live_tab_defaults_to_a_populated_date_range():
     assert "value=datetime.date.today()" in src
 
 
+def test_tally_date_pickers_pin_explicit_min_max():
+    """Regression guard for a real reported bug: st.date_input auto-computes
+    its calendar's navigable range as roughly value +/- 10 years when
+    min_value/max_value aren't given. Passing value=date(2000, 1, 1) without
+    pinning bounds silently capped the picker at ~2010, making it impossible
+    to select any recent date (confirmed live: 'From date' rendered in an
+    invalid/red state at today's actual date). Every date_input on this page
+    must pin explicit, wide min_value/max_value so the default value chosen
+    for UX can't shrink the usable range."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    assert src.count("st.date_input(") == 4
+    assert src.count("min_value=datetime.date(1990, 1, 1)") == 4
+    assert src.count("max_value=datetime.date(2100, 1, 1)") == 4
+
+
 def _tally_xml_fixture() -> str:
     """XML-export equivalent of _tally_fixture() above -- same ledgers/vouchers,
     same deliberately-mismatched isdeemedpositive flag and cancelled voucher,
