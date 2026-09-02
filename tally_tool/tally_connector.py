@@ -358,3 +358,133 @@ def pull_from_tally(
     ledger_master = fetch_ledger_master(host, port, company)
     rows = fetch_vouchers(host, port, company, from_date, to_date)
     return ledger_master, rows
+
+
+# --------------------------------------------------------------------------
+# Sales / Purchase Register -- item-wise, unlike fetch_vouchers() above
+# (which is ledger-entry-wise, for the Tally extraction tool's Debit/Credit
+# table). A register lists one row per stock item line on each Sales/
+# Purchase voucher: item name, quantity, rate, item value, plus the
+# voucher's overall value for a cross-check.
+# --------------------------------------------------------------------------
+def fetch_voucher_register(
+    host: str,
+    port: int,
+    company: str | None,
+    voucher_types: set[str],
+    from_date: datetime.date | None,
+    to_date: datetime.date | None,
+    include_cancelled: bool = False,
+) -> list[dict]:
+    """voucher_types: exact Tally voucher type names to include, e.g.
+    {"Sales"} or {"Purchase"} -- matched against VOUCHERTYPENAME as Tally
+    returns it (case-sensitive, since that's what real data showed: "Sales",
+    "Purchase", not lowercased)."""
+    if from_date is None or to_date is None:
+        # Same Tally quirk as fetch_vouchers() -- confirmed live: no date
+        # range means a <CMPINFO> diagnostic instead of an error.
+        raise TallyConnectionError(
+            "Both From date and To date are required -- Tally's XML server returns a "
+            "diagnostic response instead of voucher data when no date range is given."
+        )
+
+    fetch_fields = (
+        "DATE,VOUCHERTYPENAME,VOUCHERNUMBER,PARTYLEDGERNAME,REFERENCE,NARRATION,"
+        "GUID,MASTERID,ISCANCELLED,ISOPTIONAL,"
+        "ALLINVENTORYENTRIES.LIST,ALLLEDGERENTRIES.LIST,LEDGERENTRIES.LIST"
+    )
+    request_xml = f"""<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>EXPORT</TALLYREQUEST>
+    <TYPE>COLLECTION</TYPE>
+    <ID>Voucher Register</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        {_static_vars(company, from_date, to_date)}
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="Voucher Register" ISMODIFY="No">
+            <TYPE>Voucher</TYPE>
+            <FETCH>{fetch_fields}</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+    root = _post(host, port, request_xml)
+
+    rows: list[dict] = []
+    for voucher in root.iter("VOUCHER"):
+        vch_type = _text(voucher, "VOUCHERTYPENAME") or voucher.get("VCHTYPE", "")
+        if voucher_types and vch_type not in voucher_types:
+            continue
+        is_cancelled = _text(voucher, "ISCANCELLED").strip().lower() == "yes"
+        is_optional = _text(voucher, "ISOPTIONAL").strip().lower() == "yes"
+        if not include_cancelled and (is_cancelled or is_optional):
+            continue
+
+        date = _parse_date(_text(voucher, "DATE"))
+        vch_no = _text(voucher, "VOUCHERNUMBER")
+        party = _text(voucher, "PARTYLEDGERNAME")
+        reference = _text(voucher, "REFERENCE")
+        narration = _text(voucher, "NARRATION")
+        guid = _text(voucher, "GUID") or _text(voucher, "REMOTEID")
+        master_id = _text(voucher, "MASTERID")
+
+        # Voucher's overall value: sum of the ledger entries that AREN'T the
+        # party ledger (i.e. the Sales/Purchase account side), same logic as
+        # a manual "what's this invoice actually worth" check. Falls back to
+        # any entry's amount if none matched (e.g. party name mismatch).
+        ledger_entries = voucher.findall("ALLLEDGERENTRIES.LIST") + voucher.findall("LEDGERENTRIES.LIST")
+        voucher_total = sum(
+            abs(_to_float(_text(e, "AMOUNT"))) for e in ledger_entries if _text(e, "LEDGERNAME") != party
+        )
+        if voucher_total == 0.0 and ledger_entries:
+            voucher_total = abs(_to_float(_text(ledger_entries[0], "AMOUNT")))
+
+        item_entries = voucher.findall("ALLINVENTORYENTRIES.LIST")
+        if item_entries:
+            for item in item_entries:
+                rows.append(
+                    {
+                        "Date": date,
+                        "Voucher Type": vch_type,
+                        "Voucher No": vch_no,
+                        "Party Ledger": party,
+                        "Reference": reference,
+                        "Narration": narration,
+                        "Stock Item": _text(item, "STOCKITEMNAME"),
+                        "Quantity": _text(item, "ACTUALQTY") or _text(item, "BILLEDQTY"),
+                        "Rate": _text(item, "RATE"),
+                        "Item Amount": abs(_to_float(_text(item, "AMOUNT"))),
+                        "Voucher Total": voucher_total,
+                        "Voucher GUID": guid,
+                        "Master ID": master_id,
+                    }
+                )
+        else:
+            # Service invoice or similar with no stock items -- still worth
+            # a row, just without item-level detail.
+            rows.append(
+                {
+                    "Date": date,
+                    "Voucher Type": vch_type,
+                    "Voucher No": vch_no,
+                    "Party Ledger": party,
+                    "Reference": reference,
+                    "Narration": narration,
+                    "Stock Item": "",
+                    "Quantity": "",
+                    "Rate": "",
+                    "Item Amount": voucher_total,
+                    "Voucher Total": voucher_total,
+                    "Voucher GUID": guid,
+                    "Master ID": master_id,
+                }
+            )
+    return rows

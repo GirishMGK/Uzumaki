@@ -399,9 +399,10 @@ def test_tally_date_pickers_pin_explicit_min_max():
     must pin explicit, wide min_value/max_value so the default value chosen
     for UX can't shrink the usable range."""
     src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
-    assert src.count("st.date_input(") == 4
-    assert src.count("min_value=datetime.date(1990, 1, 1)") == 4
-    assert src.count("max_value=datetime.date(2100, 1, 1)") == 4
+    n = src.count("st.date_input(")
+    assert n >= 4
+    assert src.count("min_value=datetime.date(1990, 1, 1)") == n
+    assert src.count("max_value=datetime.date(2100, 1, 1)") == n
 
 
 def _tally_xml_fixture() -> str:
@@ -474,3 +475,128 @@ def test_tally_page_accepts_xml_uploads():
     src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
     assert '"xml"' in src
     assert "extract_any(" in src
+
+
+def _fake_register_response_xml() -> str:
+    """A fabricated Sales+Purchase voucher pair matching the real captured
+    Tally response shape (attributes, TYPE="..." decorations, item lines)."""
+    return """<ENVELOPE><DATA><COLLECTION>
+<VOUCHER VCHTYPE="Sales">
+  <DATE TYPE="Date">20260401</DATE>
+  <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+  <VOUCHERNUMBER>1</VOUCHERNUMBER>
+  <PARTYLEDGERNAME TYPE="String">ABC Traders</PARTYLEDGERNAME>
+  <REFERENCE TYPE="String">INV-001</REFERENCE>
+  <NARRATION TYPE="String">Sale of goods</NARRATION>
+  <GUID>guid-1</GUID>
+  <MASTERID TYPE="Number"> 501</MASTERID>
+  <ISCANCELLED>No</ISCANCELLED>
+  <ISOPTIONAL>No</ISOPTIONAL>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>ABC Traders</LEDGERNAME>
+    <AMOUNT>-11800</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>Sales Account</LEDGERNAME>
+    <AMOUNT>10000</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>Output GST</LEDGERNAME>
+    <AMOUNT>1800</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLINVENTORYENTRIES.LIST>
+    <STOCKITEMNAME>Widget A</STOCKITEMNAME>
+    <ACTUALQTY>10 Nos</ACTUALQTY>
+    <RATE>1000/Nos</RATE>
+    <AMOUNT>10000</AMOUNT>
+  </ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+<VOUCHER VCHTYPE="Purchase">
+  <DATE TYPE="Date">20260405</DATE>
+  <VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>
+  <VOUCHERNUMBER>1</VOUCHERNUMBER>
+  <PARTYLEDGERNAME TYPE="String">XYZ Suppliers</PARTYLEDGERNAME>
+  <ISCANCELLED>No</ISCANCELLED>
+  <ISOPTIONAL>No</ISOPTIONAL>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>XYZ Suppliers</LEDGERNAME>
+    <AMOUNT>5000</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>Purchase Account</LEDGERNAME>
+    <AMOUNT>-5000</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLINVENTORYENTRIES.LIST>
+    <STOCKITEMNAME>Raw Material X</STOCKITEMNAME>
+    <ACTUALQTY>50 Kg</ACTUALQTY>
+    <RATE>100/Kg</RATE>
+    <AMOUNT>-5000</AMOUNT>
+  </ALLINVENTORYENTRIES.LIST>
+</VOUCHER>
+<VOUCHER VCHTYPE="Sales">
+  <DATE TYPE="Date">20260410</DATE>
+  <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+  <VOUCHERNUMBER>2</VOUCHERNUMBER>
+  <PARTYLEDGERNAME TYPE="String">Cancelled Co</PARTYLEDGERNAME>
+  <ISCANCELLED>Yes</ISCANCELLED>
+  <ISOPTIONAL>No</ISOPTIONAL>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>Cancelled Co</LEDGERNAME>
+    <AMOUNT>-100</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+  <ALLLEDGERENTRIES.LIST>
+    <LEDGERNAME>Sales Account</LEDGERNAME>
+    <AMOUNT>100</AMOUNT>
+  </ALLLEDGERENTRIES.LIST>
+</VOUCHER>
+</COLLECTION></DATA></ENVELOPE>"""
+
+
+def test_tally_register_requires_date_range():
+    import datetime as dt
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    with pytest.raises(tc.TallyConnectionError, match="Both From date and To date"):
+        tc.fetch_voucher_register("127.0.0.1", 1, "Co", {"Sales"}, None, dt.date.today())
+
+
+def test_tally_register_filters_by_voucher_type_and_excludes_cancelled(monkeypatch):
+    """Regression guard: fetch_voucher_register must (a) only return the
+    requested voucher type, (b) pull item-wise rows with the real field
+    names (STOCKITEMNAME/ACTUALQTY/RATE/AMOUNT under ALLINVENTORYENTRIES.LIST),
+    (c) compute Voucher Total from the non-party ledger entries (the
+    GST-inclusive invoice value, not just the item amount), and (d) exclude
+    cancelled vouchers by default."""
+    import datetime as dt
+    import xml.etree.ElementTree as ET
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    fake_root = ET.fromstring(_fake_register_response_xml())
+    monkeypatch.setattr(tc, "_post", lambda host, port, xml: fake_root)
+
+    sales_rows = tc.fetch_voucher_register(
+        "h", 1, "C", {"Sales"}, dt.date(2026, 1, 1), dt.date(2026, 12, 31)
+    )
+    assert len(sales_rows) == 1  # the cancelled Sales voucher must be excluded
+    assert sales_rows[0]["Stock Item"] == "Widget A"
+    assert sales_rows[0]["Item Amount"] == 10000.0
+    assert sales_rows[0]["Voucher Total"] == 11800.0  # includes Output GST, not just the item value
+
+    purchase_rows = tc.fetch_voucher_register(
+        "h", 1, "C", {"Purchase"}, dt.date(2026, 1, 1), dt.date(2026, 12, 31)
+    )
+    assert len(purchase_rows) == 1
+    assert purchase_rows[0]["Stock Item"] == "Raw Material X"
+
+    sales_with_cancelled = tc.fetch_voucher_register(
+        "h", 1, "C", {"Sales"}, dt.date(2026, 1, 1), dt.date(2026, 12, 31), include_cancelled=True
+    )
+    assert len(sales_with_cancelled) == 2  # now the cancelled voucher's service-style row is included too
+
+
+def test_tally_page_has_register_tab():
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    assert "fetch_voucher_register(" in src
+    assert "Sales & Purchase Register" in src
