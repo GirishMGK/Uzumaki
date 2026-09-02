@@ -64,7 +64,7 @@ _TOOLS = [
     },
     {
         "group": "Finance & Loan Audit",
-        "icon": "📒", "title": "Tally Extractions", "tag": "Streamlit",
+        "icon": "📒", "title": "Tally extraction tool", "tag": "Streamlit",
         "desc": "Pull every ledger's full transaction history out of a Tally JSON export in one shot, with running balances and a control-total check.",
     },
     {
@@ -164,7 +164,7 @@ nav = st.navigation(
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
-            st.Page("_pages/tally_extractions.py", title="Tally Extractions", icon="📒"),
+            st.Page("_pages/tally_extractions.py", title="Tally extraction tool", icon="📒"),
             st.Page("_pages/firm_rms.py", title="Firm RMS", icon="🧑‍💼"),
         ],
     }

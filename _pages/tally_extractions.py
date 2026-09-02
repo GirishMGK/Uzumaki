@@ -1,4 +1,4 @@
-"""Hub page: Tally Extractions.
+"""Hub page: Tally extraction tool.
 
 Pulls every ledger's full transaction history out of a Tally JSON (Data
 Interchange) export in one shot, instead of opening and exporting each
@@ -22,7 +22,7 @@ from _pages.theme import page_header, footer
 from extract_ledgers import ensure_utf8, extract, build_tables, write_output
 
 page_header(
-    "📒", "Tally Extractions",
+    "📒", "Tally extraction tool",
     "Pull every ledger's full transaction history out of a Tally export in one shot — "
     "no more opening and exporting each ledger one by one.",
     badges=["Streams large exports", "Running balance per ledger", "Control-total check"],
