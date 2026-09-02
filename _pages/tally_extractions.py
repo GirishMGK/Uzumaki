@@ -191,13 +191,23 @@ right (empty fields, connection errors), that's expected on the first try; repor
             key="company_manual",
         ) or None
 
+    st.caption(
+        "Both dates are required for a live pull — confirmed against a real Tally instance: "
+        "without an explicit date range, Tally's XML server silently returns a diagnostic "
+        "summary instead of voucher data rather than an error. Defaults below cover a wide "
+        "range; narrow them to your actual period."
+    )
     c1, c2, c3 = st.columns(3)
     with c1:
         include_cancelled_l = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_live")
     with c2:
-        from_date_l = st.date_input("From date", value=None, format="YYYY-MM-DD", key="fd_live")
+        from_date_l = st.date_input(
+            "From date", value=datetime.date(2000, 1, 1), format="YYYY-MM-DD", key="fd_live"
+        )
     with c3:
-        to_date_l = st.date_input("To date", value=None, format="YYYY-MM-DD", key="td_live")
+        to_date_l = st.date_input(
+            "To date", value=datetime.date.today(), format="YYYY-MM-DD", key="td_live"
+        )
 
     ledger_filter_l = st.text_input(
         "Only these ledgers (optional — exact names, comma-separated)",

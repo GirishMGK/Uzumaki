@@ -233,9 +233,26 @@ def fetch_vouchers(
 ) -> list[dict]:
     """Returns rows in the exact shape extract_ledgers.extract() produces,
     ready to hand straight to build_tables()."""
+    if from_date is None or to_date is None:
+        # Confirmed against a real Tally instance: a Voucher Collection
+        # request with no SVFROMDATE/SVTODATE doesn't error -- Tally silently
+        # returns its <CMPINFO> object-count diagnostic instead of voucher
+        # data (a few hundred bytes, LEDGER>0</LEDGER> etc.), which then
+        # fails to parse as the expected shape. Fail loudly here instead of
+        # letting that confusing response reach the caller.
+        raise TallyConnectionError(
+            "Both From date and To date are required for a live pull -- Tally's XML "
+            "server returns a diagnostic response instead of voucher data when no date "
+            "range is given, not an error you can otherwise detect."
+        )
+    # NOTE: the sub-list field name itself (ALLLEDGERENTRIES.LIST /
+    # LEDGERENTRIES.LIST) must be named in FETCH for Tally to include the
+    # nested ledger-entry data at all -- confirmed against a real Tally
+    # instance that a Voucher Collection FETCH without it returns the
+    # voucher "shell" (date/party/narration) with no ledger entries.
     fetch_fields = (
         "DATE,VOUCHERTYPENAME,VOUCHERNUMBER,PARTYLEDGERNAME,NARRATION,REFERENCE,"
-        "GUID,MASTERID,ISCANCELLED,ISOPTIONAL"
+        "GUID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LIST,LEDGERENTRIES.LIST"
     )
     request_xml = f"""<ENVELOPE>
   <HEADER>

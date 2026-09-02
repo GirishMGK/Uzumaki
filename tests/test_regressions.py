@@ -352,6 +352,43 @@ def test_tally_connector_reports_clear_error_when_unreachable():
     assert "Tally" in message
 
 
+def test_tally_connector_requires_date_range_for_voucher_fetch():
+    """Regression guard for a real bug found testing against a live Tally
+    instance: a Voucher Collection request with no SVFROMDATE/SVTODATE
+    doesn't error -- Tally silently returns its <CMPINFO> object-count
+    diagnostic (a few hundred bytes) instead of voucher data, which then
+    fails to parse. fetch_vouchers() must refuse up front instead of letting
+    that confusing response reach the caller."""
+    import datetime as dt
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    today = dt.date.today()
+    for from_date, to_date in [(None, today), (today, None), (None, None)]:
+        with pytest.raises(tc.TallyConnectionError, match="Both From date and To date"):
+            tc.fetch_vouchers("127.0.0.1", 1, "Some Company", from_date, to_date)
+
+
+def test_tally_connector_fetches_ledger_entry_sub_list():
+    """Regression guard for a real bug found testing against a live Tally
+    instance: the Voucher Collection FETCH list didn't name
+    ALLLEDGERENTRIES.LIST/LEDGERENTRIES.LIST, so Tally returned the voucher
+    'shell' (date/party/narration) with no ledger entries at all -- the
+    request succeeded but every voucher produced zero rows."""
+    src = open(os.path.join(REPO_ROOT, "tally_tool", "tally_connector.py"), encoding="utf-8").read()
+    assert "ALLLEDGERENTRIES.LIST" in src
+    assert "LEDGERENTRIES.LIST" in src
+
+
+def test_tally_live_tab_defaults_to_a_populated_date_range():
+    """Regression guard for the same bug at the UI layer: the date pickers
+    must not default to None, or every live pull hits the same Tally
+    diagnostic-fallback bug by default."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    assert "value=datetime.date(2000, 1, 1)" in src
+    assert "value=datetime.date.today()" in src
+
+
 def _tally_xml_fixture() -> str:
     """XML-export equivalent of _tally_fixture() above -- same ledgers/vouchers,
     same deliberately-mismatched isdeemedpositive flag and cancelled voucher,
