@@ -74,10 +74,29 @@ def remote_version() -> str | None:
         return None
 
 
-def _download(url: str, dest: str) -> bool:
+_DOWNLOAD_CHUNK_SIZE = 256 * 1024  # 256 KiB
+
+
+def _download(url: str, dest: str, on_progress=None) -> bool:
+    """Streams the download in chunks instead of one resp.read() call, so
+    `on_progress(bytes_downloaded, total_bytes)` -- when given -- can be
+    called as it goes, for a real progress bar rather than a spinner with
+    no feedback. `total_bytes` is None if the server didn't send a
+    Content-Length header (progress then has to show bytes-so-far only,
+    no percentage)."""
     try:
         with urllib.request.urlopen(url, timeout=30) as resp, open(dest, "wb") as out:
-            out.write(resp.read())
+            total = resp.headers.get("Content-Length")
+            total_bytes = int(total) if total is not None and total.isdigit() else None
+            downloaded = 0
+            while True:
+                chunk = resp.read(_DOWNLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                out.write(chunk)
+                downloaded += len(chunk)
+                if on_progress is not None:
+                    on_progress(downloaded, total_bytes)
         return True
     except (urllib.error.URLError, TimeoutError, OSError):
         return False
@@ -164,12 +183,17 @@ def check_for_update() -> None:
         self_update_and_relaunch()
 
 
-def perform_update_and_restart() -> tuple[bool, str]:
+def perform_update_and_restart(on_progress=None) -> tuple[bool, str]:
     """In-app path (called from a Streamlit button click, mid-session):
     download the new exe, hand off to the swap helper, then hard-exit the
     whole process immediately via os._exit() -- sys.exit() here would only
     end the current Streamlit script rerun, not the process the helper
     script needs to see disappear before it can replace the exe.
+
+    `on_progress(bytes_downloaded, total_bytes)`, if given, is called as the
+    download streams in (see _download()) -- lets the caller show a real
+    progress bar instead of an indefinite spinner. `total_bytes` is None if
+    the server didn't send a Content-Length header.
 
     Returns (started, message) -- only returns at all if something failed
     before the point of no return (e.g. download failure); on success this
@@ -182,7 +206,7 @@ def perform_update_and_restart() -> tuple[bool, str]:
     exe_dir = os.path.dirname(exe_path)
     new_path = os.path.join(exe_dir, "Uzumaki_new.exe")
 
-    if not _download(_EXE_URL, new_path):
+    if not _download(_EXE_URL, new_path, on_progress=on_progress):
         return False, "Download failed — check your internet connection and try again."
 
     _write_and_launch_helper(exe_path, new_path)
