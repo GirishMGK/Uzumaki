@@ -73,13 +73,27 @@ class TallyConnectionError(RuntimeError):
     """Raised for anything that stops us reaching/using the Tally XML server."""
 
 
-def _post(host: str, port: int, xml_request: str) -> ET.Element:
+def _post(host: str, port: int, xml_request: str, context: str = "request") -> ET.Element:
+    """`context` names which request this is (e.g. "Ledger Collection") purely
+    for error messages -- fetch_ledger_master() and fetch_vouchers() share
+    this helper, and a plain "wasn't valid XML" message alone doesn't say
+    which of the two calls in a single pull_from_tally() actually failed."""
     url = f"http://{host}:{port}"
     try:
         resp = requests.post(
             url,
             data=xml_request.encode("utf-8"),
-            headers={"Content-Type": "text/xml"},
+            headers={
+                "Content-Type": "text/xml",
+                # requests sends "gzip, deflate" here by default (via urllib3);
+                # plain curl does not unless given --compressed. Confirmed on a
+                # real Tally instance: an otherwise-identical request that
+                # worked fine over curl failed through this code until this
+                # header was added -- Tally's embedded HTTP server appears not
+                # to handle compression negotiation correctly. Matching curl's
+                # plain-request behavior exactly avoids it.
+                "Accept-Encoding": "identity",
+            },
             timeout=_TIMEOUT,
         )
     except requests.exceptions.ConnectionError as exc:
@@ -92,18 +106,18 @@ def _post(host: str, port: int, xml_request: str) -> ET.Element:
         raise TallyConnectionError(f"Tally at {url} did not respond in time.") from exc
 
     if resp.status_code != 200:
-        raise TallyConnectionError(f"Tally returned HTTP {resp.status_code}.")
+        raise TallyConnectionError(f"Tally returned HTTP {resp.status_code} for the {context}.")
 
     text = resp.text.strip()
     if not text:
-        raise TallyConnectionError("Tally returned an empty response.")
+        raise TallyConnectionError(f"Tally returned an empty response for the {context}.")
 
     try:
         return ET.fromstring(text)
     except ET.ParseError as exc:
         raise TallyConnectionError(
-            "Tally's response wasn't valid XML -- it may have returned an error "
-            f"page instead. First 300 chars: {text[:300]!r}"
+            f"Tally's response for the {context} wasn't valid XML -- it may have "
+            f"returned an error page instead. First 300 chars: {text[:300]!r}"
         ) from exc
 
 
@@ -139,7 +153,7 @@ def list_companies(host: str, port: int = DEFAULT_PORT) -> list[str]:
     </DESC>
   </BODY>
 </ENVELOPE>"""
-    root = _post(host, port, request_xml)
+    root = _post(host, port, request_xml, context="List of Companies request")
     names = []
     for company in root.iter("COMPANY"):
         name_el = company.find("NAME")
@@ -196,7 +210,7 @@ def fetch_ledger_master(host: str, port: int, company: str | None = None) -> dic
     </DESC>
   </BODY>
 </ENVELOPE>"""
-    root = _post(host, port, request_xml)
+    root = _post(host, port, request_xml, context="Ledger Collection request")
     ledger_master: dict[str, dict] = {}
     for ledger in root.iter("LEDGER"):
         name_el = ledger.find("NAME")
@@ -277,7 +291,7 @@ def fetch_vouchers(
     </DESC>
   </BODY>
 </ENVELOPE>"""
-    root = _post(host, port, request_xml)
+    root = _post(host, port, request_xml, context="Voucher Collection request")
 
     rows: list[dict] = []
     seq = 0
@@ -416,7 +430,7 @@ def fetch_voucher_register(
     </DESC>
   </BODY>
 </ENVELOPE>"""
-    root = _post(host, port, request_xml)
+    root = _post(host, port, request_xml, context="Voucher Register request")
 
     rows: list[dict] = []
     for voucher in root.iter("VOUCHER"):

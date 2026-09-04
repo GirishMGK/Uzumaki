@@ -466,6 +466,51 @@ def test_tally_connector_reports_clear_error_when_unreachable():
     assert "Tally" in message
 
 
+def test_tally_connector_disables_compression_negotiation(monkeypatch):
+    """Regression guard for a real bug found live: an otherwise-identical
+    request succeeded over plain curl (17.5MB of real data) but failed
+    through this code with Tally's <CMPINFO> diagnostic fallback -- traced
+    to requests' default "Accept-Encoding: gzip, deflate" header (curl sends
+    none unless given --compressed), which Tally's embedded HTTP server
+    appears to mishandle. Every request must explicitly ask for no
+    compression to match curl's plain-request behavior."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    captured = {}
+
+    def _fake_post(url, **kwargs):
+        captured.update(kwargs)
+        class _FakeResp:
+            status_code = 200
+            text = "<ENVELOPE><OK/></ENVELOPE>"
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    tc._post("h", 1, "<x/>", context="test")
+    assert captured["headers"]["Accept-Encoding"] == "identity"
+
+
+def test_tally_connector_error_messages_name_which_request_failed(monkeypatch):
+    """Regression guard: pull_from_tally() calls fetch_ledger_master() then
+    fetch_vouchers() -- both share _post(), so without a context label a
+    failure in either one produced an identical, undiagnosable error
+    message. Confirmed live this ambiguity mattered: couldn't tell which of
+    the two requests was actually failing from the UI alone."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = "not xml at all"
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    with pytest.raises(tc.TallyConnectionError, match="Voucher Collection request"):
+        tc._post("h", 1, "<x/>", context="Voucher Collection request")
+
+
 def test_tally_connector_requires_date_range_for_voucher_fetch():
     """Regression guard for a real bug found testing against a live Tally
     instance: a Voucher Collection request with no SVFROMDATE/SVTODATE
@@ -688,7 +733,7 @@ def test_tally_register_filters_by_voucher_type_and_excludes_cancelled(monkeypat
     import tally_connector as tc
 
     fake_root = ET.fromstring(_fake_register_response_xml())
-    monkeypatch.setattr(tc, "_post", lambda host, port, xml: fake_root)
+    monkeypatch.setattr(tc, "_post", lambda host, port, xml, **kwargs: fake_root)
 
     sales_rows = tc.fetch_voucher_register(
         "h", 1, "C", {"Sales"}, dt.date(2026, 1, 1), dt.date(2026, 12, 31)
