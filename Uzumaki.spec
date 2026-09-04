@@ -86,6 +86,7 @@ def _tree(src_name: str):
 
 datas = [
     (os.path.join(ROOT, "Home.py"), "."),
+    (os.path.join(ROOT, "updater.py"), "."),
     (os.path.join(ROOT, "VERSION"), "."),
     (os.path.join(ROOT, "extract_soa.py"), "."),
     (os.path.join(ROOT, "extract_rps.py"), "."),

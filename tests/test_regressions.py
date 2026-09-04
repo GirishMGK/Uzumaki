@@ -714,3 +714,14 @@ def test_tally_page_has_register_tab():
     src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
     assert "fetch_voucher_register(" in src
     assert "Sales & Purchase Register" in src
+
+
+def test_home_page_offers_in_app_update_check():
+    """New feature: a 'Check for Updates' control in the sidebar, not just
+    the silent at-launch check -- users asked to be able to see/trigger it
+    themselves rather than only finding out via a screenshot-driven bug
+    report weeks after a fix shipped."""
+    src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert "Check for Updates" in src
+    assert "updater.check_update_status(" in src
+    assert "updater.perform_update_and_restart(" in src
