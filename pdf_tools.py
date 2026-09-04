@@ -4,7 +4,7 @@ PDF Tools — iLovePDF-style utility app built with Streamlit.
 Features:
   1. Merge PDFs
   2. Split PDF
-  3. Edit PDF (remove pages / insert pages)
+  3. Edit PDF (remove pages / insert pages / reorder pages / find & replace text)
   4. PDF to Word
 """
 
@@ -26,7 +26,7 @@ from tools.splitter import (
     split_all_pages,
     pack_zip,
 )
-from tools.editor import remove_pages, insert_pdf, reorder_pages
+from tools.editor import remove_pages, insert_pdf, reorder_pages, replace_text
 from tools.converter import pdf_to_word
 
 # ── page config ───────────────────────────────────────────────────────────────
@@ -276,7 +276,7 @@ def page_home() -> None:
             <div class="tool-card card-purple">
                 <div class="tool-icon">📝</div>
                 <div class="tool-title">Edit PDF</div>
-                <div class="tool-desc">Remove pages or insert pages from another PDF</div>
+                <div class="tool-desc">Remove/insert/reorder pages, or find & replace words in the text</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -539,7 +539,7 @@ def page_edit() -> None:
     section_header(
         "📝",
         "Edit PDF",
-        "Remove unwanted pages or insert pages from another PDF",
+        "Remove pages, insert pages, reorder pages, or change words inside the PDF",
     )
 
     step(1, "Upload your base PDF")
@@ -558,8 +558,8 @@ def page_edit() -> None:
         unsafe_allow_html=True,
     )
 
-    tab_remove, tab_insert, tab_reorder = st.tabs(
-        ["🗑️ Remove Pages", "➕ Insert Pages", "🔃 Reorder Pages"]
+    tab_remove, tab_insert, tab_reorder, tab_replace = st.tabs(
+        ["🗑️ Remove Pages", "➕ Insert Pages", "🔃 Reorder Pages", "🔤 Find & Replace Text"]
     )
 
     # ── TAB: REMOVE ──────────────────────────────────────────────────────────
@@ -719,6 +719,60 @@ def page_edit() -> None:
                     st.error(str(e))
                 except Exception as e:
                     st.error(f"Reorder failed: {e}")
+
+    # ── TAB: FIND & REPLACE TEXT ─────────────────────────────────────────────
+    with tab_replace:
+        step(2, "Enter the text to find and its replacement")
+        st.markdown(
+            '<div class="info-box">Every occurrence found is genuinely replaced in the PDF '
+            "(not just covered with an overlay), but the replacement's font/size/style is "
+            "approximated to match the original — it can look slightly different for bold, "
+            "italic, or unusual fonts.</div>",
+            unsafe_allow_html=True,
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            find_str = st.text_input("Find", key="replace_find")
+        with c2:
+            replace_str = st.text_input("Replace with", key="replace_with")
+
+        c3, c4 = st.columns(2)
+        with c3:
+            case_sensitive = st.checkbox("Case sensitive", value=True, key="replace_case")
+        with c4:
+            whole_word = st.checkbox("Whole word only", value=False, key="replace_whole")
+
+        if st.button(
+            "🔤 Replace All Occurrences",
+            type="primary",
+            use_container_width=True,
+            key="btn_replace",
+        ):
+            if not find_str:
+                st.error("Enter text to find.")
+            else:
+                with st.spinner("Finding and replacing…"):
+                    try:
+                        result, count = replace_text(
+                            pdf_bytes, find_str, replace_str,
+                            case_sensitive=case_sensitive, whole_word=whole_word,
+                        )
+                        if count == 0:
+                            st.warning(f"'{find_str}' was not found in this PDF.")
+                        else:
+                            st.session_state.edit_result = result
+                            st.session_state.edit_result_name = (
+                                f"edited_{uploaded.name}"
+                            )
+                            st.success(
+                                f"Replaced {count} occurrence(s) of '{find_str}' "
+                                f"with '{replace_str}'."
+                            )
+                    except ValueError as e:
+                        st.error(str(e))
+                    except Exception as e:
+                        st.error(f"Find & replace failed: {e}")
 
     # ── Download result ───────────────────────────────────────────────────────
     if "edit_result" in st.session_state:
