@@ -123,6 +123,21 @@ def inject_css() -> None:
         div[data-testid="stExpander"] {{
             background: white; border-radius: 12px; border: 1px solid {BORDER};
         }}
+
+        /* ── sidebar expander (e.g. "Check for Updates") ──
+        Overrides the white-background rule above: without this, the
+        sidebar's forced-light-text rule (`[data-testid="stSidebar"] * {{
+        color: #eef1fb !important; }}`) combined with that expander's
+        default white background made this content nearly invisible --
+        pale text on a near-white box sitting on the dark sidebar. */
+        [data-testid="stSidebar"] div[data-testid="stExpander"] {{
+            background: rgba(255,255,255,.08);
+            border: 1px solid rgba(255,255,255,.18);
+        }}
+        [data-testid="stSidebar"] div[data-testid="stExpander"] button {{
+            background: rgba(255,255,255,.12) !important;
+            border: 1px solid rgba(255,255,255,.25) !important;
+        }}
         </style>
         """,
         unsafe_allow_html=True,

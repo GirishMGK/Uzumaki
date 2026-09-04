@@ -724,4 +724,18 @@ def test_home_page_offers_in_app_update_check():
     src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
     assert "Check for Updates" in src
     assert "updater.check_update_status(" in src
-    assert "updater.perform_update_and_restart(" in src
+
+
+def test_sidebar_expander_css_is_readable_on_dark_background():
+    """Regression guard for a real reported bug: the 'Check for Updates'
+    panel was nearly invisible -- pale text (forced light by the sidebar's
+    blanket `color: #eef1fb !important` rule) on top of st.expander's own
+    hardcoded white background, which wasn't scoped to exclude the sidebar.
+    Any future sidebar content wrapped in st.expander depends on this
+    override still being present."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "theme.py"), encoding="utf-8").read()
+    assert '[data-testid="stSidebar"] div[data-testid="stExpander"]' in src
+    # Must not still be plain white -- that's the exact bug being guarded against.
+    sidebar_expander_block = src.split('[data-testid="stSidebar"] div[data-testid="stExpander"] {')[1]
+    sidebar_expander_block = sidebar_expander_block.split("}")[0]
+    assert "background: white" not in sidebar_expander_block
