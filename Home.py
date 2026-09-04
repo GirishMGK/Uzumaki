@@ -56,11 +56,28 @@ def _render_update_sidebar() -> None:
                         "⬇ Download & Restart", key="do_update_btn",
                         type="primary", use_container_width=True,
                     ):
-                        with st.spinner("Downloading update…"):
-                            ok, message = updater.perform_update_and_restart()
+                        progress_bar = st.progress(0, text="Downloading update…")
+
+                        def _on_progress(downloaded: int, total: int | None) -> None:
+                            # total is None if Tally/GitHub didn't send a
+                            # Content-Length header -- fall back to showing
+                            # bytes downloaded so far with no percentage,
+                            # rather than crashing on a None comparison.
+                            if total:
+                                pct = min(downloaded / total, 1.0)
+                                mb_done, mb_total = downloaded / 1e6, total / 1e6
+                                progress_bar.progress(
+                                    pct, text=f"Downloading update… {mb_done:.1f} / {mb_total:.1f} MB"
+                                )
+                            else:
+                                mb_done = downloaded / 1e6
+                                progress_bar.progress(0, text=f"Downloading update… {mb_done:.1f} MB")
+
+                        ok, message = updater.perform_update_and_restart(on_progress=_on_progress)
                         # Only reached if it FAILED -- success replaces this
                         # whole process via os._exit(), no return.
                         if not ok:
+                            progress_bar.empty()
                             st.error(message)
                 elif status["checked"]:
                     st.caption("✅ You're on the latest version.")

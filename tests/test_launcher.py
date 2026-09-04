@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from unittest import mock
 
 import pytest
@@ -230,3 +231,114 @@ def test_fatal_error_path_reraises_system_exit_untouched():
     main_block = src.split('if __name__ == "__main__":')[1]
     assert "except SystemExit:" in main_block
     assert "raise  # normal exit paths" in main_block
+
+
+def test_download_streams_and_reports_progress_with_content_length():
+    """New feature: a real progress bar for 'Download & Restart' instead of
+    a bare spinner. Verified against a real local HTTP server (not mocked)
+    with a payload that spans multiple chunks, so this actually exercises
+    the streaming read loop and confirms on_progress() fires with correct,
+    monotonically increasing byte counts and the right total each time."""
+    import http.server
+    import threading
+
+    payload = b"X" * (600 * 1024)  # > one _DOWNLOAD_CHUNK_SIZE (256 KiB)
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    calls = []
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            dest = os.path.join(td, "out.bin")
+            ok = updater._download(
+                f"http://127.0.0.1:{port}/", dest, on_progress=lambda d, t: calls.append((d, t))
+            )
+            assert ok
+            assert os.path.getsize(dest) == len(payload)
+    finally:
+        server.shutdown()
+
+    assert len(calls) >= 2  # payload spans multiple chunks at this size
+    assert calls[-1] == (len(payload), len(payload))
+    assert all(total == len(payload) for _, total in calls)
+    # monotonically increasing
+    assert all(a[0] < b[0] for a, b in zip(calls, calls[1:]))
+
+
+def test_download_progress_falls_back_gracefully_without_content_length():
+    """Some responses won't carry Content-Length (e.g. chunked transfer) --
+    on_progress() must still fire with a usable (bytes-so-far, None) shape
+    rather than crashing or silently not reporting progress at all."""
+    import http.server
+    import threading
+
+    payload = b"Y" * (300 * 1024)
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.0"  # no keep-alive -- simplest way to omit Content-Length
+
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *a):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_port
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    calls = []
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            dest = os.path.join(td, "out.bin")
+            ok = updater._download(
+                f"http://127.0.0.1:{port}/", dest, on_progress=lambda d, t: calls.append((d, t))
+            )
+            assert ok
+            assert os.path.getsize(dest) == len(payload)
+    finally:
+        server.shutdown()
+
+    assert calls  # progress still reported
+    assert all(total is None for _, total in calls)
+
+
+
+def test_perform_update_and_restart_passes_progress_callback_through(monkeypatch):
+    """perform_update_and_restart() must forward on_progress to _download()
+    unchanged, not silently drop it."""
+    sys.frozen = True
+    sys._MEIPASS = REPO_ROOT
+
+    captured = {}
+
+    def _fake_download(url, dest, on_progress=None):
+        captured["on_progress"] = on_progress
+        if on_progress:
+            on_progress(50, 100)
+        return False  # fail fast, don't actually reach os._exit()
+
+    with mock.patch.object(updater, "_download", side_effect=_fake_download):
+        marker = object()
+        seen = []
+        ok, message = updater.perform_update_and_restart(on_progress=lambda d, t: seen.append((d, t)))
+
+    assert ok is False
+    assert captured["on_progress"] is not None
+    assert seen == [(50, 100)]
