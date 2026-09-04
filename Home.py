@@ -20,9 +20,52 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _pages.theme import inject_css, footer  # noqa: E402
+import updater  # noqa: E402
 
 st.set_page_config(page_title="Uzumaki · Tools", page_icon="🧰", layout="wide")
 inject_css()
+
+
+# ── sidebar: check for updates ──────────────────────────────────────────────
+def _render_update_sidebar() -> None:
+    """Placed here (not a page) so it runs on every page load, since Home.py
+    is st.navigation()'s entry script and executes on each navigation --
+    the sidebar it renders into persists across pages within one session.
+    Only meaningful when running as the packaged .exe (there's nothing to
+    self-update when running from source); check_update_status() reports
+    that itself so this just renders whatever it says."""
+    with st.sidebar:
+        st.markdown("---")
+        with st.expander("🔄 Check for Updates", expanded=False):
+            if "update_status" not in st.session_state:
+                st.session_state.update_status = updater.check_update_status()
+            status = st.session_state.update_status
+
+            if not updater.is_frozen():
+                st.caption("Running from source — nothing to self-update here.")
+            else:
+                st.caption(f"Current version: `{status['local']}`")
+                if st.button("Check now", key="check_updates_btn", use_container_width=True):
+                    with st.spinner("Checking…"):
+                        st.session_state.update_status = updater.check_update_status()
+                    st.rerun()
+
+                if status["checked"] and status["update_available"]:
+                    st.success(f"Update available: `{status['remote']}`")
+                    if st.button(
+                        "⬇ Download & Restart", key="do_update_btn",
+                        type="primary", use_container_width=True,
+                    ):
+                        with st.spinner("Downloading update…"):
+                            ok, message = updater.perform_update_and_restart()
+                        # Only reached if it FAILED -- success replaces this
+                        # whole process via os._exit(), no return.
+                        if not ok:
+                            st.error(message)
+                elif status["checked"]:
+                    st.caption("✅ You're on the latest version.")
+                elif status["remote"] is None and status["local"] != "0.0.0-dev":
+                    st.caption("Couldn't reach GitHub to check — offline?")
 
 
 # ── tool catalogue ──────────────────────────────────────────────────────────────
@@ -169,4 +212,5 @@ nav = st.navigation(
         ],
     }
 )
+_render_update_sidebar()
 nav.run()

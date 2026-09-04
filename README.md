@@ -25,6 +25,14 @@ updated — see `.github/workflows/build-exe.yml`), it downloads it, swaps
 itself out, and relaunches automatically. A failed or offline check never
 blocks the app — it just launches whatever version you already have.
 
+You don't have to close and reopen the app to get a newer build, either —
+every page's sidebar has a **🔄 Check for Updates** panel (bottom of the
+Tools list) showing the version you're on, a "Check now" button, and
+(when one's available) a "⬇ Download & Restart" button that grabs it and
+relaunches immediately, without waiting for the next cold start. The
+underlying logic (`updater.py`) is shared with the at-launch check, so
+both paths behave identically.
+
 ### Building the .exe yourself
 
 ```bash

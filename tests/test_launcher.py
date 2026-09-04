@@ -1,4 +1,5 @@
-"""Tests for launcher.py's update-check logic (the Uzumaki.exe entry point).
+"""Tests for updater.py's update-check logic (used by launcher.py, the
+Uzumaki.exe entry point, and by the in-app "Check for Updates" control).
 
 Can't build/run an actual .exe here — these test the pure-Python decision
 logic in isolation with the network mocked out, since a failed/slow update
@@ -16,6 +17,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
 import launcher
+import updater
 
 
 @pytest.fixture(autouse=True)
@@ -29,10 +31,18 @@ def _clean_frozen_state():
         del sys._MEIPASS
 
 
+def test_launcher_delegates_to_updater():
+    """launcher.py must not re-implement this logic -- it should be the
+    exact same function object updater.py exposes, so there's one source of
+    truth for both the at-launch check and the in-app control."""
+    assert launcher.check_for_update is updater.check_for_update
+    assert launcher.base_dir is updater.base_dir
+
+
 def test_update_check_is_noop_when_not_frozen():
     sys.frozen = False
     with mock.patch("urllib.request.urlopen") as m:
-        launcher.check_for_update()
+        updater.check_for_update()
     m.assert_not_called()
 
 
@@ -40,29 +50,76 @@ def test_update_check_never_blocks_when_offline():
     sys.frozen = True
     sys._MEIPASS = REPO_ROOT
     with mock.patch("urllib.request.urlopen", side_effect=OSError("network down")), \
-         mock.patch.object(launcher, "_self_update_and_relaunch") as upd:
-        launcher.check_for_update()  # must not raise
+         mock.patch.object(updater, "self_update_and_relaunch") as upd:
+        updater.check_for_update()  # must not raise
     upd.assert_not_called()
 
 
 def test_update_triggers_when_remote_version_differs():
     sys.frozen = True
     sys._MEIPASS = REPO_ROOT
-    with mock.patch.object(launcher, "_remote_version", return_value="deadbeef"), \
-         mock.patch.object(launcher, "_local_version", return_value="0.0.0-dev"), \
-         mock.patch.object(launcher, "_self_update_and_relaunch") as upd:
-        launcher.check_for_update()
+    with mock.patch.object(updater, "remote_version", return_value="deadbeef"), \
+         mock.patch.object(updater, "local_version", return_value="0.0.0-dev"), \
+         mock.patch.object(updater, "self_update_and_relaunch") as upd:
+        updater.check_for_update()
     upd.assert_called_once()
 
 
 def test_update_skipped_when_versions_match():
     sys.frozen = True
     sys._MEIPASS = REPO_ROOT
-    with mock.patch.object(launcher, "_remote_version", return_value="abc123"), \
-         mock.patch.object(launcher, "_local_version", return_value="abc123"), \
-         mock.patch.object(launcher, "_self_update_and_relaunch") as upd:
-        launcher.check_for_update()
+    with mock.patch.object(updater, "remote_version", return_value="abc123"), \
+         mock.patch.object(updater, "local_version", return_value="abc123"), \
+         mock.patch.object(updater, "self_update_and_relaunch") as upd:
+        updater.check_for_update()
     upd.assert_not_called()
+
+
+def test_check_update_status_reports_no_side_effects():
+    """The in-app control's status check must never trigger a download/restart
+    on its own -- only perform_update_and_restart(), called from a button
+    click, should do that."""
+    sys.frozen = True
+    sys._MEIPASS = REPO_ROOT
+    with mock.patch.object(updater, "remote_version", return_value="v2"), \
+         mock.patch.object(updater, "local_version", return_value="v1"), \
+         mock.patch.object(updater, "self_update_and_relaunch") as upd:
+        status = updater.check_update_status()
+    upd.assert_not_called()
+    assert status == {"local": "v1", "remote": "v2", "update_available": True, "checked": True}
+
+
+def test_check_update_status_when_not_frozen():
+    sys.frozen = False
+    status = updater.check_update_status()
+    assert status["checked"] is False
+    assert status["update_available"] is False
+
+
+def test_check_update_status_when_offline():
+    sys.frozen = True
+    sys._MEIPASS = REPO_ROOT
+    with mock.patch.object(updater, "remote_version", return_value=None):
+        status = updater.check_update_status()
+    assert status["checked"] is False
+    assert status["update_available"] is False
+
+
+def test_perform_update_and_restart_reports_failure_without_exiting():
+    """If the download fails, this must return an error tuple, not hard-exit
+    the process -- os._exit() is reserved for the success path only."""
+    sys.frozen = True
+    sys._MEIPASS = REPO_ROOT
+    with mock.patch.object(updater, "_download", return_value=False):
+        ok, message = updater.perform_update_and_restart()
+    assert ok is False
+    assert "Download failed" in message
+
+
+def test_perform_update_and_restart_noop_when_not_frozen():
+    sys.frozen = False
+    ok, message = updater.perform_update_and_restart()
+    assert ok is False
 
 
 def test_run_app_launches_home_py_with_expected_flags():
