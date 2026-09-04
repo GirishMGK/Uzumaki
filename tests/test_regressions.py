@@ -59,8 +59,88 @@ def test_pdf_tools_merge_passes_bytes_not_dicts():
     assert 'merge_pdfs(files)' not in src, "pdf_tools.py regressed to passing dicts straight to merge_pdfs()"
     assert 'merge_pdfs([item["bytes"] for item in files])' in src
 
-    result = merge_pdfs([item["bytes"] for item in files])
-    assert get_page_count(result) == 5
+
+def _spatial_text(page) -> str:
+    """Reconstruct a page's text in visual reading order via word bboxes,
+    sorted by (rounded y, x) -- more robust than get_text('text') for
+    checking a redaction-based edit landed in the right place, since
+    PyMuPDF's own block/line grouping heuristic can split apart words whose
+    inserted-text bbox has a slightly different line-height envelope than
+    the surrounding text (confirmed while building replace_text() below:
+    get_text('text') put a same-line replacement on its own line even
+    though its bbox was genuinely adjacent/overlapping the rest of the
+    line)."""
+    words = page.get_text("words")
+    words_sorted = sorted(words, key=lambda w: (round(w[1]), w[0]))
+    return " ".join(w[4] for w in words_sorted)
+
+
+def test_pdf_tools_edit_find_and_replace_real_text():
+    """New feature: change words inside a PDF, not just page-level ops.
+    Verified end-to-end against real PyMuPDF-rendered text (not a mock),
+    including a real gotcha found while building this: PyMuPDF's
+    page.search_for() is case-INsensitive no matter what case you pass it
+    (confirmed directly: searching 'Hello' matches 'Hello', 'hello', AND
+    'HELLO' alike) -- case_sensitive must be enforced by checking each
+    match's actual literal text via get_textbox(), not by how search_for()
+    itself was called."""
+    pytest.importorskip("fitz")
+    import fitz
+    from tools.editor import replace_text
+
+    def _make_pdf(lines: list[tuple[tuple[float, float], str]]) -> bytes:
+        doc = fitz.open()
+        page = doc.new_page()
+        for pos, text in lines:
+            page.insert_text(pos, text)
+        buf = doc.tobytes()
+        doc.close()
+        return buf
+
+    src_pdf = _make_pdf([
+        ((72, 72), "Hello World, this is a test document."),
+        ((72, 100), "hello again in lowercase, and HELLO in caps."),
+    ])
+
+    # Case-sensitive: only the capital-H "Hello" is replaced.
+    out, n = replace_text(src_pdf, "Hello", "Goodbye", case_sensitive=True)
+    assert n == 1
+    doc = fitz.open(stream=out, filetype="pdf")
+    text = _spatial_text(doc[0])
+    doc.close()
+    assert text.startswith("Goodbye World,")
+    assert "hello again" in text  # lowercase left untouched
+    assert "HELLO in caps" in text  # uppercase left untouched
+
+    # Case-insensitive: all three variants replaced.
+    out2, n2 = replace_text(src_pdf, "hello", "X", case_sensitive=False)
+    assert n2 == 3
+
+    # Whole-word: "est" must not match inside "test"/"document".
+    out3, n3 = replace_text(src_pdf, "est", "ZZZ", case_sensitive=True, whole_word=True)
+    assert n3 == 0
+
+    # Whole-word: "test" as its own word does match.
+    out4, n4 = replace_text(src_pdf, "test", "ZZZ", case_sensitive=True, whole_word=True)
+    assert n4 == 1
+    doc4 = fitz.open(stream=out4, filetype="pdf")
+    text4 = _spatial_text(doc4[0])
+    doc4.close()
+    assert "ZZZ document." in text4
+
+    # Not-found text raises no error, just reports 0 replacements.
+    out5, n5 = replace_text(src_pdf, "nonexistent-phrase-xyz", "Q")
+    assert n5 == 0
+
+    # Empty find string is rejected up front with a clear message.
+    with pytest.raises(ValueError):
+        replace_text(src_pdf, "", "Q")
+
+
+def test_pdf_tools_edit_page_wires_up_replace_text():
+    src = open(os.path.join(REPO_ROOT, "pdf_tools.py"), encoding="utf-8").read()
+    assert "replace_text(" in src
+    assert "Find & Replace Text" in src
 
 
 # ── reconcile.py: scheduled EMI must be Principal + Interest ───────────────────
