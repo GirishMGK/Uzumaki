@@ -16,8 +16,14 @@ streamlit run Home.py
 
 Download the latest `Uzumaki.exe` from the repo's
 [**Releases**](../../releases/tag/latest) page (or build it yourself — see
-"Building the .exe" below) and double-click it. It opens the same hub in your
-browser — no Python install required.
+"Building the .exe" below) and double-click it. It opens in its own native
+desktop window (via [pywebview](https://pywebview.flowrl.com/), using
+Windows' built-in WebView2 runtime) — its own taskbar entry, no browser
+address bar/tabs, and no console window either. No Python install required.
+
+Under the hood it still runs the same Streamlit hub — just as a headless
+background process the window connects to on a local port, rather than
+Streamlit opening a browser tab itself.
 
 **Auto-update:** every time you launch `Uzumaki.exe`, it checks GitHub for a
 newer build. If one exists (published automatically whenever `main` is

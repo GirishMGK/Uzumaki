@@ -22,6 +22,11 @@ lxml
 ijson
 requests  # Tally live-connect (tally_tool/tally_connector.py) -- was already a
           # transitive dep of streamlit, now imported directly too
+pywebview  # launcher.py's native desktop window (wraps the headless Streamlit
+           # server child process) instead of opening a browser tab. On
+           # Windows this uses the built-in WebView2 runtime (ships with
+           # Windows 10/11 via Edge) through pywebview's default backend --
+           # no extra installer needed on a normal Windows machine.
 
 # Firm RMS (firm_rms_tool/) -- vendored FastAPI backend, run in-process by
 # _pages/firm_rms.py. Left unpinned like everything else above so pip
