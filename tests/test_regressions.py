@@ -29,6 +29,40 @@ def test_pdf_tools_dispatch_calls_real_functions():
         assert fn in src, f"pdf_tools.py no longer calls {fn} — a tool page may be disconnected"
 
 
+def test_pdf_tools_merge_passes_bytes_not_dicts():
+    """Regression guard for a real reported bug: 'Merge failed: a bytes-like
+    object is required, not 'dict''. page_merge() stores uploaded files in
+    st.session_state.merge_files as {"name", "bytes", "idx"} dicts (needed
+    for the up/down reorder UI), but was passing that list of dicts straight
+    to merge_pdfs(), which expects a plain list[bytes]. Verified end-to-end
+    with real PDF bytes, not just a structural check, since a wrong
+    List[dict] type hint wouldn't have caught this at all."""
+    pytest.importorskip("pypdf")
+    from pypdf import PdfWriter
+    import io as _io
+    from tools.merger import merge_pdfs, get_page_count
+
+    def _make_pdf(n_pages: int) -> bytes:
+        w = PdfWriter()
+        for _ in range(n_pages):
+            w.add_blank_page(width=200, height=200)
+        buf = _io.BytesIO()
+        w.write(buf)
+        return buf.getvalue()
+
+    files = [
+        {"name": "a.pdf", "bytes": _make_pdf(2), "idx": 0},
+        {"name": "b.pdf", "bytes": _make_pdf(3), "idx": 1},
+    ]
+
+    src = open(os.path.join(REPO_ROOT, "pdf_tools.py"), encoding="utf-8").read()
+    assert 'merge_pdfs(files)' not in src, "pdf_tools.py regressed to passing dicts straight to merge_pdfs()"
+    assert 'merge_pdfs([item["bytes"] for item in files])' in src
+
+    result = merge_pdfs([item["bytes"] for item in files])
+    assert get_page_count(result) == 5
+
+
 # ── reconcile.py: scheduled EMI must be Principal + Interest ───────────────────
 def test_reconcile_scheduled_emi_uses_principal_plus_interest():
     pytest.importorskip("pdfplumber")

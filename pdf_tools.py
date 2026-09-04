@@ -372,7 +372,7 @@ def page_merge() -> None:
     if st.button("🔀 Merge PDFs", type="primary", use_container_width=True):
         with st.spinner("Merging PDFs…"):
             try:
-                result = merge_pdfs(files)
+                result = merge_pdfs([item["bytes"] for item in files])
                 st.session_state.merge_result = result
                 total_pages = get_page_count(result)
                 st.success(
