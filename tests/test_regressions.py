@@ -836,6 +836,9 @@ def test_home_page_offers_in_app_update_check():
 
 
 def test_girish_credit_appears_in_sidebar_and_footer():
+    """User request: a personal branding credit somewhere visually pleasing
+    -- placed in the sidebar (near "Check for Updates") and in the shared
+    page footer so it shows up consistently across the app."""
     home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
     assert "sa-credit" in home_src
     assert "Girish" in home_src
@@ -843,6 +846,31 @@ def test_girish_credit_appears_in_sidebar_and_footer():
     theme_src = open(os.path.join(REPO_ROOT, "_pages", "theme.py"), encoding="utf-8").read()
     assert ".sa-credit" in theme_src
     assert "Girish" in theme_src
+
+
+def test_about_page_exists_and_is_linked_from_home():
+    """New feature: a non-technical 'How it's built' page -- tech stack,
+    architecture, and connectors in plain language, no code -- so people
+    can understand the effort without needing to read the repo."""
+    assert os.path.exists(os.path.join(REPO_ROOT, "_pages", "about.py"))
+
+    about_src = open(os.path.join(REPO_ROOT, "_pages", "about.py"), encoding="utf-8").read()
+    # Should describe the stack conceptually, not show any actual source.
+    assert "Streamlit" in about_src
+    assert "pywebview" in about_src
+
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert '"_pages/about.py"' in home_src
+    assert "How it's built" in home_src
+
+
+def test_about_page_renders_without_exception():
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(os.path.join(REPO_ROOT, "_pages", "about.py"))
+    at.run(timeout=15)
+    assert not at.exception
 
 
 def test_sidebar_expander_css_is_readable_on_dark_background():

@@ -178,6 +178,8 @@ def home():
         unsafe_allow_html=True,
     )
 
+    st.page_link("_pages/about.py", label="🧩 Curious how this is built? See the tech behind it →")
+
     counts = {}
     for t in _TOOLS:
         counts[t["group"]] = counts.get(t["group"], 0) + 1
@@ -220,7 +222,10 @@ def home():
 # ── navigation: a "Tools" group with one page per tool ─────────────────────────
 nav = st.navigation(
     {
-        "Home": [st.Page(home, title="Home", icon="🏠", default=True)],
+        "Home": [
+            st.Page(home, title="Home", icon="🏠", default=True),
+            st.Page("_pages/about.py", title="How it's built", icon="🧩"),
+        ],
         "Tools": [
             st.Page("_pages/parquet.py", title="Parquet Tool", icon="🗄️"),
             st.Page("_pages/pf_statutory.py", title="PF & Statutory", icon="🧾"),
