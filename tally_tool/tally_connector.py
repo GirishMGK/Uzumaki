@@ -121,14 +121,23 @@ def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Eleme
     # Confirmed on a real Tally instance: a request Tally doesn't fully
     # recognize (or hits at the wrong moment -- see the retry below) doesn't
     # error, it silently returns this <CMPINFO> object-count diagnostic
-    # instead of the actual collection data. Treat it as a failure rather
+    # instead of the actual collection data. Treat that as a failure rather
     # than quietly returning zero results.
+    #
+    # BUT: confirmed live (a second real bug) that Tally can also include an
+    # all-zero <CMPINFO> block *alongside* a genuine, populated <COLLECTION>
+    # in the very same successful response -- it's not exclusively a
+    # diagnostic-only fallback shape. Only treat CMPINFO as fatal when there's
+    # no real collection data sitting next to it; otherwise the CMPINFO is a
+    # harmless artifact and the response should be used as-is.
     cmpinfo = root.find(".//CMPINFO")
     if cmpinfo is not None:
-        raise TallyConnectionError(
-            f"Tally returned its diagnostic company-info summary instead of real data "
-            f"for the {context}, instead of erroring outright. Full response: {text!r}"
-        )
+        collection = root.find(".//COLLECTION")
+        if collection is None or len(collection) == 0:
+            raise TallyConnectionError(
+                f"Tally returned its diagnostic company-info summary instead of real data "
+                f"for the {context}, instead of erroring outright. Full response: {text!r}"
+            )
 
     return root
 
