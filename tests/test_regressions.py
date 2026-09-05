@@ -545,6 +545,42 @@ def test_tally_connector_retries_once_then_succeeds(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_tally_connector_repairs_unescaped_ampersands(monkeypatch):
+    """Regression guard for a real bug found live: Tally's XML server does
+    NOT escape a bare "&" in field values -- its own default "Profit & Loss
+    A/c" ledger comes back as literal, invalid XML ("...A/c</NAME>...").
+    ET.fromstring() rejected the whole response with "not well-formed
+    (invalid token)" -- easy to miss on a short "List of Companies" response,
+    near-certain on a full Ledger Collection pull with hundreds of ledgers.
+    Bare "&" must be repaired to "&amp;" before parsing, without touching
+    already-valid escapes."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    bad_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>"
+        "<BODY><DATA><COLLECTION>"
+        '<LEDGER NAME="Profit & Loss A/c"><NAME>Profit & Loss A/c</NAME>'
+        "<PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>"
+        '<LEDGER NAME="R &amp; D Expenses"><NAME>R &amp; D Expenses</NAME>'
+        "<PARENT>Indirect Expenses</PARENT><OPENINGBALANCE>1000</OPENINGBALANCE></LEDGER>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = bad_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    master = tc.fetch_ledger_master("h", 1)
+    assert master["Profit & Loss A/c"]["group"] == "Primary"
+    assert master["R & D Expenses"]["opening_balance"] == 1000.0
+
+
 def test_tally_connector_treats_cmpinfo_fallback_as_a_failure(monkeypatch):
     """Regression guard for a real bug found live: Tally can return valid,
     parseable XML that is nonetheless the wrong thing -- its <CMPINFO>
