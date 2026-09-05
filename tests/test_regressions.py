@@ -545,6 +545,78 @@ def test_tally_connector_retries_once_then_succeeds(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_tally_connector_repairs_ampersands_across_a_large_multi_occurrence_response(monkeypatch):
+    """Regression guard for a real bug found live right after shipping the
+    single-ampersand fix: the first fix was verified against one bad ledger
+    name, but a real Ledger Collection pull has hundreds of ledgers under
+    Tally's own default "Duties & Taxes" group (virtually every GST ledger),
+    so the same unescaped "&" repeats throughout a 600KB+ response. Confirms
+    the sanitizer isn't a one-shot fix that only catches the first
+    occurrence."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    ledgers = "".join(
+        f'<LEDGER NAME="GST Ledger {i}"><NAME>GST Ledger {i}</NAME>'
+        f"<PARENT>Duties & Taxes</PARENT><OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>"
+        for i in range(200)
+    )
+    big_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>"
+        f"<BODY><DATA><COLLECTION>{ledgers}</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = big_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    master = tc.fetch_ledger_master("h", 1)
+    assert len(master) == 200
+    assert all(v["group"] == "Duties & Taxes" for v in master.values())
+
+
+def test_tally_connector_parse_error_pinpoints_the_bad_text_not_a_full_dump(monkeypatch):
+    """Regression guard for a real usability bug found live: when a response
+    is still malformed after sanitizing (a genuinely new/unhandled bad
+    character), the error used to dump the ENTIRE response -- unusable at
+    600KB+, since nobody can spot one bad character by eye in half a million
+    characters shown in a UI error box. The error must instead point at the
+    exact line/column and show a short surrounding snippet."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    # An embedded literal quote inside an attribute value -- genuinely
+    # ambiguous to auto-repair, so it should still raise, but with a short,
+    # precise diagnostic instead of the whole response.
+    broken_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><BODY><DATA><COLLECTION>"
+        '<LEDGER NAME="Deal "Special" Account"><NAME>Deal "Special" Account</NAME>'
+        "<PARENT>Sundry Debtors</PARENT></LEDGER>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = broken_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    with pytest.raises(tc.TallyConnectionError) as exc_info:
+        tc.fetch_ledger_master("h", 1)
+    message = str(exc_info.value)
+    assert "line" in message and "column" in message
+    assert "Deal" in message  # the short context snippet, not the whole response
+    assert len(message) < 1000  # nowhere near a full 600KB+ dump
+
+
 def test_tally_connector_repairs_unescaped_ampersands(monkeypatch):
     """Regression guard for a real bug found live: Tally's XML server does
     NOT escape a bare "&" in field values -- its own default "Profit & Loss
