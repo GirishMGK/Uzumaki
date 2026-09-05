@@ -951,3 +951,24 @@ def test_sidebar_stays_fully_opaque_during_reruns():
     assert 'opacity: 1 !important' in src
     sidebar_opacity_rule = src.split('[data-testid="stSidebar"],')[1].split("}")[0]
     assert "opacity: 1 !important" in sidebar_opacity_rule
+
+
+# ── Uzumaki.spec: Windows Defender/SmartScreen false-positive mitigations ──
+def test_spec_disables_upx_and_embeds_version_metadata():
+    """
+    UPX-compressed executables are disproportionately flagged by Windows
+    Defender/AV heuristics (malware also uses UPX to evade signature
+    scanning), and an .exe with no version/company/product metadata at all
+    is another small signal those heuristics weigh. Neither alone clears a
+    SmartScreen warning (only code-signing + download reputation do that),
+    but both are free, no-cost reductions in false-positive risk -- guard
+    against them silently regressing back to upx=True / no version resource.
+    """
+    src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    assert "upx=False" in src, "Uzumaki.spec must not re-enable UPX -- see Defender false-positive note"
+    assert 'version=os.path.join(ROOT, "version_info.txt")' in src, (
+        "Uzumaki.spec must embed version_info.txt as the EXE's version resource"
+    )
+    assert os.path.exists(os.path.join(REPO_ROOT, "version_info.txt")), (
+        "version_info.txt is referenced by Uzumaki.spec but missing from the repo"
+    )
