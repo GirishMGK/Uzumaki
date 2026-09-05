@@ -848,3 +848,18 @@ def test_sidebar_expander_css_is_readable_on_dark_background():
     sidebar_expander_block = src.split('[data-testid="stSidebar"] div[data-testid="stExpander"] {')[1]
     sidebar_expander_block = sidebar_expander_block.split("}")[0]
     assert "background: white" not in sidebar_expander_block
+
+
+def test_sidebar_stays_fully_opaque_during_reruns():
+    """Regression guard for a real reported bug: the 'Check for Updates'
+    panel (and its download progress bar) looked washed out/hard to see --
+    not the earlier white-background bug, but Streamlit's own "stale
+    element" dimming applied while any script rerun is in flight (the
+    update download itself is one long blocking rerun, so the whole panel
+    sat dimmed for its entire duration). Forces full opacity in the sidebar
+    so this can't recur regardless of which Streamlit internal mechanism
+    causes the dimming."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "theme.py"), encoding="utf-8").read()
+    assert 'opacity: 1 !important' in src
+    sidebar_opacity_rule = src.split('[data-testid="stSidebar"],')[1].split("}")[0]
+    assert "opacity: 1 !important" in sidebar_opacity_rule

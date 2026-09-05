@@ -43,6 +43,18 @@ def inject_css() -> None:
         [data-testid="stSidebar"] a {{ font-weight: 500; }}
         [data-testid="stSidebarNav"] ul {{ padding-top: .25rem; }}
 
+        /* Streamlit dims widgets with a reduced opacity/filter while a
+        script rerun is in flight (its own "stale" indicator) -- during the
+        update download, the whole app is one long blocking rerun, so the
+        "Check for Updates" panel (including the live progress bar) sat
+        washed out the entire time, not just briefly. Forcing full opacity
+        in the sidebar keeps it crisp throughout. */
+        [data-testid="stSidebar"],
+        [data-testid="stSidebar"] * {{
+            opacity: 1 !important;
+            filter: none !important;
+        }}
+
         /* ── hero banner (used by Home + page_header) ── */
         .sa-hero {{
             background: {_ACCENT_GRADIENT};
