@@ -457,10 +457,11 @@ def test_tally_connector_parses_voucher_xml_with_amount_sign_convention():
     assert by_name["Sales Account"]["Credit"] == 10000.0
 
 
-def test_tally_connector_reports_clear_error_when_unreachable():
+def test_tally_connector_reports_clear_error_when_unreachable(monkeypatch):
     sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
     import tally_connector as tc
 
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)  # skip the real retry delay
     ok, message = tc.test_connection("127.0.0.1", 1)  # nothing listens on port 1
     assert ok is False
     assert "Tally" in message
@@ -484,6 +485,7 @@ def test_tally_connector_disables_compression_negotiation(monkeypatch):
         class _FakeResp:
             status_code = 200
             text = "<ENVELOPE><OK/></ENVELOPE>"
+            headers = {}
         return _FakeResp()
 
     monkeypatch.setattr(tc.requests, "post", _fake_post)
@@ -504,11 +506,73 @@ def test_tally_connector_error_messages_name_which_request_failed(monkeypatch):
         class _FakeResp:
             status_code = 200
             text = "not xml at all"
+            headers = {}
         return _FakeResp()
 
     monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)  # skip the real retry delay
     with pytest.raises(tc.TallyConnectionError, match="Voucher Collection request"):
         tc._post("h", 1, "<x/>", context="Voucher Collection request")
+
+
+def test_tally_connector_retries_once_then_succeeds(monkeypatch):
+    """Regression guard for a real bug found live: an otherwise
+    byte-identical request to Tally's XML server failed on one attempt
+    (through this code) and succeeded moments later via a fresh curl call
+    with no change on either side -- consistent with occasional flakiness
+    in Tally's embedded HTTP server. _post() now retries once after a short
+    pause before giving up."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    calls = {"n": 0}
+
+    def _fake_post(url, **kwargs):
+        calls["n"] += 1
+        class _FakeResp:
+            status_code = 200
+            headers = {}
+            if calls["n"] == 1:
+                text = "not xml at all"  # first attempt: malformed
+            else:
+                text = "<ENVELOPE><OK/></ENVELOPE>"  # second attempt: succeeds
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    root = tc._post("h", 1, "<x/>", context="test")
+    assert root.find("OK") is not None
+    assert calls["n"] == 2
+
+
+def test_tally_connector_treats_cmpinfo_fallback_as_a_failure(monkeypatch):
+    """Regression guard for a real bug found live: Tally can return valid,
+    parseable XML that is nonetheless the wrong thing -- its <CMPINFO>
+    object-count diagnostic instead of the requested collection data (e.g.
+    <LEDGER>0</LEDGER>) -- with no error status. Before this fix,
+    list_companies() would silently iterate zero real <COMPANY> elements out
+    of a CMPINFO block's unrelated <COMPANY>N</COMPANY> count tag and just
+    return an empty list; now _post() raises clearly instead."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    cmpinfo_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>"
+        "<BODY><DESC><CMPINFO><COMPANY>0</COMPANY><GROUP>0</GROUP>"
+        "<LEDGER>0</LEDGER></CMPINFO></DESC></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = cmpinfo_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    with pytest.raises(tc.TallyConnectionError, match="diagnostic company-info summary"):
+        tc._post("h", 1, "<x/>", context="Ledger Collection request")
 
 
 def test_tally_connector_requires_date_range_for_voucher_fetch():
