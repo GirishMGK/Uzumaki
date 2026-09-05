@@ -55,6 +55,17 @@ def inject_css() -> None:
             filter: none !important;
         }}
 
+        /* ── top-of-app logo banner ── */
+        .sa-logo-banner {{
+            display: flex; align-items: center; justify-content: center;
+            gap: .55rem; padding: .5rem 0 .1rem;
+        }}
+        .sa-logo-mark {{ font-size: 1.9rem; line-height: 1; }}
+        .sa-logo-word {{
+            font-size: 1.35rem; font-weight: 800; letter-spacing: .05em;
+            color: #c81e1e;
+        }}
+
         /* ── hero banner (used by Home + page_header) ── */
         .sa-hero {{
             background: {_ACCENT_GRADIENT};
@@ -150,6 +161,15 @@ def inject_css() -> None:
             background: rgba(255,255,255,.12) !important;
             border: 1px solid rgba(255,255,255,.25) !important;
         }}
+
+        /* ── sidebar credit line ── */
+        .sa-credit {{
+            margin: 1.4rem 0 .6rem; padding-top: .9rem;
+            border-top: 1px solid rgba(255,255,255,.18);
+            text-align: center; font-size: .76rem;
+            letter-spacing: .03em; opacity: .85;
+        }}
+        .sa-credit strong {{ font-weight: 700; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -175,7 +195,7 @@ def footer() -> None:
     st.markdown(
         """
         <div class="sa-footer">
-            <div>Uzumaki · Tools Hub</div>
+            <div>Uzumaki · Tools Hub · Built by <strong>Girish</strong></div>
             <div>All processing runs locally — no data leaves this session.</div>
         </div>
         """,

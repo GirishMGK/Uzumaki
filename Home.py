@@ -26,6 +26,22 @@ st.set_page_config(page_title="Uzumaki · Tools", page_icon="🧰", layout="wide
 inject_css()
 
 
+# ── top-of-app logo banner ───────────────────────────────────────────────────
+def _render_logo_banner() -> None:
+    """Rendered above st.navigation()'s content on every page (Home.py is the
+    entry script for all pages), so the "Uzumaki" brand mark sits at the top
+    of the tool no matter which page is open."""
+    st.markdown(
+        """
+        <div class="sa-logo-banner">
+            <span class="sa-logo-mark">🥷</span>
+            <span class="sa-logo-word">UZUMAKI</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ── sidebar: check for updates ──────────────────────────────────────────────
 def _render_update_sidebar() -> None:
     """Placed here (not a page) so it runs on every page load, since Home.py
@@ -83,6 +99,11 @@ def _render_update_sidebar() -> None:
                     st.caption("✅ You're on the latest version.")
                 elif status["remote"] is None and status["local"] != "0.0.0-dev":
                     st.caption("Couldn't reach GitHub to check — offline?")
+
+        st.markdown(
+            '<div class="sa-credit">Built by <strong>Girish</strong></div>',
+            unsafe_allow_html=True,
+        )
 
 
 # ── tool catalogue ──────────────────────────────────────────────────────────────
@@ -173,6 +194,8 @@ def home():
         unsafe_allow_html=True,
     )
 
+    st.page_link("_pages/about.py", label="🧩 Curious how this is built? See the tech behind it →")
+
     counts = {}
     for t in _TOOLS:
         counts[t["group"]] = counts.get(t["group"], 0) + 1
@@ -215,7 +238,10 @@ def home():
 # ── navigation: a "Tools" group with one page per tool ─────────────────────────
 nav = st.navigation(
     {
-        "Home": [st.Page(home, title="Home", icon="🏠", default=True)],
+        "Home": [
+            st.Page(home, title="Home", icon="🏠", default=True),
+            st.Page("_pages/about.py", title="How it's built", icon="🧩"),
+        ],
         "Tools": [
             st.Page("_pages/parquet.py", title="Parquet Tool", icon="🗄️"),
             st.Page("_pages/pf_statutory.py", title="PF & Statutory", icon="🧾"),
@@ -229,5 +255,6 @@ nav = st.navigation(
         ],
     }
 )
+_render_logo_banner()
 _render_update_sidebar()
 nav.run()
