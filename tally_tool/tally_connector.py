@@ -61,6 +61,7 @@ Expect to iterate once run against a real, running TallyPrime.
 from __future__ import annotations
 
 import datetime
+import re
 import time
 import xml.etree.ElementTree as ET
 
@@ -68,6 +69,29 @@ import requests
 
 DEFAULT_PORT = 9000
 _TIMEOUT = 15  # seconds -- a local XML request should be fast; don't hang the UI
+
+# Confirmed on a real Tally instance: Tally's XML server does NOT escape a
+# bare "&" in field values -- e.g. its own default "Profit & Loss A/c" ledger
+# comes back as literal "...A/c</NAME>...", not "&amp;". That's invalid XML
+# and ET.fromstring() rejects the whole response outright with "not
+# well-formed (invalid token)". A short "List of Companies" response can
+# easily avoid hitting any such ledger; a 600KB+ Ledger Collection pulling
+# every ledger in the books essentially always will. Repair only bare "&"
+# that ISN'T already the start of a valid entity/char reference, so any
+# already-correct escaping is left alone.
+_BARE_AMPERSAND_RE = re.compile(r"&(?!amp;|lt;|gt;|apos;|quot;|#\d+;|#x[0-9a-fA-F]+;)")
+
+# Tally has also been seen emitting stray ASCII control characters (other
+# than tab/newline/carriage-return) inside text fields, which are simply
+# illegal in XML 1.0 and cause the same parse failure -- stripped rather
+# than escaped, since there's no valid XML representation for them anyway.
+_ILLEGAL_XML_CHARS_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_tally_xml(text: str) -> str:
+    text = _BARE_AMPERSAND_RE.sub("&amp;", text)
+    text = _ILLEGAL_XML_CHARS_RE.sub("", text)
+    return text
 
 
 class TallyConnectionError(RuntimeError):
@@ -110,7 +134,7 @@ def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Eleme
         raise TallyConnectionError(f"Tally returned an empty response for the {context}.")
 
     try:
-        root = ET.fromstring(text)
+        root = ET.fromstring(_sanitize_tally_xml(text))
     except ET.ParseError as exc:
         raise TallyConnectionError(
             f"Tally's response for the {context} wasn't valid XML -- it may have "
