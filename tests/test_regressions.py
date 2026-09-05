@@ -575,6 +575,42 @@ def test_tally_connector_treats_cmpinfo_fallback_as_a_failure(monkeypatch):
         tc._post("h", 1, "<x/>", context="Ledger Collection request")
 
 
+def test_tally_connector_ignores_cmpinfo_when_real_data_is_also_present(monkeypatch):
+    """Regression guard for a real bug found live right after shipping the
+    CMPINFO-as-failure fix above: Tally's actual response to a working "List
+    of Companies" request includes an all-zero <CMPINFO> block *and* a
+    populated <COLLECTION> with the real company data in the very same
+    envelope -- so treating any <CMPINFO> presence as fatal broke a request
+    that was genuinely succeeding. Only an all-zero CMPINFO with NO
+    accompanying collection data should raise."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    mixed_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>"
+        "<BODY><DESC><CMPINFO><COMPANY>0</COMPANY><GROUP>0</GROUP>"
+        "<LEDGER>0</LEDGER></CMPINFO></DESC>"
+        "<DATA><COLLECTION>"
+        '<COMPANY NAME="Databricks India Private Limited FY 24-25 (KA)">'
+        '<NAME TYPE="String">Databricks India Private Limited FY 24-25 (KA)</NAME>'
+        "</COMPANY>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = mixed_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    root = tc._post("h", 1, "<x/>", context="List of Companies request")
+    names = [c.find("NAME").text for c in root.iter("COMPANY") if c.find("NAME") is not None]
+    assert "Databricks India Private Limited FY 24-25 (KA)" in names
+
+
 def test_tally_connector_requires_date_range_for_voucher_fetch():
     """Regression guard for a real bug found testing against a live Tally
     instance: a Voucher Collection request with no SVFROMDATE/SVTODATE
