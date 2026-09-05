@@ -156,12 +156,12 @@ _TOOLS = [
     {
         "group": "Finance & Loan Audit",
         "icon": "🧮", "title": "Tally: GST Summary", "tag": "Streamlit",
-        "desc": "Month-wise Output/Input GST summary as per Tally's own books, classified from ledger names and voucher types.",
+        "desc": "Month-wise Output/Input GST summary as per Tally's own books, reconciled against uploaded GSTR-1/GSTR-3B PDFs.",
     },
     {
         "group": "Finance & Loan Audit",
         "icon": "🧾", "title": "Tally: TDS Summary", "tag": "Streamlit",
-        "desc": "Party-wise TDS deducted, as per Tally's own books, grouped by nature of payment and month.",
+        "desc": "Party-wise TDS deducted, as per Tally's own books, reconciled against uploaded TDS challan PDFs.",
     },
     {
         "group": "Workforce & Scheduling",

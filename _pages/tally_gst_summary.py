@@ -6,9 +6,11 @@ entries (tally_tool/reports/gst_summary.py) -- classification is heuristic
 metadata, which is inconsistently populated across versions. See that
 module's docstring for the classification rules.
 
-This is deliberately "as per books" only -- no comparison against filed
-GSTR-1/GSTR-3B yet (Combined_PF_Statutory.py already parses those; wiring a
-3-way reconciliation in is a follow-up phase, not this page).
+A second section below lets you reconcile the books summary against filed
+GSTR-1/GSTR-3B returns (Phase 2) -- upload the same PDFs Combined_PF_Statutory.py's
+PF & Statutory page already knows how to read, parsed here via the shared
+common/statutory_extractors.py module so both pages read filed returns
+identically.
 
 Reuses extract_ledgers.build_tables() for the cancelled/optional filtering
 and ledger-group lookup it already does for the ledger extraction page, so
@@ -31,15 +33,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from _pages.theme import page_header, footer
 from _pages.tally_common import render_connection_picker, render_setup_help
 
+from common.statutory_extractors import detect_statutory_type, extract_gstr1, extract_gstr3b, read_pdf_text
+
 from extract_ledgers import ensure_utf8, extract_any, build_tables
 from reports.gst_summary import build_gst_summary, build_month_pivot, build_unclassified
+from reports.gst_recon import compute_recon_3way, resolve_gstin
 import tally_connector
 
 page_header(
     "🧮", "Tally: GST Summary",
     "Month-wise Output/Input GST summary, as per Tally's own books — from an uploaded "
     "export or a live Tally connection.",
-    badges=["As per books", "Month-wise Output vs Input", "Unclassified bucket flagged"],
+    badges=["As per books", "Month-wise Output vs Input", "3-way recon vs filed returns"],
 )
 
 
@@ -56,6 +61,11 @@ def _render_gst_results(df: pd.DataFrame, ledger_master: dict) -> None:
             "use one of those names."
         )
         return
+
+    # Stashed so the "Reconcile with filed returns" section below (which
+    # reruns independently, on its own button) can use the last-built
+    # pivot without the user having to re-pull from Tally.
+    st.session_state["gst_last_pivot"] = pivot
 
     st.divider()
     total_output = pivot["Total Output"].sum() if not pivot.empty else 0.0
@@ -174,6 +184,92 @@ with tab_live:
 
         _render_gst_results(df, ledger_master)
 
+st.divider()
+st.subheader("Reconcile with filed returns")
+st.caption(
+    "Compares the books summary above (built via either tab) against filed GSTR-1 and "
+    "GSTR-3B PDFs you upload here — the same reconciliation Combined_PF_Statutory.py's "
+    "PF & Statutory page runs between GSTR-1 and GSTR-3B, extended with a third leg."
+)
+
+pivot_for_recon = st.session_state.get("gst_last_pivot")
+if pivot_for_recon is None or pivot_for_recon.empty:
+    st.info("Build a GST Summary above first (Upload or Live tab) — this section reconciles that result.")
+else:
+    c1, c2 = st.columns(2)
+    with c1:
+        gstr1_files = st.file_uploader(
+            "GSTR-1 PDF(s)", type=["pdf"], accept_multiple_files=True, key="gst_recon_gstr1_files"
+        )
+    with c2:
+        gstr3b_files = st.file_uploader(
+            "GSTR-3B PDF(s)", type=["pdf"], accept_multiple_files=True, key="gst_recon_gstr3b_files"
+        )
+    gstin_input = st.text_input(
+        "GSTIN (optional — auto-detected from the uploaded returns if left blank)",
+        key="gst_recon_gstin",
+    )
+
+    if st.button("Reconcile", type="primary", key="gst_recon_button"):
+        if not gstr1_files and not gstr3b_files:
+            st.warning("Upload at least one GSTR-1 or GSTR-3B PDF to reconcile against.")
+            st.stop()
+
+        gstr1_rows, gstr3b_rows, warnings = [], [], []
+        with st.spinner("Reading filed returns…"):
+            for f in gstr1_files or []:
+                text = read_pdf_text(f.getvalue())
+                if detect_statutory_type(text) != "GSTR1":
+                    warnings.append(f"{f.name}: doesn't look like a GSTR-1 — skipped.")
+                    continue
+                gstr1_rows.append(extract_gstr1(f.name, text))
+            for f in gstr3b_files or []:
+                text = read_pdf_text(f.getvalue())
+                if detect_statutory_type(text) != "GSTR3B":
+                    warnings.append(f"{f.name}: doesn't look like a GSTR-3B — skipped.")
+                    continue
+                gstr3b_rows.append(extract_gstr3b(f.name, text))
+
+        for w in warnings:
+            st.warning(w)
+
+        resolved_gstin, note = resolve_gstin(gstin_input, gstr1_rows, gstr3b_rows)
+        if note:
+            (st.info if resolved_gstin else st.error)(note)
+        if not resolved_gstin:
+            st.stop()
+
+        result, collisions = compute_recon_3way(pivot_for_recon, resolved_gstin, gstr1_rows, gstr3b_rows)
+        if collisions:
+            st.warning(
+                f"The books pivot has more than one calendar year's data for: "
+                f"{', '.join(sorted(collisions))} — those months were summed across years "
+                "rather than kept apart (see this page's 'How ledgers are classified' note). "
+                "For a clean match, pull one financial year at a time."
+            )
+
+        matched = int((result["Status"] == "Matched").sum())
+        mismatched = int((result["Status"] == "Books vs Return Mismatch").sum())
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Months compared", len(result))
+        k2.metric("Matched", matched)
+        k3.metric("Mismatched / one-sided", len(result) - matched)
+        if mismatched:
+            st.warning(f"{mismatched} month(s) show a Books-vs-Return mismatch beyond ₹1 tolerance — see below.")
+
+        st.dataframe(result, use_container_width=True, hide_index=True)
+
+        buf_recon = io.BytesIO()
+        with pd.ExcelWriter(buf_recon, engine="openpyxl") as writer:
+            result.to_excel(writer, sheet_name="3-Way GST Recon", index=False)
+        st.download_button(
+            "⬇ Download reconciliation workbook",
+            buf_recon.getvalue(),
+            file_name="tally_gst_recon.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="gst_recon_download",
+        )
+
 with st.expander("How ledgers are classified"):
     st.markdown(
         """
@@ -193,6 +289,11 @@ with st.expander("How ledgers are classified"):
 - This is a heuristic, not a read of Tally's own GST metadata (GSTDETAILS.LIST), which is
   inconsistently populated across versions/releases — review the Ledger Detail tab if a
   figure looks off.
+- **Reconciliation join key**: filed GSTR-1/GSTR-3B PDFs carry a bare month name ("January"),
+  not a year, so the "Reconcile with filed returns" section above matches by month name alone —
+  pulling more than one financial year of Tally data into the same reconciliation will sum
+  same-named months across years together (flagged when it happens). Run one FY at a time
+  for a clean match.
 """
     )
 
