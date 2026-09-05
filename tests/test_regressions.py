@@ -615,6 +615,14 @@ def test_tally_connector_parse_error_pinpoints_the_bad_text_not_a_full_dump(monk
     assert "line" in message and "column" in message
     assert "Deal" in message  # the short context snippet, not the whole response
     assert len(message) < 1000  # nowhere near a full 600KB+ dump
+    # Regression guard for a second real gap found live: the error used to
+    # drop expat's own exception message (e.g. "not well-formed (invalid
+    # token)" vs "mismatched tag" vs "duplicate attribute") entirely -- with
+    # no way to tell which distinct failure category a report was even
+    # hitting. That text, and the single exact character expat stopped at,
+    # must both be present.
+    assert "not well-formed" in message or "token" in message
+    assert "exact character" in message
 
 
 def test_tally_connector_repairs_unescaped_ampersands(monkeypatch):
