@@ -305,9 +305,17 @@ def fetch_vouchers(
     # nested ledger-entry data at all -- confirmed against a real Tally
     # instance that a Voucher Collection FETCH without it returns the
     # voucher "shell" (date/party/narration) with no ledger entries.
+    # COSTCENTREALLOCATIONS.LIST is requested the same way BILLALLOCATIONS.LIST
+    # already is below -- when cost centres aren't enabled for the company/
+    # ledger, Tally simply omits the block per entry (same as bill allocations
+    # on a ledger with no bill-by-bill tracking), so this is a no-op addition
+    # for companies that don't use cost centres. NOT YET VERIFIED AGAINST A
+    # REAL TALLY INSTANCE -- same caveat as the rest of this file's live-XML
+    # additions until run against real TallyPrime.
     fetch_fields = (
         "DATE,VOUCHERTYPENAME,VOUCHERNUMBER,PARTYLEDGERNAME,NARRATION,REFERENCE,"
-        "GUID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LIST,LEDGERENTRIES.LIST"
+        "GUID,MASTERID,ISCANCELLED,ISOPTIONAL,ALLLEDGERENTRIES.LIST,LEDGERENTRIES.LIST,"
+        "COSTCENTREALLOCATIONS.LIST"
     )
     request_xml = f"""<ENVELOPE>
   <HEADER>
@@ -359,6 +367,14 @@ def fetch_vouchers(
                 for b in entry.findall("BILLALLOCATIONS.LIST")
                 if (b.findtext("NAME") or "").strip()
             ]
+            # Same "; "-joined multi-value convention as Bill Reference above --
+            # a ledger entry can be split across more than one cost centre.
+            # Empty when cost centres aren't enabled, same graceful degrade.
+            cc_names = [
+                (c.findtext("NAME") or "").strip()
+                for c in entry.findall("COSTCENTREALLOCATIONS.LIST")
+                if (c.findtext("NAME") or "").strip()
+            ]
 
             seq += 1
             rows.append(
@@ -375,6 +391,7 @@ def fetch_vouchers(
                     "Debit": -amount if amount < 0 else 0.0,
                     "Credit": amount if amount > 0 else 0.0,
                     "Bill Reference": "; ".join(bill_names),
+                    "Cost Centre": "; ".join(cc_names),
                     "Cancelled": is_cancelled,
                     "Optional": is_optional,
                     "Voucher GUID": guid,

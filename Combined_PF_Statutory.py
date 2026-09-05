@@ -13,8 +13,12 @@ import re
 import datetime
 import zipfile
 import os
+import sys
 from pathlib import Path
 from io import BytesIO
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common.period_utils import normalize_period as _normalize_period, _MONTH_NUM
 
 st.set_page_config(page_title="PF & Statutory Compliance Register", layout="wide")
 st.title("PF & Statutory Compliance Register")
@@ -39,27 +43,10 @@ def g_last(pattern, text, flags=re.I):
     matches = list(re.finditer(pattern, text, flags))
     return matches[-1].group(1).strip() if matches else ""
 
-def _normalize_period(raw):
-    if not raw:
-        return ""
-    raw = str(raw).strip()
-    cleaned = re.sub(r'\s*[-–]\s*', '-', raw)
-    for candidate in [cleaned, cleaned.title(), raw, raw.title()]:
-        for fmt in ["%b-%y", "%b-%Y", "%B-%Y", "%B-%y", "%m-%Y", "%B"]:
-            try:
-                dt = datetime.datetime.strptime(candidate, fmt)
-                return candidate.title() if fmt == "%B" else dt.strftime("%b-%Y")
-            except Exception:
-                pass
-    return raw
-
+# _normalize_period/_MONTH_NUM now live in common/period_utils.py (imported
+# above) so tally_tool/reports/ can reuse the same "%b-%Y" period-label
+# format without importing this Streamlit script.
 normalize_period = _normalize_period
-
-_MONTH_NUM = {
-    1: "January", 2: "February", 3: "March", 4: "April",
-    5: "May", 6: "June", 7: "July", 8: "August",
-    9: "September", 10: "October", 11: "November", 12: "December",
-}
 
 def period_from_filename(file_name):
     base = os.path.splitext(os.path.basename(file_name))[0]

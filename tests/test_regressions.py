@@ -856,9 +856,16 @@ def test_tally_register_filters_by_voucher_type_and_excludes_cancelled(monkeypat
 
 
 def test_tally_page_has_register_tab():
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    """The Sales & Purchase Register moved out of tally_extractions.py into
+    its own page (_pages/tally_registers.py) so that page could stop
+    accumulating tabs -- this guard now checks the register lives somewhere
+    reachable in the hub rather than assuming the original file."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_registers.py"), encoding="utf-8").read()
     assert "fetch_voucher_register(" in src
     assert "Sales & Purchase Register" in src
+
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert "_pages/tally_registers.py" in home_src
 
 
 def test_home_page_offers_in_app_update_check():

@@ -146,7 +146,22 @@ _TOOLS = [
     {
         "group": "Finance & Loan Audit",
         "icon": "📒", "title": "Tally extraction tool", "tag": "Streamlit",
-        "desc": "Pull every ledger's full transaction history out of a Tally JSON export in one shot, with running balances and a control-total check.",
+        "desc": "Pull every ledger's full transaction history out of Tally in one shot, with running balances, cost centres, and a control-total check.",
+    },
+    {
+        "group": "Finance & Loan Audit",
+        "icon": "🧾", "title": "Tally: Sales & Purchase Register", "tag": "Streamlit",
+        "desc": "Item-wise Sales/Purchase register — Stock Item, Quantity, Rate, Amount — from an uploaded export or a live Tally connection.",
+    },
+    {
+        "group": "Finance & Loan Audit",
+        "icon": "🧮", "title": "Tally: GST Summary", "tag": "Streamlit",
+        "desc": "Month-wise Output/Input GST summary as per Tally's own books, classified from ledger names and voucher types.",
+    },
+    {
+        "group": "Finance & Loan Audit",
+        "icon": "🧾", "title": "Tally: TDS Summary", "tag": "Streamlit",
+        "desc": "Party-wise TDS deducted, as per Tally's own books, grouped by nature of payment and month.",
     },
     {
         "group": "Workforce & Scheduling",
@@ -251,6 +266,9 @@ nav = st.navigation(
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
             st.Page("_pages/tally_extractions.py", title="Tally extraction tool", icon="📒"),
+            st.Page("_pages/tally_registers.py", title="Tally: Sales & Purchase Register", icon="🧾"),
+            st.Page("_pages/tally_gst_summary.py", title="Tally: GST Summary", icon="🧮"),
+            st.Page("_pages/tally_tds_summary.py", title="Tally: TDS Summary", icon="🧾"),
             st.Page("_pages/firm_rms.py", title="Firm RMS", icon="🧑‍💼"),
         ],
     }
