@@ -55,6 +55,17 @@ def inject_css() -> None:
             filter: none !important;
         }}
 
+        /* ── top-of-app logo banner ── */
+        .sa-logo-banner {{
+            display: flex; align-items: center; justify-content: center;
+            gap: .55rem; padding: .5rem 0 .1rem;
+        }}
+        .sa-logo-mark {{ font-size: 1.9rem; line-height: 1; }}
+        .sa-logo-word {{
+            font-size: 1.35rem; font-weight: 800; letter-spacing: .05em;
+            color: #c81e1e;
+        }}
+
         /* ── hero banner (used by Home + page_header) ── */
         .sa-hero {{
             background: {_ACCENT_GRADIENT};

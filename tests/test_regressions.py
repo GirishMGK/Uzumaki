@@ -835,6 +835,20 @@ def test_home_page_offers_in_app_update_check():
     assert "updater.check_update_status(" in src
 
 
+def test_logo_banner_renders_at_top_of_every_page():
+    """User request: an "Uzumaki" logo/brand mark at the top of the tool.
+    _render_logo_banner() is called from Home.py -- the st.navigation()
+    entry script that runs on every page -- so it's not just on the
+    landing page."""
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert "sa-logo-banner" in home_src
+    assert "UZUMAKI" in home_src
+    assert "_render_logo_banner()" in home_src
+
+    theme_src = open(os.path.join(REPO_ROOT, "_pages", "theme.py"), encoding="utf-8").read()
+    assert ".sa-logo-banner" in theme_src
+
+
 def test_girish_credit_appears_in_sidebar_and_footer():
     """User request: a personal branding credit somewhere visually pleasing
     -- placed in the sidebar (near "Check for Updates") and in the shared
