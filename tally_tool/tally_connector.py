@@ -61,6 +61,7 @@ Expect to iterate once run against a real, running TallyPrime.
 from __future__ import annotations
 
 import datetime
+import time
 import xml.etree.ElementTree as ET
 
 import requests
@@ -73,11 +74,7 @@ class TallyConnectionError(RuntimeError):
     """Raised for anything that stops us reaching/using the Tally XML server."""
 
 
-def _post(host: str, port: int, xml_request: str, context: str = "request") -> ET.Element:
-    """`context` names which request this is (e.g. "Ledger Collection") purely
-    for error messages -- fetch_ledger_master() and fetch_vouchers() share
-    this helper, and a plain "wasn't valid XML" message alone doesn't say
-    which of the two calls in a single pull_from_tally() actually failed."""
+def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Element:
     url = f"http://{host}:{port}"
     try:
         resp = requests.post(
@@ -113,12 +110,47 @@ def _post(host: str, port: int, xml_request: str, context: str = "request") -> E
         raise TallyConnectionError(f"Tally returned an empty response for the {context}.")
 
     try:
-        return ET.fromstring(text)
+        root = ET.fromstring(text)
     except ET.ParseError as exc:
         raise TallyConnectionError(
             f"Tally's response for the {context} wasn't valid XML -- it may have "
-            f"returned an error page instead. First 300 chars: {text[:300]!r}"
+            f"returned an error page or a truncated response instead. Response "
+            f"headers: {dict(resp.headers)!r}. Full response ({len(text)} chars): {text!r}"
         ) from exc
+
+    # Confirmed on a real Tally instance: a request Tally doesn't fully
+    # recognize (or hits at the wrong moment -- see the retry below) doesn't
+    # error, it silently returns this <CMPINFO> object-count diagnostic
+    # instead of the actual collection data. Treat it as a failure rather
+    # than quietly returning zero results.
+    cmpinfo = root.find(".//CMPINFO")
+    if cmpinfo is not None:
+        raise TallyConnectionError(
+            f"Tally returned its diagnostic company-info summary instead of real data "
+            f"for the {context}, instead of erroring outright. Full response: {text!r}"
+        )
+
+    return root
+
+
+def _post(host: str, port: int, xml_request: str, context: str = "request") -> ET.Element:
+    """`context` names which request this is (e.g. "Ledger Collection") purely
+    for error messages -- fetch_ledger_master() and fetch_vouchers() share
+    this helper, and a plain "wasn't valid XML" message alone doesn't say
+    which of the two calls in a single pull_from_tally() actually failed.
+
+    Retries once after a short pause on either failure mode seen live against
+    a real Tally instance (a malformed/truncated response, or the silent
+    <CMPINFO> diagnostic fallback) before giving up -- confirmed live that an
+    otherwise byte-identical request can fail through this code on one
+    attempt and succeed immediately after via a fresh curl call moments
+    later, consistent with occasional flakiness in Tally's embedded HTTP
+    server rather than anything wrong with the request itself."""
+    try:
+        return _post_once(host, port, xml_request, context)
+    except TallyConnectionError:
+        time.sleep(1.0)
+        return _post_once(host, port, xml_request, context)
 
 
 def test_connection(host: str, port: int = DEFAULT_PORT) -> tuple[bool, str]:
