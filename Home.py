@@ -84,6 +84,11 @@ def _render_update_sidebar() -> None:
                 elif status["remote"] is None and status["local"] != "0.0.0-dev":
                     st.caption("Couldn't reach GitHub to check — offline?")
 
+        st.markdown(
+            '<div class="sa-credit">Built by <strong>Girish</strong></div>',
+            unsafe_allow_html=True,
+        )
+
 
 # ── tool catalogue ──────────────────────────────────────────────────────────────
 _TOOLS = [

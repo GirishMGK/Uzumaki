@@ -150,6 +150,15 @@ def inject_css() -> None:
             background: rgba(255,255,255,.12) !important;
             border: 1px solid rgba(255,255,255,.25) !important;
         }}
+
+        /* ── sidebar credit line ── */
+        .sa-credit {{
+            margin: 1.4rem 0 .6rem; padding-top: .9rem;
+            border-top: 1px solid rgba(255,255,255,.18);
+            text-align: center; font-size: .76rem;
+            letter-spacing: .03em; opacity: .85;
+        }}
+        .sa-credit strong {{ font-weight: 700; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -175,7 +184,7 @@ def footer() -> None:
     st.markdown(
         """
         <div class="sa-footer">
-            <div>Uzumaki · Tools Hub</div>
+            <div>Uzumaki · Tools Hub · Built by <strong>Girish</strong></div>
             <div>All processing runs locally — no data leaves this session.</div>
         </div>
         """,

@@ -835,6 +835,16 @@ def test_home_page_offers_in_app_update_check():
     assert "updater.check_update_status(" in src
 
 
+def test_girish_credit_appears_in_sidebar_and_footer():
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert "sa-credit" in home_src
+    assert "Girish" in home_src
+
+    theme_src = open(os.path.join(REPO_ROOT, "_pages", "theme.py"), encoding="utf-8").read()
+    assert ".sa-credit" in theme_src
+    assert "Girish" in theme_src
+
+
 def test_sidebar_expander_css_is_readable_on_dark_background():
     """Regression guard for a real reported bug: the 'Check for Updates'
     panel was nearly invisible -- pale text (forced light by the sidebar's
