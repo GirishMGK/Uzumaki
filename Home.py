@@ -164,6 +164,16 @@ _TOOLS = [
         "desc": "Party-wise TDS deducted, as per Tally's own books, reconciled against uploaded TDS challan PDFs.",
     },
     {
+        "group": "Finance & Loan Audit",
+        "icon": "🏦", "title": "Tally: Bank Reconciliation", "tag": "Streamlit",
+        "desc": "Book balance from Tally vs an uploaded bank statement, as on a selected date — matched and presented as a standard BRS.",
+    },
+    {
+        "group": "Finance & Loan Audit",
+        "icon": "📦", "title": "Tally: Inventory Closing Stock", "tag": "Streamlit",
+        "desc": "Item-wise closing quantity and value — Tally's own reported closing vs a derived figure from Sales/Purchase movements.",
+    },
+    {
         "group": "Workforce & Scheduling",
         "icon": "🧑‍💼", "title": "Firm RMS", "tag": "FastAPI (in-process)",
         "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
@@ -269,6 +279,8 @@ nav = st.navigation(
             st.Page("_pages/tally_registers.py", title="Tally: Sales & Purchase Register", icon="🧾"),
             st.Page("_pages/tally_gst_summary.py", title="Tally: GST Summary", icon="🧮"),
             st.Page("_pages/tally_tds_summary.py", title="Tally: TDS Summary", icon="🧾"),
+            st.Page("_pages/tally_bank_recon.py", title="Tally: Bank Reconciliation", icon="🏦"),
+            st.Page("_pages/tally_inventory.py", title="Tally: Inventory Closing Stock", icon="📦"),
             st.Page("_pages/firm_rms.py", title="Firm RMS", icon="🧑‍💼"),
         ],
     }

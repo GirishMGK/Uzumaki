@@ -32,6 +32,8 @@ __all__ = [
     "classify_gst_ledger",
     "resolve_ambiguous_direction",
     "classify_tds_ledger",
+    "voucher_key",
+    "parse_qty",
 ]
 
 
@@ -162,3 +164,41 @@ def classify_tds_ledger(name: str, parent: str = "") -> tuple[bool, str | None]:
         if any(kw in name_u for kw in keywords):
             return True, label
     return True, None
+
+
+# --------------------------------------------------------------------------
+# Cross-report helpers: grouping ledger-entry rows back into vouchers, and
+# parsing Tally's quantity strings.
+# --------------------------------------------------------------------------
+def voucher_key(row) -> str:
+    """A stable per-voucher grouping key from a ledger-entry row (the shape
+    fetch_vouchers()/extract() produce) -- prefers Voucher GUID, then Master
+    ID, falling back to Voucher No + Date + Voucher Type when neither is
+    present (e.g. some fixtures/older exports). Used wherever a report needs
+    to look at a voucher's OTHER ledger entries -- TDS party inference
+    (tds_summary.py) and per-invoice GST breakup (sales_purchase_register.py)."""
+    guid = str(row.get("Voucher GUID") or "").strip()
+    if guid:
+        return f"guid:{guid}"
+    master_id = str(row.get("Master ID") or "").strip()
+    if master_id:
+        return f"mid:{master_id}"
+    return f"vno:{row.get('Voucher No')}|{row.get('Date')}|{row.get('Voucher Type')}"
+
+
+_QTY_PATTERN = re.compile(r"[-+]?\d*\.?\d+")
+
+
+def parse_qty(raw) -> float:
+    """Tally quantity fields are sometimes a plain number, sometimes a
+    string with a unit suffix (e.g. "10 Nos", "-2.5 Kgs" for a return line)
+    -- extracts just the leading numeric magnitude. Returns 0.0 for blank/
+    unparseable values rather than raising, same graceful-degrade principle
+    as every other field parser in this codebase."""
+    if raw is None:
+        return 0.0
+    s = str(raw).strip()
+    if not s:
+        return 0.0
+    m = _QTY_PATTERN.match(s)
+    return float(m.group()) if m else 0.0

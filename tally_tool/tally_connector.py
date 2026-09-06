@@ -61,10 +61,23 @@ Expect to iterate once run against a real, running TallyPrime.
 from __future__ import annotations
 
 import datetime
+import os
+import sys
 import time
 import xml.etree.ElementTree as ET
 
 import requests
+
+# fetch_voucher_register()'s optional GST breakup reuses the same ledger
+# classification gst_summary.py/tds_summary.py already rely on, rather than
+# a second copy of the CGST/SGST/IGST keyword heuristic -- reports/ has no
+# Tally-transport code of its own, so this is a one-directional dependency
+# (connector -> reports), not a cycle. sys.path is set up defensively here
+# (rather than assumed) so this module still imports standalone, e.g. under
+# a bare `python tally_tool/tally_connector.py` or a test that only inserts
+# this file's own directory.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from reports.common import classify_gst_ledger, parse_qty  # noqa: E402
 
 DEFAULT_PORT = 9000
 _TIMEOUT = 15  # seconds -- a local XML request should be fast; don't hang the UI
@@ -447,11 +460,20 @@ def fetch_voucher_register(
     from_date: datetime.date | None,
     to_date: datetime.date | None,
     include_cancelled: bool = False,
+    ledger_master: dict | None = None,
 ) -> list[dict]:
     """voucher_types: exact Tally voucher type names to include, e.g.
     {"Sales"} or {"Purchase"} -- matched against VOUCHERTYPENAME as Tally
     returns it (case-sensitive, since that's what real data showed: "Sales",
-    "Purchase", not lowercased)."""
+    "Purchase", not lowercased).
+
+    `ledger_master` is the {name: {"group": ...}} dict fetch_ledger_master()
+    already returns -- pass it (the caller has it for free from the same
+    pull) to also get a per-voucher CGST/SGST/IGST/UTGST/CESS breakup on
+    every row, computed from the voucher's own ledger entries (already being
+    read here for voucher_total) via the same classify_gst_ledger() heuristic
+    gst_summary.py uses. Omit it (or pass None) to skip the breakup --
+    columns come back all-zero rather than the function failing."""
     if from_date is None or to_date is None:
         # Same Tally quirk as fetch_vouchers() -- confirmed live: no date
         # range means a <CMPINFO> diagnostic instead of an error.
@@ -518,6 +540,9 @@ def fetch_voucher_register(
         )
         if voucher_total == 0.0 and ledger_entries:
             voucher_total = abs(_to_float(_text(ledger_entries[0], "AMOUNT")))
+        gst = _gst_breakup_from_entries(
+            ((_text(e, "LEDGERNAME"), _text(e, "AMOUNT")) for e in ledger_entries), ledger_master
+        )
 
         item_entries = voucher.findall("ALLINVENTORYENTRIES.LIST")
         if item_entries:
@@ -531,10 +556,12 @@ def fetch_voucher_register(
                         "Reference": reference,
                         "Narration": narration,
                         "Stock Item": _text(item, "STOCKITEMNAME"),
+                        "HSN Code": _text(item, "GSTHSNNAME") or _text(item, "HSNCODE"),
                         "Quantity": _text(item, "ACTUALQTY") or _text(item, "BILLEDQTY"),
                         "Rate": _text(item, "RATE"),
                         "Item Amount": abs(_to_float(_text(item, "AMOUNT"))),
                         "Voucher Total": voucher_total,
+                        **gst,
                         "Voucher GUID": guid,
                         "Master ID": master_id,
                     }
@@ -551,12 +578,102 @@ def fetch_voucher_register(
                     "Reference": reference,
                     "Narration": narration,
                     "Stock Item": "",
+                    "HSN Code": "",
                     "Quantity": "",
                     "Rate": "",
                     "Item Amount": voucher_total,
                     "Voucher Total": voucher_total,
+                    **gst,
                     "Voucher GUID": guid,
                     "Master ID": master_id,
                 }
             )
     return rows
+
+
+_GST_TAX_TYPES = ("CGST", "SGST", "IGST", "UTGST", "CESS")
+
+
+def _gst_breakup_from_entries(name_amount_pairs, ledger_master: dict | None) -> dict[str, float]:
+    """Shared by the live fetch_voucher_register() and (mirrored) the
+    file-based extract_register_from_export() -- sums each ledger entry's
+    absolute amount into its GST tax type via classify_gst_ledger(), keyed
+    by the entry's OWN ledger, not by Output/Input direction (a register row
+    is per-invoice; the invoice's own Voucher Type already says which side
+    it's on, so this just answers "how much CGST/SGST/IGST/Cess is on this
+    invoice"). All-zero when ledger_master is None (not requested) or the
+    voucher has no recognisable GST ledger entries."""
+    breakup = {t: 0.0 for t in _GST_TAX_TYPES}
+    if not ledger_master:
+        return breakup
+    for lname, amount in name_amount_pairs:
+        if not lname:
+            continue
+        _direction, tax_type = classify_gst_ledger(lname, ledger_master.get(lname, {}).get("group", ""))
+        if tax_type:
+            breakup[tax_type] += abs(_to_float(amount))
+    return breakup
+
+
+# --------------------------------------------------------------------------
+# Stock items -- opening/closing quantity + value, for the Inventory Closing
+# Stock report (tally_tool/reports/inventory_stock.py). This is the first
+# COLLECTION TYPE used in this file that isn't Ledger/Voucher/Company --
+# TallyPrime's documented schema lists StockItem as a valid collection type,
+# but (same as everywhere else in this file) NOT YET VERIFIED AGAINST A REAL
+# TALLY INSTANCE, and untested collection types carry more risk than a new
+# field on an already-working one. Expect to iterate once run live.
+# --------------------------------------------------------------------------
+def fetch_stock_items(host: str, port: int, company: str | None = None) -> list[dict]:
+    """Returns one row per stock item master: Stock Item, Stock Group, Unit,
+    Opening Qty/Value, and Tally's own Closing Qty/Value (its current-period
+    figures, not necessarily as of any particular date the caller wants --
+    see inventory_stock.py's build_stock_summary() for how the "as of a
+    selected date" closing figure is actually derived)."""
+    request_xml = f"""<ENVELOPE>
+  <HEADER>
+    <VERSION>1</VERSION>
+    <TALLYREQUEST>EXPORT</TALLYREQUEST>
+    <TYPE>COLLECTION</TYPE>
+    <ID>Stock Item Collection</ID>
+  </HEADER>
+  <BODY>
+    <DESC>
+      <STATICVARIABLES>
+        {_static_vars(company, None, None)}
+      </STATICVARIABLES>
+      <TDL>
+        <TDLMESSAGE>
+          <COLLECTION NAME="Stock Item Collection" ISMODIFY="No">
+            <TYPE>StockItem</TYPE>
+            <FETCH>NAME,PARENT,BASEUNITS,OPENINGBALANCE,OPENINGVALUE,CLOSINGBALANCE,CLOSINGVALUE</FETCH>
+          </COLLECTION>
+        </TDLMESSAGE>
+      </TDL>
+    </DESC>
+  </BODY>
+</ENVELOPE>"""
+    root = _post(host, port, request_xml, context="Stock Item Collection request")
+
+    items: list[dict] = []
+    for si in root.iter("STOCKITEM"):
+        name = _text(si, "NAME") or (si.get("NAME") or "").strip()
+        if not name:
+            continue
+        items.append(
+            {
+                "Stock Item": name,
+                "Stock Group": _text(si, "PARENT"),
+                "Unit": _text(si, "BASEUNITS"),
+                # OPENINGBALANCE/CLOSINGBALANCE on a StockItem master are
+                # typically a plain number, but parse_qty() defensively
+                # strips a unit suffix the same way a voucher's ACTUALQTY
+                # sometimes carries one -- avoids a ValueError if a Tally
+                # release/report configuration formats it as "100 Nos".
+                "Opening Qty": parse_qty(_text(si, "OPENINGBALANCE")),
+                "Opening Value": _to_float(_text(si, "OPENINGVALUE")),
+                "Tally Closing Qty": parse_qty(_text(si, "CLOSINGBALANCE")),
+                "Tally Closing Value": _to_float(_text(si, "CLOSINGVALUE")),
+            }
+        )
+    return items

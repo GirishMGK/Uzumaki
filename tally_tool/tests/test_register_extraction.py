@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from reports.sales_purchase_register import extract_register_from_export
+from reports.sales_purchase_register import build_hsn_summary, extract_register_from_export
 
 
 def _sample_json_export() -> dict:
@@ -35,7 +35,7 @@ def _sample_json_export() -> dict:
                     {"ledgername": "Output SGST", "amount": 90},
                 ],
                 "allinventoryentries": [
-                    {"stockitemname": "Widget", "actualqty": "10 Nos", "rate": "100/Nos", "amount": 1000},
+                    {"stockitemname": "Widget", "actualqty": "10 Nos", "rate": "100/Nos", "amount": 1000, "gsthsnname": "8471"},
                 ],
             },
             {
@@ -57,7 +57,7 @@ def _sample_json_export() -> dict:
                     {"ledgername": "Input SGST", "amount": -45},
                 ],
                 "allinventoryentries": [
-                    {"stockitemname": "Gadget", "billedqty": "5 Nos", "rate": "100/Nos", "amount": -500},
+                    {"stockitemname": "Gadget", "billedqty": "5 Nos", "rate": "100/Nos", "amount": -500, "hsncode": "8471"},
                 ],
             },
             {
@@ -174,3 +174,69 @@ def test_extract_register_from_xml_export(tmp_path):
     assert rows[0]["Stock Item"] == "Widget"
     assert rows[0]["Item Amount"] == 1000.0
     assert rows[0]["Voucher Total"] == 1180.0
+
+
+_LEDGER_MASTER = {
+    "Output CGST": {"group": "Duties & Taxes"},
+    "Output SGST": {"group": "Duties & Taxes"},
+    "Input CGST": {"group": "Duties & Taxes"},
+    "Input SGST": {"group": "Duties & Taxes"},
+}
+
+
+def test_extract_sales_register_captures_hsn(tmp_path):
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(_sample_json_export()), encoding="utf-8")
+
+    rows = extract_register_from_export(str(path), {"Sales"})
+    widget_row = next(r for r in rows if r["Stock Item"] == "Widget")
+    assert widget_row["HSN Code"] == "8471"
+
+
+def test_extract_register_gst_breakup_with_ledger_master(tmp_path):
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(_sample_json_export()), encoding="utf-8")
+
+    sales_rows = extract_register_from_export(str(path), {"Sales"}, ledger_master=_LEDGER_MASTER)
+    widget_row = next(r for r in sales_rows if r["Stock Item"] == "Widget")
+    assert widget_row["CGST"] == 90.0
+    assert widget_row["SGST"] == 90.0
+    assert widget_row["IGST"] == 0.0
+
+    purchase_rows = extract_register_from_export(str(path), {"Purchase"}, ledger_master=_LEDGER_MASTER)
+    gadget_row = purchase_rows[0]
+    assert gadget_row["CGST"] == 45.0
+    assert gadget_row["SGST"] == 45.0
+
+
+def test_extract_register_gst_breakup_zero_without_ledger_master(tmp_path):
+    """Graceful degrade: no ledger_master passed -- GST columns come back
+    zero rather than the extraction failing."""
+    path = tmp_path / "export.json"
+    path.write_text(json.dumps(_sample_json_export()), encoding="utf-8")
+
+    rows = extract_register_from_export(str(path), {"Sales"})
+    widget_row = next(r for r in rows if r["Stock Item"] == "Widget")
+    assert widget_row["CGST"] == 0.0
+    assert widget_row["SGST"] == 0.0
+
+
+def test_build_hsn_summary():
+    path_rows = [
+        {"HSN Code": "8471", "Voucher Type": "Sales", "Quantity": "10 Nos", "Item Amount": 1000.0},
+        {"HSN Code": "8471", "Voucher Type": "Sales", "Quantity": "5 Nos", "Item Amount": 500.0},
+        {"HSN Code": "", "Voucher Type": "Sales", "Quantity": "1 Nos", "Item Amount": 50.0},
+    ]
+    import pandas as pd
+    summary = build_hsn_summary(pd.DataFrame(path_rows))
+    assert len(summary) == 1  # the blank-HSN row is excluded
+    row = summary.iloc[0]
+    assert row["HSN Code"] == "8471"
+    assert row["Quantity"] == 15.0
+    assert row["Item Amount"] == 1500.0
+    assert row["Line Count"] == 2
+
+
+def test_build_hsn_summary_empty():
+    import pandas as pd
+    assert build_hsn_summary(pd.DataFrame()).empty

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from .common import classify_tds_ledger, month_label, month_sort_key
+from .common import classify_tds_ledger, month_label, month_sort_key, voucher_key
 
 DETAIL_COLUMNS = [
     "Party (Deductee)", "PAN", "Nature of Payment", "Month", "TDS Amount",
@@ -35,19 +35,6 @@ DETAIL_COLUMNS = [
 ]
 
 _CASH_BANK_KEYWORDS = ("cash", "bank")
-
-
-def _voucher_key(row) -> str:
-    guid = str(row.get("Voucher GUID") or "").strip()
-    if guid:
-        return f"guid:{guid}"
-    master_id = str(row.get("Master ID") or "").strip()
-    if master_id:
-        return f"mid:{master_id}"
-    # Fallback for rows/fixtures without either id -- voucher no + date +
-    # type is not guaranteed unique across a whole company, but is the best
-    # available grouping key when Tally hasn't supplied GUID/Master ID.
-    return f"vno:{row.get('Voucher No')}|{row.get('Date')}|{row.get('Voucher Type')}"
 
 
 def _is_cash_or_bank(name: str, ledger_master: dict) -> bool:
@@ -79,7 +66,7 @@ def build_tds_summary(df: pd.DataFrame, ledger_master: dict) -> pd.DataFrame:
         return pd.DataFrame(columns=DETAIL_COLUMNS)
 
     working = df.copy()
-    working["_voucher_key"] = working.apply(_voucher_key, axis=1)
+    working["_voucher_key"] = working.apply(voucher_key, axis=1)
     voucher_groups = {key: rows for key, rows in working.groupby("_voucher_key")}
 
     tds_rows = working[working["Ledger Name"].isin(tds_ledger_names)].copy()
