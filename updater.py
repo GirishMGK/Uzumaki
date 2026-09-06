@@ -122,7 +122,11 @@ def check_update_status() -> dict:
 
 
 def _write_and_launch_helper(exe_path: str, new_path: str) -> bool:
-    """Spawns the detached swap-and-relaunch helper. Returns True if launched."""
+    """Spawns the detached swap-and-relaunch helper. Returns True if launched.
+
+    Must only be called once the CALLING process is itself the last one with
+    the single-file exe open -- see perform_update_and_restart()'s docstring
+    for why that's the parent (webview) process, not the Streamlit child."""
     if sys.platform.startswith("win"):
         helper = os.path.join(tempfile.gettempdir(), "uzumaki_update.bat")
         with open(helper, "w", encoding="utf-8") as f:
@@ -139,9 +143,22 @@ def _write_and_launch_helper(exe_path: str, new_path: str) -> bool:
                 f'start "" "{exe_path}"\r\n'
                 'del /f /q "%~f0"\r\n'
             )
+        # CREATE_NO_WINDOW + a hidden STARTUPINFO, not just DETACHED_PROCESS:
+        # confirmed live that DETACHED_PROCESS alone still let a console
+        # window flash for the "cmd /c" host on a real machine. Belt-and-
+        # braces here since a flashing console during an update is exactly
+        # the kind of thing that makes a self-updater look broken/unsafe.
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
         subprocess.Popen(
             ["cmd", "/c", helper],
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW
+                | subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+            ),
+            startupinfo=startupinfo,
             close_fds=True,
         )
         return True
@@ -152,6 +169,15 @@ def _write_and_launch_helper(exe_path: str, new_path: str) -> bool:
         os.chmod(exe_path, 0o755)
         subprocess.Popen([exe_path])
         return True
+
+
+def update_sentinel_path(exe_dir: str) -> str:
+    """Where perform_update_and_restart() (running in the headless Streamlit
+    CHILD process) leaves a note for launcher.py's PARENT process saying "an
+    update is staged, please finish it once you're the last one holding the
+    exe file". Shared between updater.py and launcher.py, so it's a function
+    (single source of truth for the path) rather than a duplicated literal."""
+    return os.path.join(exe_dir, "uzumaki_update_pending.flag")
 
 
 def self_update_and_relaunch() -> None:
@@ -184,11 +210,30 @@ def check_for_update() -> None:
 
 
 def perform_update_and_restart(on_progress=None) -> tuple[bool, str]:
-    """In-app path (called from a Streamlit button click, mid-session):
-    download the new exe, hand off to the swap helper, then hard-exit the
-    whole process immediately via os._exit() -- sys.exit() here would only
-    end the current Streamlit script rerun, not the process the helper
-    script needs to see disappear before it can replace the exe.
+    """In-app path (called from a Streamlit button click, mid-session).
+
+    IMPORTANT PROCESS-MODEL GOTCHA (a real bug, found live): this code runs
+    inside the headless Streamlit SERVER process, which launcher.py spawns
+    as a CHILD of the actual parent process that opens the pywebview window
+    (see launcher.py's module docstring -- "WHY A CHILD PROCESS, NOT
+    IN-PROCESS STREAMLIT"). Both processes are the SAME single-file exe.
+    Calling _write_and_launch_helper() + os._exit() right here -- as this
+    function used to -- kills only THIS (child) process; the parent is still
+    running and still has that one exe file open, so the swap helper's
+    delete-then-replace loop can never actually succeed (Windows won't let
+    you delete a file a running process's image is mapped from) and just
+    spins forever waiting for a lock that will never clear, while the
+    parent's window sits on a now-dead connection looking frozen. Confirmed
+    live: a flickering console window and an unresponsive app that needed a
+    manual close/reopen -- exactly this.
+
+    The fix: this process can only ever be the CHILD, so it must not try to
+    do the swap itself. Instead it downloads the new exe and leaves a
+    sentinel file (update_sentinel_path()) naming it, then exits -- and
+    launcher.py's parent-process loop, which already watches for this child
+    dying, notices the sentinel and performs the actual swap-and-relaunch
+    once its own webview window has closed and it is genuinely the last
+    process holding the exe.
 
     `on_progress(bytes_downloaded, total_bytes)`, if given, is called as the
     download streams in (see _download()) -- lets the caller show a real
@@ -209,5 +254,6 @@ def perform_update_and_restart(on_progress=None) -> tuple[bool, str]:
     if not _download(_EXE_URL, new_path, on_progress=on_progress):
         return False, "Download failed — check your internet connection and try again."
 
-    _write_and_launch_helper(exe_path, new_path)
+    with open(update_sentinel_path(exe_dir), "w", encoding="utf-8") as f:
+        f.write(new_path)
     os._exit(0)  # noqa: SLF001 -- deliberate hard exit, see module docstring

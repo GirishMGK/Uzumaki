@@ -1088,3 +1088,111 @@ def test_spec_disables_upx_and_embeds_version_metadata():
     assert os.path.exists(os.path.join(REPO_ROOT, "version_info.txt")), (
         "version_info.txt is referenced by Uzumaki.spec but missing from the repo"
     )
+
+
+def test_perform_update_and_restart_stages_a_sentinel_instead_of_swapping_itself(
+    monkeypatch, tmp_path
+):
+    """Regression guard for a real bug found live: the app is actually TWO
+    processes -- a parent that owns the pywebview window, and a headless
+    Streamlit child it spawns (see launcher.py's module docstring). The
+    in-app "Download & Restart" button runs inside Home.py, i.e. the CHILD.
+    The old code had that process spawn the swap-and-relaunch helper AND
+    hard-exit itself -- but the exe is one shared file, and the PARENT was
+    still running and still had it open, so the helper's delete-then-replace
+    loop could never succeed and just spun forever, while the parent's
+    window sat frozen on a now-dead connection. Confirmed live: a flickering
+    console window and an unresponsive app needing a manual close/reopen.
+
+    perform_update_and_restart() must not touch the swap helper at all --
+    only write a sentinel file naming the downloaded exe, for launcher.py's
+    parent process to act on once it's the last one standing."""
+    import updater as up
+
+    exe_path = tmp_path / "Uzumaki.exe"
+    exe_path.write_bytes(b"old exe")
+
+    monkeypatch.setattr(up.sys, "executable", str(exe_path))
+    monkeypatch.setattr(up, "is_frozen", lambda: True)
+    monkeypatch.setattr(up, "_download", lambda url, dest, on_progress=None: True)
+
+    helper_calls = []
+    monkeypatch.setattr(up, "_write_and_launch_helper", lambda *a: helper_calls.append(a))
+
+    class _StopExit(BaseException):
+        pass
+
+    def _fake_exit(code):
+        raise _StopExit()
+
+    monkeypatch.setattr(up.os, "_exit", _fake_exit)
+
+    with pytest.raises(_StopExit):
+        up.perform_update_and_restart()
+
+    # The child must NOT have tried to perform the swap itself.
+    assert helper_calls == []
+
+    sentinel = up.update_sentinel_path(str(tmp_path))
+    assert os.path.exists(sentinel)
+    with open(sentinel, encoding="utf-8") as f:
+        staged_new_path = f.read().strip()
+    assert staged_new_path == str(tmp_path / "Uzumaki_new.exe")
+
+
+def test_launcher_finishes_a_staged_update_once_it_is_the_last_process(monkeypatch, tmp_path):
+    """Companion to the test above: launcher.py's parent process, once its
+    own webview window has closed, must notice the sentinel
+    perform_update_and_restart() left and THEN perform the actual
+    swap-and-relaunch -- since by that point it really is the last process
+    holding the exe file open."""
+    import launcher as lch
+
+    exe_path = tmp_path / "Uzumaki.exe"
+    exe_path.write_bytes(b"old exe")
+    new_path = tmp_path / "Uzumaki_new.exe"
+    new_path.write_bytes(b"new exe")
+
+    sentinel = lch.update_sentinel_path(str(tmp_path))
+    with open(sentinel, "w", encoding="utf-8") as f:
+        f.write(str(new_path))
+
+    monkeypatch.setattr(lch.sys, "executable", str(exe_path))
+    helper_calls = []
+    monkeypatch.setattr(lch, "_write_and_launch_helper", lambda *a: helper_calls.append(a))
+
+    lch._finish_pending_update()
+
+    assert helper_calls == [(str(exe_path), str(new_path))]
+    assert not os.path.exists(sentinel)  # consumed, not left behind
+
+
+def test_launcher_does_nothing_when_no_update_is_staged(monkeypatch, tmp_path):
+    """The common case (no update pending): _finish_pending_update() must be
+    a no-op, not e.g. crash on a missing sentinel file or call the swap
+    helper with garbage."""
+    import launcher as lch
+
+    exe_path = tmp_path / "Uzumaki.exe"
+    exe_path.write_bytes(b"old exe")
+    monkeypatch.setattr(lch.sys, "executable", str(exe_path))
+    helper_calls = []
+    monkeypatch.setattr(lch, "_write_and_launch_helper", lambda *a: helper_calls.append(a))
+
+    lch._finish_pending_update()  # sentinel doesn't exist -- must not raise
+
+    assert helper_calls == []
+
+
+def test_update_swap_helper_hides_its_console_window_on_windows():
+    """Regression guard for a real bug found live: the swap-and-relaunch
+    helper (a "cmd /c <script>.bat") flashed a visible console window during
+    an update even with DETACHED_PROCESS set -- confirmed live on a real
+    Windows machine that flag alone isn't reliable for suppressing a console
+    host for a spawned cmd.exe. CREATE_NO_WINDOW + a hidden STARTUPINFO is
+    the combination that actually works."""
+    src = open(os.path.join(REPO_ROOT, "updater.py"), encoding="utf-8").read()
+    helper_src = src.split("def _write_and_launch_helper")[1].split("def ")[0]
+    assert "CREATE_NO_WINDOW" in helper_src
+    assert "STARTUPINFO" in helper_src
+    assert "SW_HIDE" in helper_src
