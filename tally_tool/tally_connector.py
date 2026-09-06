@@ -109,21 +109,32 @@ def _describe_parse_error(text: str, exc: ET.ParseError) -> str:
     this replaced was, in practice, useless for diagnosing a second/third
     unescaped character further into the document than the first one already
     fixed: nobody can spot one bad character in half a million characters of
-    XML by eye. exc.position is 1-indexed (line, column); reconstruct that
-    offset in `text` and show a short window of context around it."""
+    XML by eye.
+
+    exc.position is (line, column) with line 1-indexed and column 0-indexed
+    (confirmed directly against Python's own ElementTree/expat -- NOT
+    documented clearly anywhere), and importantly column points at the exact
+    character expat was looking at when it gave up -- confirmed directly too,
+    since for a broken/unterminated entity reference like "&cd</X>" expat
+    reports the column of the "<" that ended the failed entity-name scan, not
+    the "&" that started it. str(exc) itself (e.g. "not well-formed (invalid
+    token)" vs "mismatched tag" vs "duplicate attribute") is included too --
+    the earlier version of this function dropped it, which matters: those are
+    different failure categories requiring different fixes, and previously
+    there was no way to tell which one a report was even hitting."""
     line, col = exc.position
     lines = text.split("\n")
     if 0 < line <= len(lines):
         bad_line = lines[line - 1]
-        start = max(0, col - 60)
-        end = min(len(bad_line), col + 60)
+        start = max(0, col - 80)
+        end = min(len(bad_line), col + 80)
         snippet = bad_line[start:end]
         pointer_col = col - start
         return (
-            f"at line {line}, column {col}. Context: {snippet!r} "
-            f"(the problem is around character {pointer_col} of that snippet)"
+            f"{exc}. Context: {snippet!r} -- the exact character expat stopped at is "
+            f"{bad_line[col:col + 1]!r}, at position {pointer_col} of that snippet"
         )
-    return f"at line {line}, column {col} (full response is {len(text)} chars)"
+    return f"{exc} (full response is {len(text)} chars)"
 
 
 class TallyConnectionError(RuntimeError):
