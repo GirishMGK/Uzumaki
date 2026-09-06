@@ -66,6 +66,7 @@ import urllib.error
 import urllib.request
 
 from updater import base_dir, check_for_update  # noqa: F401 -- base_dir kept for tests
+from updater import _write_and_launch_helper, update_sentinel_path
 
 _SERVER_ONLY_ENV = "UZUMAKI_SERVER_ONLY"
 _PORT_ENV = "UZUMAKI_PORT"
@@ -166,7 +167,17 @@ def _wait_for_server(port: int, proc: subprocess.Popen, timeout: float = _HEALTH
 def run_desktop_app() -> None:
     """Parent-process path: spawn the headless server child, wait for it,
     then open the native window pointing at it. Blocks in webview.start()
-    for the life of the app; terminates the child once the window closes."""
+    for the life of the app; terminates the child once the window closes.
+
+    Also owns finishing an in-app self-update (see updater.perform_update_
+    and_restart()'s docstring for the process-model bug this fixes): that
+    function runs in the CHILD and can only ever stage the download and
+    exit itself, since it isn't the process actually holding the shared
+    exe file open. This function is the one that IS, so once its own
+    webview window has closed (whether the user closed it normally, or our
+    watcher thread below force-closed it because the child exited on its
+    own to hand off an update), it checks for a staged update and performs
+    the actual swap-and-relaunch here, as the last process standing."""
     port = find_free_port()
     server = _spawn_server_child(port)
 
@@ -177,21 +188,65 @@ def run_desktop_app() -> None:
             "Try relaunching — if this keeps happening, run from a terminal to see the error."
         )
 
+    import threading
+
     import webview
 
-    webview.create_window(
+    window = webview.create_window(
         "Uzumaki",
         f"http://127.0.0.1:{port}",
         width=1400, height=900, min_size=(900, 600),
     )
+
+    def _watch_child() -> None:
+        # The child normally only ever exits when this function's own
+        # `finally` below terminates it (the user closed the window). If it
+        # exits on its OWN first, that's either a crash or -- far more
+        # commonly -- perform_update_and_restart() deliberately ending
+        # itself to hand off a staged update. Either way the window is now
+        # pointing at a dead connection with nothing left to show, so force
+        # it closed instead of leaving the user staring at a frozen page.
+        server.wait()
+        try:
+            window.destroy()
+        except Exception:
+            pass  # window may already be gone (normal-close race) -- fine
+
+    threading.Thread(target=_watch_child, daemon=True).start()
+
     try:
         webview.start()
     finally:
-        server.terminate()
-        try:
-            server.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            server.kill()
+        if server.poll() is None:
+            server.terminate()
+            try:
+                server.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                server.kill()
+
+    _finish_pending_update()
+
+
+def _finish_pending_update() -> None:
+    """Called once webview.start() has returned (the window is closed) and
+    the child server is confirmed gone -- i.e. this process is now the only
+    one that could still be holding the shared exe file open. Factored out
+    of run_desktop_app() itself so it's testable without a real webview
+    window or a live child process: it just reads a sentinel file and, if
+    present, hands off to the swap helper -- see updater.perform_update_
+    and_restart()'s docstring for why the swap can't happen any earlier or
+    in any other process."""
+    exe_path = os.path.abspath(sys.executable)
+    sentinel = update_sentinel_path(os.path.dirname(exe_path))
+    if not os.path.exists(sentinel):
+        return
+    with open(sentinel, encoding="utf-8") as f:
+        new_path = f.read().strip()
+    try:
+        os.remove(sentinel)
+    except OSError:
+        pass
+    _write_and_launch_helper(exe_path, new_path)
 
 
 def _report_fatal_startup_error(exc: BaseException) -> None:

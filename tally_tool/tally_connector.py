@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -81,6 +82,72 @@ from reports.common import classify_gst_ledger, parse_qty  # noqa: E402
 
 DEFAULT_PORT = 9000
 _TIMEOUT = 15  # seconds -- a local XML request should be fast; don't hang the UI
+
+# Confirmed on a real Tally instance: Tally's XML server does NOT escape a
+# bare "&" in field values. It's not just the occasional oddly-named ledger
+# either -- "Duties & Taxes" and "Loans & Advances (Asset)" are two of
+# Tally's own STOCK/DEFAULT group names, so they show up as the <PARENT> of
+# large numbers of perfectly ordinary GST/loan ledgers. A short "List of
+# Companies" response can dodge hitting any "&" by luck; a full Ledger
+# Collection pulling every ledger in the books essentially never does.
+# Repair only bare "&" that ISN'T already the start of a valid entity/char
+# reference, so any already-correct escaping is left alone.
+_BARE_AMPERSAND_RE = re.compile(r"&(?!amp;|lt;|gt;|apos;|quot;|#\d+;|#x[0-9a-fA-F]+;)")
+
+# Also seen live: a bare "<" inside a text value (e.g. a narration like
+# "value < 1000") is equally invalid XML, but much rarer -- and much riskier
+# to "fix" blindly, since a real "<" is also how every legitimate tag starts.
+# Only treat it as a stray literal when it's NOT followed by what a real tag
+# could start with (a name char, "/" for a closing tag, "!" for a comment/
+# CDATA, or "?" for a processing instruction) -- otherwise leave it alone.
+_BARE_LT_RE = re.compile(r"<(?![a-zA-Z_/!?])")
+
+# Tally has also been seen emitting stray ASCII control characters (other
+# than tab/newline/carriage-return) inside text fields, which are simply
+# illegal in XML 1.0 and cause the same parse failure -- stripped rather
+# than escaped, since there's no valid XML representation for them anyway.
+_ILLEGAL_XML_CHARS_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_tally_xml(text: str) -> str:
+    text = _BARE_AMPERSAND_RE.sub("&amp;", text)
+    text = _BARE_LT_RE.sub("&lt;", text)
+    text = _ILLEGAL_XML_CHARS_RE.sub("", text)
+    return text
+
+
+def _describe_parse_error(text: str, exc: ET.ParseError) -> str:
+    """Pinpoints the actual invalid token instead of dumping the entire
+    (often 500KB+) response -- confirmed live that the full-response dump
+    this replaced was, in practice, useless for diagnosing a second/third
+    unescaped character further into the document than the first one already
+    fixed: nobody can spot one bad character in half a million characters of
+    XML by eye.
+
+    exc.position is (line, column) with line 1-indexed and column 0-indexed
+    (confirmed directly against Python's own ElementTree/expat -- NOT
+    documented clearly anywhere), and importantly column points at the exact
+    character expat was looking at when it gave up -- confirmed directly too,
+    since for a broken/unterminated entity reference like "&cd</X>" expat
+    reports the column of the "<" that ended the failed entity-name scan, not
+    the "&" that started it. str(exc) itself (e.g. "not well-formed (invalid
+    token)" vs "mismatched tag" vs "duplicate attribute") is included too --
+    the earlier version of this function dropped it, which matters: those are
+    different failure categories requiring different fixes, and previously
+    there was no way to tell which one a report was even hitting."""
+    line, col = exc.position
+    lines = text.split("\n")
+    if 0 < line <= len(lines):
+        bad_line = lines[line - 1]
+        start = max(0, col - 80)
+        end = min(len(bad_line), col + 80)
+        snippet = bad_line[start:end]
+        pointer_col = col - start
+        return (
+            f"{exc}. Context: {snippet!r} -- the exact character expat stopped at is "
+            f"{bad_line[col:col + 1]!r}, at position {pointer_col} of that snippet"
+        )
+    return f"{exc} (full response is {len(text)} chars)"
 
 
 class TallyConnectionError(RuntimeError):
@@ -122,13 +189,16 @@ def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Eleme
     if not text:
         raise TallyConnectionError(f"Tally returned an empty response for the {context}.")
 
+    sanitized = _sanitize_tally_xml(text)
     try:
-        root = ET.fromstring(text)
+        root = ET.fromstring(sanitized)
     except ET.ParseError as exc:
         raise TallyConnectionError(
-            f"Tally's response for the {context} wasn't valid XML -- it may have "
-            f"returned an error page or a truncated response instead. Response "
-            f"headers: {dict(resp.headers)!r}. Full response ({len(text)} chars): {text!r}"
+            f"Tally's response for the {context} wasn't valid XML even after repairing "
+            f"unescaped '&'/'<' and stripping illegal control characters -- "
+            f"{_describe_parse_error(sanitized, exc)}. This is a new/different malformed "
+            f"character than the ones already handled; report the context snippet above "
+            f"so it can be fixed too. Response headers: {dict(resp.headers)!r}."
         ) from exc
 
     # Confirmed on a real Tally instance: a request Tally doesn't fully

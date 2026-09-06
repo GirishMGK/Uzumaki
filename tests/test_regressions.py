@@ -545,6 +545,122 @@ def test_tally_connector_retries_once_then_succeeds(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_tally_connector_repairs_ampersands_across_a_large_multi_occurrence_response(monkeypatch):
+    """Regression guard for a real bug found live right after shipping the
+    single-ampersand fix: the first fix was verified against one bad ledger
+    name, but a real Ledger Collection pull has hundreds of ledgers under
+    Tally's own default "Duties & Taxes" group (virtually every GST ledger),
+    so the same unescaped "&" repeats throughout a 600KB+ response. Confirms
+    the sanitizer isn't a one-shot fix that only catches the first
+    occurrence."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    ledgers = "".join(
+        f'<LEDGER NAME="GST Ledger {i}"><NAME>GST Ledger {i}</NAME>'
+        f"<PARENT>Duties & Taxes</PARENT><OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>"
+        for i in range(200)
+    )
+    big_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>"
+        f"<BODY><DATA><COLLECTION>{ledgers}</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = big_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    master = tc.fetch_ledger_master("h", 1)
+    assert len(master) == 200
+    assert all(v["group"] == "Duties & Taxes" for v in master.values())
+
+
+def test_tally_connector_parse_error_pinpoints_the_bad_text_not_a_full_dump(monkeypatch):
+    """Regression guard for a real usability bug found live: when a response
+    is still malformed after sanitizing (a genuinely new/unhandled bad
+    character), the error used to dump the ENTIRE response -- unusable at
+    600KB+, since nobody can spot one bad character by eye in half a million
+    characters shown in a UI error box. The error must instead point at the
+    exact line/column and show a short surrounding snippet."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    # An embedded literal quote inside an attribute value -- genuinely
+    # ambiguous to auto-repair, so it should still raise, but with a short,
+    # precise diagnostic instead of the whole response.
+    broken_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><BODY><DATA><COLLECTION>"
+        '<LEDGER NAME="Deal "Special" Account"><NAME>Deal "Special" Account</NAME>'
+        "<PARENT>Sundry Debtors</PARENT></LEDGER>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = broken_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    with pytest.raises(tc.TallyConnectionError) as exc_info:
+        tc.fetch_ledger_master("h", 1)
+    message = str(exc_info.value)
+    assert "line" in message and "column" in message
+    assert "Deal" in message  # the short context snippet, not the whole response
+    assert len(message) < 1000  # nowhere near a full 600KB+ dump
+    # Regression guard for a second real gap found live: the error used to
+    # drop expat's own exception message (e.g. "not well-formed (invalid
+    # token)" vs "mismatched tag" vs "duplicate attribute") entirely -- with
+    # no way to tell which distinct failure category a report was even
+    # hitting. That text, and the single exact character expat stopped at,
+    # must both be present.
+    assert "not well-formed" in message or "token" in message
+    assert "exact character" in message
+
+
+def test_tally_connector_repairs_unescaped_ampersands(monkeypatch):
+    """Regression guard for a real bug found live: Tally's XML server does
+    NOT escape a bare "&" in field values -- its own default "Profit & Loss
+    A/c" ledger comes back as literal, invalid XML ("...A/c</NAME>...").
+    ET.fromstring() rejected the whole response with "not well-formed
+    (invalid token)" -- easy to miss on a short "List of Companies" response,
+    near-certain on a full Ledger Collection pull with hundreds of ledgers.
+    Bare "&" must be repaired to "&amp;" before parsing, without touching
+    already-valid escapes."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    bad_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER>"
+        "<BODY><DATA><COLLECTION>"
+        '<LEDGER NAME="Profit & Loss A/c"><NAME>Profit & Loss A/c</NAME>'
+        "<PARENT>Primary</PARENT><OPENINGBALANCE>0</OPENINGBALANCE></LEDGER>"
+        '<LEDGER NAME="R &amp; D Expenses"><NAME>R &amp; D Expenses</NAME>'
+        "<PARENT>Indirect Expenses</PARENT><OPENINGBALANCE>1000</OPENINGBALANCE></LEDGER>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = bad_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    master = tc.fetch_ledger_master("h", 1)
+    assert master["Profit & Loss A/c"]["group"] == "Primary"
+    assert master["R & D Expenses"]["opening_balance"] == 1000.0
+
+
 def test_tally_connector_treats_cmpinfo_fallback_as_a_failure(monkeypatch):
     """Regression guard for a real bug found live: Tally can return valid,
     parseable XML that is nonetheless the wrong thing -- its <CMPINFO>
@@ -958,3 +1074,132 @@ def test_sidebar_stays_fully_opaque_during_reruns():
     assert 'opacity: 1 !important' in src
     sidebar_opacity_rule = src.split('[data-testid="stSidebar"],')[1].split("}")[0]
     assert "opacity: 1 !important" in sidebar_opacity_rule
+
+
+# ── Uzumaki.spec: Windows Defender/SmartScreen false-positive mitigations ──
+def test_spec_disables_upx_and_embeds_version_metadata():
+    """
+    UPX-compressed executables are disproportionately flagged by Windows
+    Defender/AV heuristics (malware also uses UPX to evade signature
+    scanning), and an .exe with no version/company/product metadata at all
+    is another small signal those heuristics weigh. Neither alone clears a
+    SmartScreen warning (only code-signing + download reputation do that),
+    but both are free, no-cost reductions in false-positive risk -- guard
+    against them silently regressing back to upx=True / no version resource.
+    """
+    src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    assert "upx=False" in src, "Uzumaki.spec must not re-enable UPX -- see Defender false-positive note"
+    assert 'version=os.path.join(ROOT, "version_info.txt")' in src, (
+        "Uzumaki.spec must embed version_info.txt as the EXE's version resource"
+    )
+    assert os.path.exists(os.path.join(REPO_ROOT, "version_info.txt")), (
+        "version_info.txt is referenced by Uzumaki.spec but missing from the repo"
+    )
+
+
+def test_perform_update_and_restart_stages_a_sentinel_instead_of_swapping_itself(
+    monkeypatch, tmp_path
+):
+    """Regression guard for a real bug found live: the app is actually TWO
+    processes -- a parent that owns the pywebview window, and a headless
+    Streamlit child it spawns (see launcher.py's module docstring). The
+    in-app "Download & Restart" button runs inside Home.py, i.e. the CHILD.
+    The old code had that process spawn the swap-and-relaunch helper AND
+    hard-exit itself -- but the exe is one shared file, and the PARENT was
+    still running and still had it open, so the helper's delete-then-replace
+    loop could never succeed and just spun forever, while the parent's
+    window sat frozen on a now-dead connection. Confirmed live: a flickering
+    console window and an unresponsive app needing a manual close/reopen.
+
+    perform_update_and_restart() must not touch the swap helper at all --
+    only write a sentinel file naming the downloaded exe, for launcher.py's
+    parent process to act on once it's the last one standing."""
+    import updater as up
+
+    exe_path = tmp_path / "Uzumaki.exe"
+    exe_path.write_bytes(b"old exe")
+
+    monkeypatch.setattr(up.sys, "executable", str(exe_path))
+    monkeypatch.setattr(up, "is_frozen", lambda: True)
+    monkeypatch.setattr(up, "_download", lambda url, dest, on_progress=None: True)
+
+    helper_calls = []
+    monkeypatch.setattr(up, "_write_and_launch_helper", lambda *a: helper_calls.append(a))
+
+    class _StopExit(BaseException):
+        pass
+
+    def _fake_exit(code):
+        raise _StopExit()
+
+    monkeypatch.setattr(up.os, "_exit", _fake_exit)
+
+    with pytest.raises(_StopExit):
+        up.perform_update_and_restart()
+
+    # The child must NOT have tried to perform the swap itself.
+    assert helper_calls == []
+
+    sentinel = up.update_sentinel_path(str(tmp_path))
+    assert os.path.exists(sentinel)
+    with open(sentinel, encoding="utf-8") as f:
+        staged_new_path = f.read().strip()
+    assert staged_new_path == str(tmp_path / "Uzumaki_new.exe")
+
+
+def test_launcher_finishes_a_staged_update_once_it_is_the_last_process(monkeypatch, tmp_path):
+    """Companion to the test above: launcher.py's parent process, once its
+    own webview window has closed, must notice the sentinel
+    perform_update_and_restart() left and THEN perform the actual
+    swap-and-relaunch -- since by that point it really is the last process
+    holding the exe file open."""
+    import launcher as lch
+
+    exe_path = tmp_path / "Uzumaki.exe"
+    exe_path.write_bytes(b"old exe")
+    new_path = tmp_path / "Uzumaki_new.exe"
+    new_path.write_bytes(b"new exe")
+
+    sentinel = lch.update_sentinel_path(str(tmp_path))
+    with open(sentinel, "w", encoding="utf-8") as f:
+        f.write(str(new_path))
+
+    monkeypatch.setattr(lch.sys, "executable", str(exe_path))
+    helper_calls = []
+    monkeypatch.setattr(lch, "_write_and_launch_helper", lambda *a: helper_calls.append(a))
+
+    lch._finish_pending_update()
+
+    assert helper_calls == [(str(exe_path), str(new_path))]
+    assert not os.path.exists(sentinel)  # consumed, not left behind
+
+
+def test_launcher_does_nothing_when_no_update_is_staged(monkeypatch, tmp_path):
+    """The common case (no update pending): _finish_pending_update() must be
+    a no-op, not e.g. crash on a missing sentinel file or call the swap
+    helper with garbage."""
+    import launcher as lch
+
+    exe_path = tmp_path / "Uzumaki.exe"
+    exe_path.write_bytes(b"old exe")
+    monkeypatch.setattr(lch.sys, "executable", str(exe_path))
+    helper_calls = []
+    monkeypatch.setattr(lch, "_write_and_launch_helper", lambda *a: helper_calls.append(a))
+
+    lch._finish_pending_update()  # sentinel doesn't exist -- must not raise
+
+    assert helper_calls == []
+
+
+def test_update_swap_helper_hides_its_console_window_on_windows():
+    """Regression guard for a real bug found live: the swap-and-relaunch
+    helper (a "cmd /c <script>.bat") flashed a visible console window during
+    an update even with DETACHED_PROCESS set -- confirmed live on a real
+    Windows machine that flag alone isn't reliable for suppressing a console
+    host for a spawned cmd.exe. CREATE_NO_WINDOW + a hidden STARTUPINFO is
+    the combination that actually works."""
+    src = open(os.path.join(REPO_ROOT, "updater.py"), encoding="utf-8").read()
+    helper_src = src.split("def _write_and_launch_helper")[1].split("def ")[0]
+    assert "CREATE_NO_WINDOW" in helper_src
+    assert "STARTUPINFO" in helper_src
+    assert "SW_HIDE" in helper_src
