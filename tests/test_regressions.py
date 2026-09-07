@@ -545,6 +545,70 @@ def test_tally_connector_retries_once_then_succeeds(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_tally_connector_strips_numeric_char_refs_to_illegal_codepoints(monkeypatch):
+    """Regression guard for a real bug found live, and a THIRD distinct shape
+    of the same underlying problem: a "wasn't valid XML" failure whose exact
+    diagnosis (from the improved error message shipped for this exact
+    purpose) read "reference to invalid character number ... the exact
+    character expat stopped at is '&'". Tally emitted a properly-formed
+    numeric character reference like "&#3;" -- syntactically valid XML
+    entity syntax, which _BARE_AMPERSAND_RE deliberately leaves alone as
+    "already escaped" -- but referencing a codepoint (a C0 control char)
+    that XML itself forbids regardless of how it's spelled. Confirmed
+    directly against Python's own expat: a raw embedded control BYTE at that
+    same codepoint parses fine, but a "&#N;" reference to it does not --
+    _ILLEGAL_XML_CHARS_RE (which only matches raw bytes) can't catch this."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    broken_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><BODY><DATA><COLLECTION>"
+        '<LEDGER NAME="X"><NAME>X</NAME><PARENT TYPE="String">&#3; Primary</PARENT>'
+        "<OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = broken_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    master = tc.fetch_ledger_master("h", 1)
+    assert master["X"]["group"] == "Primary"
+
+
+def test_tally_connector_preserves_legitimate_numeric_char_refs(monkeypatch):
+    """Companion to the test above: a numeric reference to a LEGAL codepoint
+    -- e.g. "&#8377;" for the Rupee sign, plausible in real ledger names --
+    must be left completely untouched, not stripped alongside the illegal
+    ones."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+
+    response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><BODY><DATA><COLLECTION>"
+        '<LEDGER NAME="Y"><NAME>Cash &#8377;</NAME><PARENT>Primary</PARENT>'
+        "<OPENINGBALANCE>0.00</OPENINGBALANCE></LEDGER>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    master = tc.fetch_ledger_master("h", 1)
+    assert "Cash ₹" in master
+
+
 def test_tally_connector_repairs_ampersands_across_a_large_multi_occurrence_response(monkeypatch):
     """Regression guard for a real bug found live right after shipping the
     single-ampersand fix: the first fix was verified against one bad ledger
