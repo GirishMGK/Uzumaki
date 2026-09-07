@@ -95,8 +95,44 @@ _BARE_LT_RE = re.compile(r"<(?![a-zA-Z_/!?])")
 # than escaped, since there's no valid XML representation for them anyway.
 _ILLEGAL_XML_CHARS_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
+# Confirmed live -- a THIRD distinct shape of the same underlying problem:
+# Tally can emit a properly-formed *numeric character reference* (e.g.
+# "&#3;") whose target codepoint is one XML itself forbids (the same C0
+# control set _ILLEGAL_XML_CHARS_RE strips when it shows up as a raw byte).
+# _BARE_AMPERSAND_RE deliberately leaves "&#123;"/"&#x7B;" alone because
+# that syntax LOOKS like an already-valid reference -- and usually is (e.g.
+# "&#8377;" for the Rupee sign) -- but expat rejects the reference itself
+# with "reference to invalid character number" when the codepoint isn't a
+# legal XML Char, and neither of the fixes above touches it, since neither
+# the "&" nor any single character in "#123;" is itself illegal. Confirmed
+# directly against Python's own expat: a raw 0x95 byte parses fine, but a
+# "&#149;" reference to that exact same codepoint does not -- these two
+# rules are NOT equivalent and both are needed.
+_NUMERIC_CHAR_REF_RE = re.compile(r"&#(\d+);|&#[xX]([0-9a-fA-F]+);")
+
+
+def _is_illegal_xml_codepoint(cp: int) -> bool:
+    return (
+        cp == 0
+        or (0x1 <= cp <= 0x8)
+        or cp in (0xB, 0xC)
+        or (0xE <= cp <= 0x1F)
+        or (0xD800 <= cp <= 0xDFFF)
+        or cp in (0xFFFE, 0xFFFF)
+        or cp > 0x10FFFF
+    )
+
+
+def _strip_illegal_numeric_char_refs(text: str) -> str:
+    def _repl(m: re.Match) -> str:
+        cp = int(m.group(1)) if m.group(1) is not None else int(m.group(2), 16)
+        return "" if _is_illegal_xml_codepoint(cp) else m.group(0)
+
+    return _NUMERIC_CHAR_REF_RE.sub(_repl, text)
+
 
 def _sanitize_tally_xml(text: str) -> str:
+    text = _strip_illegal_numeric_char_refs(text)
     text = _BARE_AMPERSAND_RE.sub("&amp;", text)
     text = _BARE_LT_RE.sub("&lt;", text)
     text = _ILLEGAL_XML_CHARS_RE.sub("", text)
