@@ -50,6 +50,7 @@ An Excel workbook with two sheets:
 - **Transactions** — one row per ledger entry: Ledger Name, Ledger Group,
   Date, Voucher Type, Voucher No, Reference, Party Ledger, Narration, Debit,
   Credit, Opening Balance, Running Balance (+ Dr/Cr label), Bill Reference,
+  Cost Centre (blank if cost centres aren't enabled for the company),
   Voucher GUID, Master ID.
 - **Ledger Summary** — one row per ledger: Group, Opening Balance, Total
   Debit, Total Credit, Closing Balance, Transaction Count. Use this to tie

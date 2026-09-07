@@ -36,7 +36,8 @@ WHAT THIS SCRIPT DOES
    Voucher's ledger entries (date, voucher type/no., debit, credit, narration...).
 4. Builds one flat table: one row per ledger entry, with a running balance
    computed per ledger (Opening Balance + cumulative Debit - Credit), sorted
-   by ledger name then date.
+   by ledger name then date. Captures Cost Centre allocations alongside Bill
+   Reference when the company has cost centres enabled (blank otherwise).
 5. Writes an Excel workbook (or CSV) with:
      - "Transactions" sheet: the flat table
      - "Ledger Summary" sheet: opening / total debit / total credit / closing
@@ -215,6 +216,12 @@ def extract(utf8_path: str):
                     signed_amt = clean_num(e.get("amount"))
                     bills = e.get("billallocations") or []
                     bill_ref = "; ".join(clean_str(b.get("name")) for b in bills if b.get("name"))
+                    # Same "; "-joined convention as Bill Reference -- empty
+                    # when cost centres aren't enabled for this company/ledger
+                    # (the export simply omits/empties the list, same as
+                    # billallocations on a ledger with no bill tracking).
+                    cost_centres = e.get("costcentreallocations") or []
+                    cost_centre = "; ".join(clean_str(c.get("name")) for c in cost_centres if c.get("name"))
 
                     seq += 1
                     entry_count += 1
@@ -230,6 +237,7 @@ def extract(utf8_path: str):
                             "Debit": -signed_amt if signed_amt < 0 else 0.0,
                             "Credit": signed_amt if signed_amt > 0 else 0.0,
                             "Bill Reference": bill_ref,
+                            "Cost Centre": cost_centre,
                             "Cancelled": is_cancelled,
                             "Optional": is_optional,
                             "Voucher GUID": guid,
@@ -318,6 +326,12 @@ def extract_xml(utf8_path: str):
                     clean_str(_text(b, "NAME")) for b in e.findall("BILLALLOCATIONS.LIST")
                     if _text(b, "NAME")
                 )
+                # Same graceful degrade as the JSON path -- empty when cost
+                # centres aren't enabled for this company/ledger.
+                cost_centre = "; ".join(
+                    clean_str(_text(c, "NAME")) for c in e.findall("COSTCENTREALLOCATIONS.LIST")
+                    if _text(c, "NAME")
+                )
 
                 seq += 1
                 entry_count += 1
@@ -333,6 +347,7 @@ def extract_xml(utf8_path: str):
                         "Debit": -signed_amt if signed_amt < 0 else 0.0,
                         "Credit": signed_amt if signed_amt > 0 else 0.0,
                         "Bill Reference": bill_ref,
+                        "Cost Centre": cost_centre,
                         "Cancelled": is_cancelled,
                         "Optional": is_optional,
                         "Voucher GUID": guid,
@@ -452,7 +467,7 @@ def build_tables(ledger_master: dict, rows: list, include_cancelled: bool,
         "Ledger Name", "Ledger Group", "Date", "Voucher Type", "Voucher No",
         "Reference", "Party Ledger", "Narration", "Debit", "Credit",
         "Opening Balance", "Running Balance", "Running Balance (Dr/Cr)",
-        "Bill Reference", "Voucher GUID", "Master ID",
+        "Bill Reference", "Cost Centre", "Voucher GUID", "Master ID",
     ]
     if include_cancelled:
         ordered_cols += ["Cancelled", "Optional"]
