@@ -298,9 +298,9 @@ def test_firm_rms_page_calls_real_functions():
 
 # ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────
 def test_tally_page_calls_real_functions():
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     for fn in ["ensure_utf8(", "extract_any(", "build_tables(", "write_output("]:
-        assert fn in src, f"_pages/tally_extractions.py no longer calls {fn} — the tool may be disconnected"
+        assert fn in src, f"_pages/tally_hub.py no longer calls {fn} — the tool may be disconnected"
 
 
 def _tally_fixture():
@@ -391,7 +391,7 @@ def test_tally_extractor_include_cancelled_flag(tmp_path):
 
 
 def test_tally_page_offers_live_connect():
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     assert "tally_connector" in src
     assert "pull_from_tally(" in src
 
@@ -607,9 +607,57 @@ def test_tally_page_defaults_to_current_financial_year_not_a_26_year_span():
     Tally to genuinely take longer than the (then 15s, now still bounded)
     request timeout on any company with real transaction history. Defaults
     should cover one financial year, not multiple decades."""
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     assert "datetime.date(2000, 1, 1)" not in src
     assert "_current_fy_start(" in src
+
+
+def test_tally_hub_page_renders_without_exception():
+    """Regression guard for a real bug found live: a botched merge-conflict
+    resolution left a stale, superseded "Sales/Purchase Register" tab block
+    behind in the (now-consolidated) Tally extraction page, referencing an
+    undefined `tab_register` variable and using pd/io without importing
+    them -- NameError on every single load of that page in the shipped
+    .exe. Only a real render (not a source-text grep) catches this class of
+    bug. Also guards the six-pages-into-one consolidation (see
+    test_tally_pages_are_consolidated_into_one_hub_page below): every
+    activity tab must still actually render."""
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"))
+    at.run(timeout=20)
+    assert not at.exception
+
+
+def test_tally_pages_are_consolidated_into_one_hub_page():
+    """Regression guard for a real user request: six separate Tally sidebar
+    pages (Extraction, Sales & Purchase Register, GST Summary, TDS Summary,
+    Bank Reconciliation, Inventory Closing Stock), each with its own
+    "connect to Tally" block, meant connecting once didn't carry over to
+    the next activity -- every page required reconnecting from scratch.
+    Consolidated into one page (_pages/tally_hub.py) with ONE connection
+    picker shared by every activity tab below it; the six old standalone
+    pages were removed rather than left as unreachable dead code."""
+    for old_file in [
+        "tally_extractions.py", "tally_registers.py", "tally_gst_summary.py",
+        "tally_tds_summary.py", "tally_bank_recon.py", "tally_inventory.py",
+    ]:
+        assert not os.path.exists(os.path.join(REPO_ROOT, "_pages", old_file)), (
+            f"_pages/{old_file} should have been removed -- its activity now "
+            "lives as a tab in the consolidated _pages/tally_hub.py"
+        )
+
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert '"_pages/tally_hub.py"' in home_src
+    assert home_src.count('"_pages/tally_') == 1  # exactly one Tally nav entry, not six
+
+    hub_src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
+    # One shared connection picker call, used by every activity below it.
+    assert hub_src.count("render_connection_picker(") == 1
+    for activity in ["Extraction", "Register", "GST", "TDS", "Bank Recon", "Inventory"]:
+        assert activity.split()[0].lower() in hub_src.lower()
+
 
 
 def test_tally_connector_strips_numeric_char_refs_to_illegal_codepoints(monkeypatch):
@@ -897,7 +945,7 @@ def test_tally_live_tab_defaults_to_a_populated_date_range():
     enough to trip Tally's request timeout, confirmed live. This test now
     only guards the original concern (populated, not None), not the exact
     literal value."""
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     assert "value=_current_fy_start()" in src
     assert "value=datetime.date.today()" in src
 
@@ -910,12 +958,16 @@ def test_tally_date_pickers_pin_explicit_min_max():
     to select any recent date (confirmed live: 'From date' rendered in an
     invalid/red state at today's actual date). Every date_input on this page
     must pin explicit, wide min_value/max_value so the default value chosen
-    for UX can't shrink the usable range."""
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    for UX can't shrink the usable range -- consolidated into one shared
+    `_DATE_KW` dict (format + min_value=1990 + max_value=2100) that every
+    date_input on the page spreads in, rather than repeating the bounds
+    inline at each call site."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     n = src.count("st.date_input(")
     assert n >= 4
-    assert src.count("min_value=datetime.date(1990, 1, 1)") == n
-    assert src.count("max_value=datetime.date(2100, 1, 1)") == n
+    assert 'min_value=datetime.date(1990, 1, 1)' in src
+    assert 'max_value=datetime.date(2100, 1, 1)' in src
+    assert src.count("**_DATE_KW") == n
 
 
 def _tally_xml_fixture() -> str:
@@ -985,7 +1037,7 @@ def test_tally_extractor_xml_matches_json_extractor(tmp_path):
 
 
 def test_tally_page_accepts_xml_uploads():
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     assert '"xml"' in src
     assert "extract_any(" in src
 
@@ -1110,16 +1162,18 @@ def test_tally_register_filters_by_voucher_type_and_excludes_cancelled(monkeypat
 
 
 def test_tally_page_has_register_tab():
-    """The Sales & Purchase Register moved out of tally_extractions.py into
-    its own page (_pages/tally_registers.py) so that page could stop
-    accumulating tabs -- this guard now checks the register lives somewhere
-    reachable in the hub rather than assuming the original file."""
-    src = open(os.path.join(REPO_ROOT, "_pages", "tally_registers.py"), encoding="utf-8").read()
+    """The Sales & Purchase Register originally moved out of
+    tally_extractions.py into its own page (_pages/tally_registers.py), then
+    both were folded back together into the consolidated _pages/tally_hub.py
+    (see test_tally_pages_are_consolidated_into_one_hub_page) -- this guard
+    now checks the register activity lives in the hub rather than assuming
+    either of those now-removed standalone files."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     assert "fetch_voucher_register(" in src
     assert "Sales & Purchase Register" in src
 
     home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
-    assert "_pages/tally_registers.py" in home_src
+    assert "_pages/tally_hub.py" in home_src
 
 
 def test_home_page_offers_in_app_update_check():
