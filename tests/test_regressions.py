@@ -612,6 +612,42 @@ def test_tally_page_defaults_to_current_financial_year_not_a_26_year_span():
     assert "_current_fy_start(" in src
 
 
+def test_tally_extraction_page_renders_without_exception():
+    """Regression guard for a real bug found live: a botched merge-conflict
+    resolution left a stale, superseded "Sales/Purchase Register" tab block
+    behind in this file (the feature had already been moved to its own page,
+    _pages/tally_registers.py, in an earlier PR) referencing an undefined
+    `tab_register` variable and using pd/io without importing them --
+    NameError on every single load of this page in the shipped .exe. Only a
+    real render (not a source-text grep) catches this class of bug."""
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"))
+    at.run(timeout=15)
+    assert not at.exception
+
+
+@pytest.mark.parametrize("page", [
+    "tally_registers.py",
+    "tally_gst_summary.py",
+    "tally_tds_summary.py",
+    "tally_bank_recon.py",
+    "tally_inventory.py",
+])
+def test_other_tally_pages_render_without_exception(page):
+    """Companion to the guard above: cheap insurance against the same class
+    of bug (a stale/broken reference surviving a merge) recurring on any of
+    the other Tally sidebar pages -- none of them had an actual render
+    check before, only source-text assertions that can't catch a NameError."""
+    pytest.importorskip("streamlit")
+    from streamlit.testing.v1 import AppTest
+
+    at = AppTest.from_file(os.path.join(REPO_ROOT, "_pages", page))
+    at.run(timeout=15)
+    assert not at.exception
+
+
 def test_tally_connector_strips_numeric_char_refs_to_illegal_codepoints(monkeypatch):
     """Regression guard for a real bug found live, and a THIRD distinct shape
     of the same underlying problem: a "wasn't valid XML" failure whose exact
