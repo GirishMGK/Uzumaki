@@ -545,6 +545,73 @@ def test_tally_connector_retries_once_then_succeeds(monkeypatch):
     assert calls["n"] == 2
 
 
+def test_tally_connector_does_not_retry_a_timeout(monkeypatch):
+    """Regression guard for a real bug found live: "Pull from Tally" over a
+    wide date range failed with "did not respond in time" -- the request
+    was genuinely still slow, not flaky, so the existing blind retry-once
+    logic would have silently DOUBLED an already-long wait (e.g. 300s ->
+    600s) instead of failing promptly with an actionable message. A timeout
+    specifically must raise immediately, with no retry."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+    import requests as req
+
+    calls = {"n": 0}
+
+    def _fake_post(url, **kwargs):
+        calls["n"] += 1
+        raise req.exceptions.Timeout()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    with pytest.raises(tc.TallyTimeoutError):
+        tc._post("h", 1, "<x/>", context="test")
+    assert calls["n"] == 1  # not retried
+
+
+def test_tally_connector_uses_a_long_timeout_for_voucher_and_register_pulls(monkeypatch):
+    """Regression guard for a real bug found live: the flat 15s timeout used
+    for every request (including a wide-date-range Voucher Collection pull)
+    made a genuinely slow-but-working Tally query fail with "did not
+    respond in time" -- a quick company/ledger metadata request and a
+    date-range-driven voucher pull are not the same kind of request and
+    must not share the same short timeout."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+    import datetime as dt
+
+    seen_timeouts = []
+
+    def _fake_post(url, **kwargs):
+        seen_timeouts.append(kwargs.get("timeout"))
+        class _FakeResp:
+            status_code = 200
+            headers = {}
+            text = "<ENVELOPE><DATA><COLLECTION></COLLECTION></DATA></ENVELOPE>"
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+
+    tc.fetch_vouchers("h", 1, None, dt.date(2025, 4, 1), dt.date(2026, 3, 31))
+    tc.fetch_voucher_register(
+        "h", 1, None, {"Sales"}, dt.date(2025, 4, 1), dt.date(2026, 3, 31)
+    )
+    assert seen_timeouts == [tc._LONG_TIMEOUT, tc._LONG_TIMEOUT]
+
+
+def test_tally_page_defaults_to_current_financial_year_not_a_26_year_span():
+    """Regression guard for a real bug found live: the live-pull date
+    pickers defaulted "From date" to 2000-01-01, so a routine "Pull from
+    Tally" click queried a 26-year span by default -- easily enough for
+    Tally to genuinely take longer than the (then 15s, now still bounded)
+    request timeout on any company with real transaction history. Defaults
+    should cover one financial year, not multiple decades."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
+    assert "datetime.date(2000, 1, 1)" not in src
+    assert "_current_fy_start(" in src
+
+
 def test_tally_connector_strips_numeric_char_refs_to_illegal_codepoints(monkeypatch):
     """Regression guard for a real bug found live, and a THIRD distinct shape
     of the same underlying problem: a "wasn't valid XML" failure whose exact
@@ -822,9 +889,16 @@ def test_tally_connector_fetches_ledger_entry_sub_list():
 def test_tally_live_tab_defaults_to_a_populated_date_range():
     """Regression guard for the same bug at the UI layer: the date pickers
     must not default to None, or every live pull hits the same Tally
-    diagnostic-fallback bug by default."""
+    diagnostic-fallback bug by default.
+
+    The specific default was later changed (see
+    test_tally_page_defaults_to_current_financial_year_not_a_26_year_span):
+    2000-01-01 -- a 26-year span -- made a routine pull genuinely slow
+    enough to trip Tally's request timeout, confirmed live. This test now
+    only guards the original concern (populated, not None), not the exact
+    literal value."""
     src = open(os.path.join(REPO_ROOT, "_pages", "tally_extractions.py"), encoding="utf-8").read()
-    assert "value=datetime.date(2000, 1, 1)" in src
+    assert "value=_current_fy_start()" in src
     assert "value=datetime.date.today()" in src
 
 

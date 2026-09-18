@@ -81,7 +81,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from reports.common import classify_gst_ledger, parse_qty  # noqa: E402
 
 DEFAULT_PORT = 9000
-_TIMEOUT = 15  # seconds -- a local XML request should be fast; don't hang the UI
+_TIMEOUT = 15  # seconds -- a quick metadata request (company/ledger list) should be fast; don't hang the UI
+# Voucher/register pulls are fundamentally different: their size is driven by
+# the caller's date range, not a fixed small master list, so 15s is nowhere
+# near enough for anything beyond a narrow window. Confirmed live: "Pull from
+# Tally" with a wide date range (the date pickers' own default was a 26-year
+# span -- see tally_extractions.py) failed with "did not respond in time"
+# even though Tally was working correctly, just still computing the answer.
+_LONG_TIMEOUT = 300  # seconds -- wide date-range voucher/register pulls
 
 # Confirmed on a real Tally instance: Tally's XML server does NOT escape a
 # bare "&" in field values. It's not just the occasional oddly-named ledger
@@ -190,7 +197,18 @@ class TallyConnectionError(RuntimeError):
     """Raised for anything that stops us reaching/using the Tally XML server."""
 
 
-def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Element:
+class TallyTimeoutError(TallyConnectionError):
+    """A specific TallyConnectionError for a request that simply took too
+    long. Kept distinct from the base class so _post()'s retry-once logic
+    (for genuinely flaky, fast-failing responses) can skip retrying THIS
+    failure mode -- a request that already took the full `timeout` to fail
+    is, unlike a malformed-response or CMPINFO-fallback failure, extremely
+    likely to take just as long again. Blindly retrying it would silently
+    double the wait (e.g. 300s -> 600s) instead of failing promptly with an
+    actionable message."""
+
+
+def _post_once(host: str, port: int, xml_request: str, context: str, timeout: int = _TIMEOUT) -> ET.Element:
     url = f"http://{host}:{port}"
     try:
         resp = requests.post(
@@ -207,7 +225,7 @@ def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Eleme
                 # plain-request behavior exactly avoids it.
                 "Accept-Encoding": "identity",
             },
-            timeout=_TIMEOUT,
+            timeout=timeout,
         )
     except requests.exceptions.ConnectionError as exc:
         raise TallyConnectionError(
@@ -216,7 +234,12 @@ def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Eleme
             "Configuration -> Enable ODBC/XML Server)."
         ) from exc
     except requests.exceptions.Timeout as exc:
-        raise TallyConnectionError(f"Tally at {url} did not respond in time.") from exc
+        raise TallyTimeoutError(
+            f"Tally at {url} did not respond within {timeout}s for the {context}. "
+            "A very wide date range (or a company with a huge number of vouchers) can "
+            "genuinely take Tally this long to compute -- try narrowing the date range "
+            "(e.g. one financial year at a time) if this keeps happening."
+        ) from exc
 
     if resp.status_code != 200:
         raise TallyConnectionError(f"Tally returned HTTP {resp.status_code} for the {context}.")
@@ -261,11 +284,15 @@ def _post_once(host: str, port: int, xml_request: str, context: str) -> ET.Eleme
     return root
 
 
-def _post(host: str, port: int, xml_request: str, context: str = "request") -> ET.Element:
+def _post(host: str, port: int, xml_request: str, context: str = "request", timeout: int = _TIMEOUT) -> ET.Element:
     """`context` names which request this is (e.g. "Ledger Collection") purely
     for error messages -- fetch_ledger_master() and fetch_vouchers() share
     this helper, and a plain "wasn't valid XML" message alone doesn't say
     which of the two calls in a single pull_from_tally() actually failed.
+
+    `timeout` defaults to the quick-metadata-request value; voucher/register
+    pulls pass _LONG_TIMEOUT explicitly since their size is driven by the
+    caller's date range, not a small fixed master list.
 
     Retries once after a short pause on either failure mode seen live against
     a real Tally instance (a malformed/truncated response, or the silent
@@ -273,12 +300,19 @@ def _post(host: str, port: int, xml_request: str, context: str = "request") -> E
     otherwise byte-identical request can fail through this code on one
     attempt and succeed immediately after via a fresh curl call moments
     later, consistent with occasional flakiness in Tally's embedded HTTP
-    server rather than anything wrong with the request itself."""
+    server rather than anything wrong with the request itself.
+
+    Does NOT retry a TallyTimeoutError specifically -- see that class's
+    docstring: a request that already took the full timeout to fail is
+    overwhelmingly likely to take just as long again, so retrying would
+    silently double an already-long wait instead of failing promptly."""
     try:
-        return _post_once(host, port, xml_request, context)
+        return _post_once(host, port, xml_request, context, timeout=timeout)
+    except TallyTimeoutError:
+        raise
     except TallyConnectionError:
         time.sleep(1.0)
-        return _post_once(host, port, xml_request, context)
+        return _post_once(host, port, xml_request, context, timeout=timeout)
 
 
 def test_connection(host: str, port: int = DEFAULT_PORT) -> tuple[bool, str]:
@@ -459,7 +493,7 @@ def fetch_vouchers(
     </DESC>
   </BODY>
 </ENVELOPE>"""
-    root = _post(host, port, request_xml, context="Voucher Collection request")
+    root = _post(host, port, request_xml, context="Voucher Collection request", timeout=_LONG_TIMEOUT)
 
     rows: list[dict] = []
     seq = 0
@@ -616,7 +650,7 @@ def fetch_voucher_register(
     </DESC>
   </BODY>
 </ENVELOPE>"""
-    root = _post(host, port, request_xml, context="Voucher Register request")
+    root = _post(host, port, request_xml, context="Voucher Register request", timeout=_LONG_TIMEOUT)
 
     rows: list[dict] = []
     for voucher in root.iter("VOUCHER"):
