@@ -48,6 +48,18 @@ page_header(
 )
 
 
+def _current_fy_start(today: datetime.date | None = None) -> datetime.date:
+    """Start of the current Indian financial year (1 April) as a sane
+    default for the live-pull date pickers -- previously hardcoded to
+    2000-01-01, a 26-year span that made a routine "Pull from Tally"
+    genuinely take Tally long enough to trip the request timeout (confirmed
+    live). Most audit/statutory work is done one FY at a time anyway; a
+    26-year default served nobody and actively broke the common case."""
+    today = today or datetime.date.today()
+    year = today.year if today.month >= 4 else today.year - 1
+    return datetime.date(year, 4, 1)
+
+
 def _render_results(df, summary, tmpdir):
     out_path = os.path.join(tmpdir, "tally_extract.xlsx")
     write_output(df, summary, out_path, "xlsx")
@@ -170,15 +182,16 @@ with tab_live:
     st.caption(
         "Both dates are required for a live pull — confirmed against a real Tally instance: "
         "without an explicit date range, Tally's XML server silently returns a diagnostic "
-        "summary instead of voucher data rather than an error. Defaults below cover a wide "
-        "range; narrow them to your actual period."
+        "summary instead of voucher data rather than an error. Defaults below cover the "
+        "current financial year — a very wide range can genuinely take Tally minutes to "
+        "compute and may time out; pull one financial year at a time if you need more history."
     )
     c1, c2, c3 = st.columns(3)
     with c1:
         include_cancelled_l = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_live")
     with c2:
         from_date_l = st.date_input(
-            "From date", value=datetime.date(2000, 1, 1), format="YYYY-MM-DD", key="fd_live",
+            "From date", value=_current_fy_start(), format="YYYY-MM-DD", key="fd_live",
             min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
         )
     with c3:
@@ -222,6 +235,110 @@ with tab_live:
                 st.stop()
 
             _render_results(df, summary, tmpdir)
+
+# ── Tab 3: Sales / Purchase Register (item-wise, live pull) ────────────────
+with tab_register:
+    st.caption(
+        "Item-wise Sales/Purchase register pulled live from Tally — same XML/HTTP "
+        "interface as the Connect tab above, so the same setup applies: Tally open "
+        "locally, ODBC/XML Server enabled, both dates required."
+    )
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        host_r = st.text_input("Tally host", value="localhost", key="host_reg")
+    with c2:
+        port_r = st.number_input(
+            "Port", value=tally_connector.DEFAULT_PORT, min_value=1, max_value=65535, step=1, key="port_reg"
+        )
+
+    if "tally_companies_reg" not in st.session_state:
+        st.session_state.tally_companies_reg = []
+
+    if st.button("Test Connection", key="test_reg"):
+        with st.spinner("Contacting Tally…"):
+            ok, message = tally_connector.test_connection(host_r, int(port_r))
+        if ok:
+            st.success(message)
+            try:
+                st.session_state.tally_companies_reg = tally_connector.list_companies(host_r, int(port_r))
+            except tally_connector.TallyConnectionError:
+                st.session_state.tally_companies_reg = []
+        else:
+            st.error(message)
+            st.session_state.tally_companies_reg = []
+
+    if st.session_state.tally_companies_reg:
+        company_r = st.selectbox("Company", st.session_state.tally_companies_reg, key="company_sel_reg")
+    else:
+        company_r = st.text_input(
+            "Company name (optional — leave blank to use whichever company is currently open)",
+            key="company_manual_reg",
+        ) or None
+
+    register_type = st.radio("Register", ["Sales", "Purchase"], horizontal=True, key="register_type")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        include_cancelled_r = st.checkbox("Include cancelled/optional vouchers", value=False, key="ic_reg")
+    with c2:
+        from_date_r = st.date_input(
+            "From date", value=_current_fy_start(), format="YYYY-MM-DD", key="fd_reg",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
+    with c3:
+        to_date_r = st.date_input(
+            "To date", value=datetime.date.today(), format="YYYY-MM-DD", key="td_reg",
+            min_value=datetime.date(1990, 1, 1), max_value=datetime.date(2100, 1, 1),
+        )
+
+    if st.button(f"Pull {register_type} Register", type="primary", key="pull_reg"):
+        try:
+            with st.spinner(f"Pulling {register_type} vouchers from Tally…"):
+                rows = tally_connector.fetch_voucher_register(
+                    host_r, int(port_r), company_r, {register_type},
+                    from_date_r if isinstance(from_date_r, datetime.date) else None,
+                    to_date_r if isinstance(to_date_r, datetime.date) else None,
+                    include_cancelled=include_cancelled_r,
+                )
+        except tally_connector.TallyConnectionError as e:
+            st.error(str(e))
+            st.stop()
+        except Exception as e:
+            st.error(f"Pull failed: {e}")
+            st.stop()
+
+        if not rows:
+            st.warning(f"No {register_type} vouchers found in this date range/company.")
+            st.stop()
+
+        df_reg = pd.DataFrame(rows)
+        unique_vouchers = df_reg.drop_duplicates(subset=["Voucher No", "Voucher GUID"])
+        total_value = unique_vouchers["Voucher Total"].sum()
+
+        st.divider()
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Vouchers", len(unique_vouchers))
+        k2.metric("Item lines", len(df_reg))
+        k3.metric(f"Total {register_type} value", f"{total_value:,.2f}")
+
+        st.dataframe(df_reg.head(500), use_container_width=True, hide_index=True)
+        if len(df_reg) > 500:
+            st.caption(f"Showing first 500 of {len(df_reg):,} rows — download the workbook for the full data.")
+
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            df_reg.to_excel(writer, sheet_name=f"{register_type} Register", index=False)
+            voucher_summary = unique_vouchers[
+                ["Date", "Voucher Type", "Voucher No", "Party Ledger", "Reference", "Voucher Total"]
+            ]
+            voucher_summary.to_excel(writer, sheet_name="Voucher Summary", index=False)
+        st.download_button(
+            f"⬇ Download {register_type} Register workbook",
+            buf.getvalue(),
+            file_name=f"tally_{register_type.lower()}_register.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 with st.expander("What this does"):
     st.markdown(
