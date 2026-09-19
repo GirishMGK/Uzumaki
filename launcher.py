@@ -192,6 +192,17 @@ def run_desktop_app() -> None:
 
     import webview
 
+    # Real bug reported live: every "⬇ Download ..." button across the app
+    # (workbook exports throughout the Tally hub, redaction/PDF tools, etc.)
+    # silently did nothing in the packaged .exe -- no error, no save dialog,
+    # nothing. Root cause: pywebview defaults ALLOW_DOWNLOADS to False, so
+    # its embedded WebView2 window swallows the browser-side download click
+    # st.download_button() triggers, instead of showing the native Save As
+    # dialog a real browser tab would. This has nothing to do with Streamlit
+    # or any individual download button -- it's a window-level setting that
+    # must be set before the window is created.
+    webview.settings["ALLOW_DOWNLOADS"] = True
+
     window = webview.create_window(
         "Uzumaki",
         f"http://127.0.0.1:{port}",
