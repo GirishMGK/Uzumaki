@@ -174,6 +174,12 @@ _TOOLS = [
                 "closing stock without reconnecting for each one.",
     },
     {
+        "group": "Statutory & Payroll",
+        "icon": "📑", "title": "Lease Terms Summary", "tag": "Streamlit",
+        "desc": "Upload a lease agreement — extracts key terms (editable) and computes lease-expense "
+                "recognition under IGAAP (AS 19, straight-line) and Ind AS 116 (ROU asset/lease liability).",
+    },
+    {
         "group": "Workforce & Scheduling",
         "icon": "🧑‍💼", "title": "HRM", "tag": "FastAPI (in-process)",
         "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
@@ -204,13 +210,13 @@ def _dep_status() -> list[tuple[str, bool]]:
 # ── landing page ───────────────────────────────────────────────────────────────
 def home():
     st.markdown(
-        """
+        f"""
         <div class="sa-hero">
             <h1>🧰 Uzumaki — Tools</h1>
             <p>A unified workspace for loan-audit, statutory-compliance, and document-processing
             tools — everything runs locally, nothing is uploaded to a server you don't control.</p>
             <div class="sa-badges">
-                <span class="sa-badge">9 tools</span>
+                <span class="sa-badge">{len(_TOOLS)} tools</span>
                 <span class="sa-badge">Local-only processing</span>
                 <span class="sa-badge">One app — one .exe</span>
             </div>
@@ -276,6 +282,7 @@ nav = st.navigation(
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
             st.Page("_pages/tally_hub.py", title="Tally", icon="📒"),
+            st.Page("_pages/lease_summary.py", title="Lease Terms Summary", icon="📑"),
             st.Page("_pages/hrm.py", title="HRM", icon="🧑‍💼"),
         ],
     }
