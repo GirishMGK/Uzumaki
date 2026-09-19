@@ -27,11 +27,6 @@ class Settings(BaseSettings):
 
     cors_origins: list[str] = ["http://localhost:5173", "http://localhost:3000"]
 
-    # "Check for updates" (desktop app) reads this repo's GitHub Releases —
-    # see app/api/v1/updates.py. A fork that re-brands the app can point
-    # this at its own repo via RMS_UPDATE_CHECK_REPO.
-    update_check_repo: str = "GirishMGK/Manpower-Tracker"
-
     # When set, app.main serves the built SPA (frontend/dist by default) from
     # this directory as a single process — used by the PyInstaller desktop
     # build (see desktop/launcher.py). Unset in normal dev/docker deployments,
@@ -62,10 +57,6 @@ class Settings(BaseSettings):
     default_max_days_single_client: int = 120
     default_article_secondment_cap: int = 2
     default_article_secondment_months_cap: int = 12
-    # R25 CONCURRENT_CLIENT_CAP (Manpower Allocation tab): how many distinct
-    # clients one staff member may be concurrently booked to at the same time.
-    default_max_concurrent_clients_article: int = 3
-    default_max_concurrent_clients_ca: int = 4
 
 
 @lru_cache

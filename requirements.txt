@@ -49,9 +49,3 @@ apscheduler
 rapidfuzz
 reportlab
 email-validator
-# Newly required by firm_rms_tool/backend/app/api/v1/updates.py (a Firm-RMS-
-# specific "check for updates" feature added upstream) -- imported at module
-# level, so this must be an explicit, real dependency here, not something
-# that merely happened to already be importable transitively via another
-# package in some environments.
-httpx

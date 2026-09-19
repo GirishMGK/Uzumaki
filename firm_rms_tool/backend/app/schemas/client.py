@@ -2,15 +2,7 @@ import uuid
 
 from pydantic import BaseModel
 
-from app.models.enums import (
-    AcceptanceStatus,
-    ClientPriority,
-    EntityClass,
-    PracticingFirm,
-    RelationshipStatus,
-    RiskRating,
-    ServiceType,
-)
+from app.models.enums import AcceptanceStatus, EntityClass, RelationshipStatus, RiskRating
 
 
 class ClientBase(BaseModel):
@@ -38,11 +30,6 @@ class ClientBase(BaseModel):
     acceptance_date: str | None = None
     continuance_due_date: str | None = None
     relationship_partner_id: uuid.UUID | None = None
-    is_listed: bool = False
-    priority: ClientPriority = ClientPriority.MEDIUM
-    is_mnc: bool = False
-    practicing_firm: PracticingFirm | None = None
-    primary_service_type: ServiceType | None = None
 
 
 class ClientCreate(ClientBase):

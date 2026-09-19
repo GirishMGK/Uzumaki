@@ -8,7 +8,6 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1 import api_router
 from app.core.config import get_settings
-from app.core.version import get_app_version
 from app.jobs import capacity_job, digest_job
 
 settings = get_settings()
@@ -28,7 +27,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Firm RMS API",
     description="Resource Management System for a multi-office CA firm.",
-    version=get_app_version(),
+    version="0.1.0",
     lifespan=lifespan,
 )
 
@@ -45,7 +44,7 @@ app.include_router(api_router)
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "app": settings.app_name, "environment": settings.environment, "version": get_app_version()}
+    return {"status": "ok", "app": settings.app_name, "environment": settings.environment}
 
 
 # Optional single-process mode: when RMS_STATIC_DIR points at a built
