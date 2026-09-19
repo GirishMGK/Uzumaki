@@ -47,10 +47,58 @@ normalize_period = _normalize_period
 # st.file_uploader has no "select a whole folder" mode -- browsers don't
 # expose that on a plain file input. This app runs as a local desktop app
 # (see launcher.py), so instead of working around the browser we use a real
-# native OS folder-picker dialog (tkinter, already used the same way by
-# redaction_tool/main.py and form26as_tool/form26as/gui.py) and walk the
-# chosen folder ourselves -- picking up every PDF, at any nesting depth,
-# whether it's a loose file or packed inside a ZIP found along the way.
+# native OS folder-picker dialog and walk the chosen folder ourselves --
+# picking up every PDF, at any nesting depth, whether it's a loose file or
+# packed inside a ZIP found along the way.
+#
+# On Windows (the only platform this ships packaged for -- see
+# .github/workflows/build-exe.yml's windows-latest runner) this shells out
+# to PowerShell's built-in System.Windows.Forms.FolderBrowserDialog instead
+# of using tkinter. tkinter was tried first and reproduced live in the
+# packaged .exe: "Can't find a usable init.tcl" -- PyInstaller's automatic
+# tkinter hook didn't bundle a working Tcl/Tk runtime for this build
+# environment. PowerShell + .NET's WinForms ship with every Windows
+# install, so there's nothing to bundle and nothing that can go missing
+# from the frozen build. tkinter is kept only as a best-effort fallback for
+# running from source on Linux/macOS during development.
+
+def _pick_folder() -> str | None:
+    """Opens a native folder-picker dialog, returns the chosen path or None
+    if the user cancelled / no dialog could be shown."""
+    if sys.platform.startswith("win"):
+        ps_script = (
+            "Add-Type -AssemblyName System.Windows.Forms;"
+            "$f = New-Object System.Windows.Forms.FolderBrowserDialog;"
+            "$f.Description = 'Select a folder';"
+            "if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) "
+            "{ Write-Output $f.SelectedPath }"
+        )
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps_script],
+                capture_output=True, text=True, timeout=180,
+            )
+            return result.stdout.strip() or None
+        except Exception as e:
+            st.error(f"Couldn't open a folder picker here ({e}). "
+                     "Use the file uploader instead, or zip the folder and upload the ZIP.")
+            return None
+    else:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            folder = filedialog.askdirectory(title="Select a folder")
+            root.destroy()
+            return folder or None
+        except Exception as e:
+            st.error(f"Couldn't open a folder picker here ({e}). "
+                     "Use the file uploader instead, or zip the folder and upload the ZIP.")
+            return None
+
 
 def _pick_folder_files(extensions=(".pdf",)):
     """Opens a native folder-picker dialog and returns [(filename, bytes), ...]
@@ -58,18 +106,7 @@ def _pick_folder_files(extensions=(".pdf",)):
     including matching files inside any ZIPs encountered there. Returns []
     if the user cancels, or if there's no display to show a dialog on
     (e.g. running headless/from source on a server)."""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        folder = filedialog.askdirectory(title="Select a folder")
-        root.destroy()
-    except Exception as e:
-        st.error(f"Couldn't open a folder picker here ({e}). "
-                 "Use the file uploader instead, or zip the folder and upload the ZIP.")
-        return []
+    folder = _pick_folder()
     if not folder:
         return []
 
