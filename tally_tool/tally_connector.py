@@ -151,8 +151,30 @@ def _strip_illegal_numeric_char_refs(text: str) -> str:
     return _NUMERIC_CHAR_REF_RE.sub(_repl, text)
 
 
+# Confirmed live -- a FOURTH distinct shape of the same underlying problem:
+# Tally's own User Defined Fields (UDFs, an end-user customisation feature)
+# come back as tags like "<UDF:_UDF_788531506.LIST ...>", using an XML
+# namespace prefix ("UDF:") that's never declared anywhere in the response
+# via an "xmlns:UDF=...". Python's XML parser IS namespace-aware by default
+# and rejects any prefixed tag name whose prefix isn't bound, with "unbound
+# prefix" -- distinct from every failure mode handled above (nothing in
+# "<UDF:_UDF_788531506.LIST" is individually an illegal character; the tag
+# NAME itself is the problem). Since nothing here reads UDF fields anyway,
+# the fix is simply to stop the tag name from looking like a namespaced
+# name at all: replace the colon in "<TAG:name" / "</TAG:name" with an
+# underscore, wherever it appears right after an opening "<" or "</" (never
+# inside attribute values, e.g. an ISO datetime or URL containing ":",
+# since the match requires that exact position).
+_UNBOUND_PREFIX_TAG_RE = re.compile(r"(</?)([A-Za-z_][\w.]*):([A-Za-z_][\w.]*)")
+
+
+def _defuse_unbound_namespace_prefixes(text: str) -> str:
+    return _UNBOUND_PREFIX_TAG_RE.sub(r"\1\2_\3", text)
+
+
 def _sanitize_tally_xml(text: str) -> str:
     text = _strip_illegal_numeric_char_refs(text)
+    text = _defuse_unbound_namespace_prefixes(text)
     text = _BARE_AMPERSAND_RE.sub("&amp;", text)
     text = _BARE_LT_RE.sub("&lt;", text)
     text = _ILLEGAL_XML_CHARS_RE.sub("", text)

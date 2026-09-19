@@ -660,6 +660,46 @@ def test_tally_pages_are_consolidated_into_one_hub_page():
 
 
 
+def test_tally_connector_defuses_unbound_namespace_prefixes(monkeypatch):
+    """Regression guard for a real bug found live, and a FOURTH distinct
+    shape of the same underlying problem: "unbound prefix: line 101628,
+    column 5 ... the exact character expat stopped at is '<'". Tally's own
+    User Defined Fields (UDFs) come back as tags like
+    "<UDF:_UDF_788531506.LIST ...>" -- a namespace-prefixed tag name with
+    no "xmlns:UDF=..." declared anywhere, which Python's namespace-aware
+    XML parser rejects outright. Nothing here reads UDF fields, so the fix
+    just stops the tag name from looking like a namespaced name at all."""
+    sys.path.insert(0, os.path.join(REPO_ROOT, "tally_tool"))
+    import tally_connector as tc
+    import datetime as dt
+
+    broken_response = (
+        "<ENVELOPE><HEADER><VERSION>1</VERSION></HEADER><BODY><DATA><COLLECTION>"
+        "<VOUCHER><DATE>20260410</DATE><VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>"
+        "<VOUCHERNUMBER>P/001</VOUCHERNUMBER>"
+        '<UDF:_UDF_788531506.LIST DESC="" ISLIST="YES" TYPE="String" INDEX="2353">'
+        "<UDF:_UDF_788531506>Some custom value</UDF:_UDF_788531506>"
+        "</UDF:_UDF_788531506.LIST>"
+        "<ALLLEDGERENTRIES.LIST><LEDGERNAME>Cash</LEDGERNAME><AMOUNT>-1000</AMOUNT></ALLLEDGERENTRIES.LIST>"
+        "</VOUCHER>"
+        "</COLLECTION></DATA></BODY></ENVELOPE>"
+    )
+
+    def _fake_post(url, **kwargs):
+        class _FakeResp:
+            status_code = 200
+            text = broken_response
+            headers = {}
+        return _FakeResp()
+
+    monkeypatch.setattr(tc.requests, "post", _fake_post)
+    monkeypatch.setattr(tc.time, "sleep", lambda *_: None)
+    rows = tc.fetch_vouchers("h", 1, None, dt.date(2025, 4, 1), dt.date(2026, 3, 31))
+    assert len(rows) == 1
+    assert rows[0]["Ledger Name"] == "Cash"
+    assert rows[0]["Debit"] == 1000.0
+
+
 def test_tally_connector_strips_numeric_char_refs_to_illegal_codepoints(monkeypatch):
     """Regression guard for a real bug found live, and a THIRD distinct shape
     of the same underlying problem: a "wasn't valid XML" failure whose exact
