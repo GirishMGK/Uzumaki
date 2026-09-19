@@ -6,7 +6,15 @@ from sqlalchemy.types import JSON
 from sqlmodel import Field
 
 from app.models.base import TimestampSoftDeleteMixin, UUIDPKMixin
-from app.models.enums import AcceptanceStatus, EntityClass, RelationshipStatus, RiskRating
+from app.models.enums import (
+    AcceptanceStatus,
+    ClientPriority,
+    EntityClass,
+    PracticingFirm,
+    RelationshipStatus,
+    RiskRating,
+    ServiceType,
+)
 
 
 class ClientGroup(UUIDPKMixin, TimestampSoftDeleteMixin, table=True):
@@ -45,3 +53,12 @@ class Client(UUIDPKMixin, TimestampSoftDeleteMixin, table=True):
     acceptance_date: str | None = Field(default=None)
     continuance_due_date: str | None = Field(default=None)
     relationship_partner_id: uuid.UUID | None = Field(default=None, foreign_key="staff.id")
+
+    # Masters page fields (a firm-specific ask, distinct from the §13 spec
+    # fields above): whether the client is stock-exchange listed is its
+    # own concept, separate from `entity_class`'s legal-structure meaning.
+    is_listed: bool = Field(default=False)
+    priority: ClientPriority = Field(default=ClientPriority.MEDIUM)
+    is_mnc: bool = Field(default=False)
+    practicing_firm: PracticingFirm | None = Field(default=None)
+    primary_service_type: ServiceType | None = Field(default=None)

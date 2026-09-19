@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from app.core.audit import write_audit_log
 from app.core.deps import get_client_ip, get_current_user, get_db, require_roles
@@ -30,7 +30,7 @@ def list_clients(
     if group_id:
         stmt = stmt.where(Client.group_id == group_id)
     if q:
-        stmt = stmt.where(Client.name.contains(q))  # type: ignore[union-attr]
+        stmt = stmt.where(or_(Client.name.contains(q), Client.client_code.contains(q)))  # type: ignore[union-attr]
     stmt = stmt.offset(skip).limit(limit)
     return list(db.exec(stmt).all())
 

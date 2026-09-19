@@ -39,6 +39,23 @@ class ImportResult:
 
 
 def read_workbook_rows(file_bytes: bytes, sheet_name: str | int = 0) -> list[dict]:
+    """Reads one worksheet's rows as a list of {column: value} dicts.
+
+    `sheet_name` is a *preferred* sheet when given as a string — the
+    generated sample_masters.xlsx template has separate "staff"/"clients"
+    sheets (plus a "Data Dictionary" one), so each endpoint asks for its
+    own by name. A real firm's own export is typically a single sheet
+    with an arbitrary name, though, so an unmatched string name falls
+    back to the first sheet rather than erroring — an int index is
+    always used as-is.
+    """
+    if isinstance(sheet_name, str):
+        probe = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
+        try:
+            if sheet_name not in probe.sheetnames:
+                sheet_name = 0
+        finally:
+            probe.close()
     df = pd.read_excel(io.BytesIO(file_bytes), dtype=str, keep_default_na=False, sheet_name=sheet_name)
     df.columns = [str(c).strip() for c in df.columns]
     return df.to_dict(orient="records")
@@ -83,6 +100,32 @@ def one_of(field_name: str, allowed: set[str], *, required_field: bool = True) -
                 RowError(
                     row_number, field_name, value, "INVALID_ENUM",
                     f"{field_name}='{value}' is not one of {sorted(allowed)}",
+                )
+            ]
+        return []
+
+    return _v
+
+
+def one_of_label(field_name: str, allowed_labels, *, required_field: bool = True) -> ColumnValidator:
+    """Like `one_of`, but case-insensitive — for the friendly dropdown
+    labels (e.g. "Senior Manager") a hand-typed or copy-pasted Excel cell
+    may not match exactly on casing, unlike the raw enum-string columns
+    `one_of` was built for.
+    """
+    lowered = {label.lower() for label in allowed_labels}
+
+    def _v(row_number: int, row: dict) -> list[RowError]:
+        value = str(row.get(field_name, "")).strip()
+        if value == "":
+            if required_field:
+                return [RowError(row_number, field_name, value, "REQUIRED", f"{field_name} is required")]
+            return []
+        if value.lower() not in lowered:
+            return [
+                RowError(
+                    row_number, field_name, value, "INVALID_ENUM",
+                    f"{field_name}='{value}' is not one of {sorted(allowed_labels)}",
                 )
             ]
         return []

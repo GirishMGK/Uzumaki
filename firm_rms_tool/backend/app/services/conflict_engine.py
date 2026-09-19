@@ -10,11 +10,12 @@ anything. Callers decide what to do with the result:
   and `audit_log`
 - INFO -> always safe to save; shown to the user for awareness only
 
-This module implements the full rule set, R1-R24 (§4). R1-R9 shipped in
+This module implements the full rule set, R1-R25 (§4). R1-R9 shipped in
 Phase P3; R10-R24 are Phase P8. A few of the P8 rules approximate spec
 intent against fields the schema doesn't model exactly as named in §4 —
 each of those has a docstring note plus a matching entry in
-docs/decisions.md.
+docs/decisions.md. R25 (Manpower Allocation tab) shipped later, alongside
+that tab.
 """
 from __future__ import annotations
 
@@ -770,6 +771,42 @@ def check_cooling_off(db: Session, cand: AllocationCandidate, engagement: Engage
     return None
 
 
+def check_concurrent_client_cap(db: Session, cand: AllocationCandidate, staff: Staff, engagement: Engagement) -> RuleViolation | None:
+    """R25: at any one point in time, one staff member may be concurrently
+    booked to only so many distinct clients — the Manpower Allocation tab's
+    per-staff cap (§ manpower allocation). Default 3 for articles, 4 for
+    every other non-partner staff ("CA" grade — senior manager/manager/
+    executive); partners are exempt (they aren't allocated from that tab at
+    all). Counts distinct *clients*, not engagements, so several services
+    for the same client (see the per-client Engagements feature) count once."""
+    if staff.staff_category == StaffCategory.PARTNER:
+        return None
+    is_article = staff.staff_category in ARTICLE_CATEGORIES
+    cap = get_config_value(
+        db,
+        "max_concurrent_clients_article" if is_article else "max_concurrent_clients_ca",
+        get_settings().default_max_concurrent_clients_article if is_article else get_settings().default_max_concurrent_clients_ca,
+    )
+    rows = _overlapping_active_allocations(db, cand.staff_id, cand.date_from, cand.date_to, cand.exclude_allocation_id)
+    engagement_ids = {r.engagement_id for r in rows if r.engagement_id != cand.engagement_id}
+    existing_client_ids = set()
+    if engagement_ids:
+        existing_client_ids = {
+            e.client_id for e in db.exec(select(Engagement).where(Engagement.id.in_(engagement_ids))).all()  # type: ignore[attr-defined]
+        }
+    projected_client_ids = existing_client_ids | {engagement.client_id}
+    if len(projected_client_ids) > cap:
+        grade = "Article" if is_article else "Staff"
+        return RuleViolation(
+            code="CONCURRENT_CLIENT_CAP",
+            severity="BLOCK",
+            message=f"{grade} would be concurrently allocated to {len(projected_client_ids)} clients at once, above the cap of {int(cap)}.",
+            context={"cap": cap, "projected_clients": len(projected_client_ids), "is_article": is_article},
+            overridable=False,
+        )
+    return None
+
+
 def validate_allocation(db: Session, cand: AllocationCandidate) -> list[RuleViolation]:
     violations: list[RuleViolation] = []
 
@@ -813,6 +850,7 @@ def validate_allocation(db: Session, cand: AllocationCandidate) -> list[RuleViol
         lambda: check_unapproved_pipeline(engagement, client),
         lambda: check_duplicate_role(db, cand),
         lambda: check_cooling_off(db, cand, engagement),
+        lambda: check_concurrent_client_cap(db, cand, staff, engagement),
     ):
         result = check()
         if result:
