@@ -289,34 +289,34 @@ def test_pdf_tools_page_actually_renders_content():
     )
 
 
-# ── _pages/firm_rms.py: must actually start & embed the vendored backend ───────
-def test_firm_rms_page_calls_real_functions():
-    src = open(os.path.join(REPO_ROOT, "_pages", "firm_rms.py"), encoding="utf-8").read()
+# ── _pages/hrm.py: must actually start & embed the vendored backend ───────
+def test_hrm_page_calls_real_functions():
+    src = open(os.path.join(REPO_ROOT, "_pages", "hrm.py"), encoding="utf-8").read()
     for fn in ["startup_seed.run(", "uvicorn.run(", "st.components.v1.iframe("]:
-        assert fn in src, f"_pages/firm_rms.py no longer calls {fn} — the tool may be disconnected"
+        assert fn in src, f"_pages/hrm.py no longer calls {fn} — the tool may be disconnected"
 
 
-def test_firm_rms_backend_synced_from_manpower_tracker_declares_its_new_deps():
-    """Regression guard for a real bug found while syncing firm_rms_tool/
-    from the upstream Manpower-Tracker repo: the sync brought in a new
-    module (app/api/v1/updates.py, a "check for updates" feature) that
-    imports httpx at module level -- wired into the API router that
-    app.main (and so _pages/firm_rms.py's _start_backend()) imports
-    unconditionally. httpx happened to already be importable in this
-    sandbox (a transitive dependency of something else), which would have
-    hidden a real gap: it was never an explicit dependency of Uzumaki
-    itself, only of firm_rms_tool/backend's own requirements.txt (not
-    installed when building Uzumaki.exe) -- a fresh build environment
-    without that transitive pull-in would have failed to import
-    app.main and broken the whole Firm RMS page."""
-    root_reqs = open(os.path.join(REPO_ROOT, "requirements.txt"), encoding="utf-8").read()
-    assert "httpx" in root_reqs
+def test_firm_rms_removed_and_replaced_by_hrm():
+    """Regression guard for a real user request: remove the "Firm RMS" tool
+    entirely (not sync/rename it in place) and add the same underlying
+    Manpower-Tracker code as a brand-new tool called "HRM" instead -- a
+    distinct nav entry, own vendored copy under hrm_tool/ (not firm_rms_tool/,
+    which must be fully gone), own page/port/data-dir so it doesn't collide
+    with any lingering local Firm RMS install on a user's machine."""
+    assert not os.path.exists(os.path.join(REPO_ROOT, "firm_rms_tool"))
+    assert not os.path.exists(os.path.join(REPO_ROOT, "_pages", "firm_rms.py"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "hrm_tool", "backend"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "hrm_tool", "frontend_dist"))
 
-    updates_src = open(
-        os.path.join(REPO_ROOT, "firm_rms_tool", "backend", "app", "api", "v1", "updates.py"),
-        encoding="utf-8",
-    ).read()
-    assert "import httpx" in updates_src
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert "firm_rms" not in home_src.lower()
+    assert '"_pages/hrm.py"' in home_src
+    assert '"HRM"' in home_src
+
+    spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    assert "firm_rms" not in spec_src.lower()
+    assert '_tree("hrm_tool")' in spec_src
+    assert os.path.join("hrm_tool", "backend", "app", "main.py") in spec_src
 
 
 # ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────

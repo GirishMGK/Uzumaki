@@ -1,12 +1,12 @@
-"""Hub page: Firm RMS — Manpower / Resource Tracking.
+"""Hub page: HRM — Manpower / Resource Tracking.
 
-Runs the vendored Firm RMS FastAPI backend in-process (a background thread,
+Runs the vendored HRM FastAPI backend in-process (a background thread,
 started once per app launch) and embeds its already-built frontend via an
 iframe on the same origin/port -- so from here it behaves like any other
 Uzumaki tool: one app, one click, no separate installer or server to run
 yourself.
 
-Adapted from firm_rms_tool/backend's own desktop/launcher.py (from the
+Adapted from hrm_tool/backend's own desktop/launcher.py (from the
 Manpower-Tracker repo this was vendored from), which already solved:
 per-user writable data dir (so it works from a read-only install folder),
 a persisted JWT secret, and single-process static-file serving. The only
@@ -25,18 +25,18 @@ from pathlib import Path
 import streamlit as st
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_BACKEND_DIR = os.path.join(_REPO_ROOT, "firm_rms_tool", "backend")
-_FRONTEND_DIST = os.path.join(_REPO_ROOT, "firm_rms_tool", "frontend_dist")
+_BACKEND_DIR = os.path.join(_REPO_ROOT, "hrm_tool", "backend")
+_FRONTEND_DIST = os.path.join(_REPO_ROOT, "hrm_tool", "frontend_dist")
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from _pages.theme import page_header, footer
 
 HOST = "127.0.0.1"
-PORT = 8765
+PORT = 8766
 
 page_header(
-    "🧑‍💼", "Firm RMS — Manpower & Resource Tracking",
+    "🧑‍💼", "HRM — Manpower & Resource Tracking",
     "Plan, allocate, and report deployment of staff across engagements — "
     "scheduler board, capacity dashboards, timesheets, and forecasting.",
     badges=["Own database (local)", "Login required", "Runs in-process"],
@@ -48,14 +48,14 @@ def _app_data_dir() -> Path:
         base = os.environ.get("LOCALAPPDATA") or str(Path.home())
     else:
         base = str(Path.home())
-    data_dir = Path(base) / "FirmRMS"
+    data_dir = Path(base) / "HRM"
     data_dir.mkdir(parents=True, exist_ok=True)
     return data_dir
 
 
 def _configure_environment() -> None:
     data_dir = _app_data_dir()
-    db_path = data_dir / "firm_rms.db"
+    db_path = data_dir / "hrm.db"
     os.environ.setdefault("RMS_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
 
     secret_file = data_dir / "secret.key"
@@ -79,7 +79,7 @@ def _health_ok() -> bool:
 
 @st.cache_resource(show_spinner=False)
 def _start_backend() -> str:
-    """Starts the Firm RMS backend exactly once per app run (cached across
+    """Starts the HRM backend exactly once per app run (cached across
     reruns/sessions via st.cache_resource) and blocks until it's serving."""
     _configure_environment()
 
@@ -92,7 +92,7 @@ def _start_backend() -> str:
     def _serve():
         uvicorn.run(fastapi_app, host=HOST, port=PORT, log_level="warning")
 
-    threading.Thread(target=_serve, daemon=True, name="firm-rms-backend").start()
+    threading.Thread(target=_serve, daemon=True, name="hrm-backend").start()
 
     for _ in range(60):
         if _health_ok():
@@ -101,15 +101,15 @@ def _start_backend() -> str:
     return f"http://{HOST}:{PORT}/"
 
 
-with st.spinner("Starting Firm RMS (first launch creates the local database)…"):
+with st.spinner("Starting HRM (first launch creates the local database)…"):
     try:
         url = _start_backend()
     except Exception as e:
-        st.error(f"Firm RMS failed to start: {e}")
+        st.error(f"HRM failed to start: {e}")
         st.stop()
 
 if not _health_ok():
-    st.error("Firm RMS started but isn't responding yet — try reopening this page.")
+    st.error("HRM started but isn't responding yet — try reopening this page.")
 else:
     st.components.v1.iframe(url, height=900, scrolling=True)
     st.caption(
@@ -121,7 +121,7 @@ else:
 with st.expander("What this does"):
     st.markdown(
         """
-Firm RMS is a full resource-management system (scheduler board, capacity
+HRM is a full resource-management system (scheduler board, capacity
 dashboards, report library, timesheets/actuals, forecasting, RBAC) — unlike
 the other tools in this hub, it keeps **persistent, multi-session data** in
 a local SQLite database rather than processing an uploaded file and
@@ -129,8 +129,8 @@ discarding it. It runs here as its own server (in the background, same
 process as this app) with its own login, so treat it as its own app inside
 the hub rather than a stateless one-shot tool.
 
-Source: vendored from `firm_rms_tool/` (originally the `Manpower-Tracker`
-repo's `backend/` + a static build of `frontend/`).
+Source: vendored from `hrm_tool/` (the `Manpower-Tracker` repo's
+`backend/` + a static build of `frontend/`).
 """
     )
 
