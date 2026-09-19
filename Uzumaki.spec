@@ -33,7 +33,7 @@ _METADATA_PACKAGES = [
     "gitpython", "protobuf", "tenacity", "toml", "tornado", "watchdog",
     "cachetools", "blinker", "requests", "pillow", "pyarrow",
     "setuptools", "platformdirs",
-    # Firm RMS backend (FastAPI) -- same importlib.metadata.version() pattern
+    # HRM backend (FastAPI) -- same importlib.metadata.version() pattern
     # as streamlit above.
     "fastapi", "starlette", "uvicorn", "pydantic", "pydantic-settings",
     "sqlmodel", "sqlalchemy",
@@ -101,7 +101,7 @@ datas = [
     _tree("redaction_tool"),
     _tree("je_audit_tool"),
     _tree("form26as_tool"),
-    _tree("firm_rms_tool"),
+    _tree("hrm_tool"),
     _tree("tally_tool"),
 ] + metadata_datas + streamlit_data + reportlab_data
 
@@ -128,11 +128,12 @@ hiddenimports = [
     # -- without this the exe crashes on every launch before reaching
     # launcher.py at all, regardless of anything this app itself does.
     "platformdirs",
-    # Firm RMS backend (FastAPI + uvicorn + SQLModel) -- resolves backends/
+    # HRM backend (FastAPI + uvicorn + SQLModel) -- resolves backends/
     # plugins via importlib rather than a plain top-level import, so
     # PyInstaller's static analysis can't discover them on its own. Carried
-    # over from firm_rms_tool's own already-working desktop/firm_rms.spec
-    # (see docs/user-guide.md#windows-desktop-app in the originating repo).
+    # over from hrm_tool's own already-working desktop spec file (see
+    # docs/user-guide.md#windows-desktop-app in the originating
+    # Manpower-Tracker repo).
     "uvicorn.loops.auto", "uvicorn.loops.asyncio",
     "uvicorn.protocols.http.auto", "uvicorn.protocols.http.h11_impl",
     "uvicorn.protocols.websockets.auto", "uvicorn.protocols.websockets.wsproto_impl",
@@ -168,8 +169,8 @@ hiddenimports = [
 # real import graphs too, then trim a.scripts back down to just launcher.py
 # before EXE() -- their imports still land in the shared pyz/a.pure, but only
 # launcher.py actually runs at startup.
-# firm_rms_tool/backend/app/main.py is imported lazily (inside a function,
-# not at _pages/firm_rms.py's module top level -- see _start_backend()) so
+# hrm_tool/backend/app/main.py is imported lazily (inside a function,
+# not at _pages/hrm.py's module top level -- see _start_backend()) so
 # it's *discoverable* by PyInstaller's AST-scanning static analysis either
 # way, but its own third-party imports (fastapi, sqlmodel, ...) still need
 # an entry point for that analysis to actually trace from -- same reasoning
@@ -177,14 +178,14 @@ hiddenimports = [
 a = Analysis(
     ["launcher.py", "pdf_tools.py",
      os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py",
-     os.path.join("firm_rms_tool", "backend", "app", "main.py"),
+     os.path.join("hrm_tool", "backend", "app", "main.py"),
      os.path.join("tally_tool", "extract_ledgers.py")],
     pathex=[
         ROOT,
         os.path.join(ROOT, "redaction_tool"),
         os.path.join(ROOT, "je_audit_tool"),
         os.path.join(ROOT, "form26as_tool"),
-        os.path.join(ROOT, "firm_rms_tool", "backend"),
+        os.path.join(ROOT, "hrm_tool", "backend"),
         os.path.join(ROOT, "tally_tool"),
     ],
     binaries=[],

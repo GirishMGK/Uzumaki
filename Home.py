@@ -175,7 +175,7 @@ _TOOLS = [
     },
     {
         "group": "Workforce & Scheduling",
-        "icon": "🧑‍💼", "title": "Firm RMS", "tag": "FastAPI (in-process)",
+        "icon": "🧑‍💼", "title": "HRM", "tag": "FastAPI (in-process)",
         "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
     },
 ]
@@ -276,7 +276,7 @@ nav = st.navigation(
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
             st.Page("_pages/tally_hub.py", title="Tally", icon="📒"),
-            st.Page("_pages/firm_rms.py", title="Firm RMS", icon="🧑‍💼"),
+            st.Page("_pages/hrm.py", title="HRM", icon="🧑‍💼"),
         ],
     }
 )

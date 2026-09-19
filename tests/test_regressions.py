@@ -289,11 +289,34 @@ def test_pdf_tools_page_actually_renders_content():
     )
 
 
-# ── _pages/firm_rms.py: must actually start & embed the vendored backend ───────
-def test_firm_rms_page_calls_real_functions():
-    src = open(os.path.join(REPO_ROOT, "_pages", "firm_rms.py"), encoding="utf-8").read()
+# ── _pages/hrm.py: must actually start & embed the vendored backend ───────
+def test_hrm_page_calls_real_functions():
+    src = open(os.path.join(REPO_ROOT, "_pages", "hrm.py"), encoding="utf-8").read()
     for fn in ["startup_seed.run(", "uvicorn.run(", "st.components.v1.iframe("]:
-        assert fn in src, f"_pages/firm_rms.py no longer calls {fn} — the tool may be disconnected"
+        assert fn in src, f"_pages/hrm.py no longer calls {fn} — the tool may be disconnected"
+
+
+def test_firm_rms_removed_and_replaced_by_hrm():
+    """Regression guard for a real user request: remove the "Firm RMS" tool
+    entirely (not sync/rename it in place) and add the same underlying
+    Manpower-Tracker code as a brand-new tool called "HRM" instead -- a
+    distinct nav entry, own vendored copy under hrm_tool/ (not firm_rms_tool/,
+    which must be fully gone), own page/port/data-dir so it doesn't collide
+    with any lingering local Firm RMS install on a user's machine."""
+    assert not os.path.exists(os.path.join(REPO_ROOT, "firm_rms_tool"))
+    assert not os.path.exists(os.path.join(REPO_ROOT, "_pages", "firm_rms.py"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "hrm_tool", "backend"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "hrm_tool", "frontend_dist"))
+
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert "firm_rms" not in home_src.lower()
+    assert '"_pages/hrm.py"' in home_src
+    assert '"HRM"' in home_src
+
+    spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    assert "firm_rms" not in spec_src.lower()
+    assert '_tree("hrm_tool")' in spec_src
+    assert os.path.join("hrm_tool", "backend", "app", "main.py") in spec_src
 
 
 # ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────
