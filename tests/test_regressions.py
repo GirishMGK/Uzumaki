@@ -1379,6 +1379,21 @@ def test_perform_update_and_restart_stages_a_sentinel_instead_of_swapping_itself
     assert staged_new_path == str(tmp_path / "Uzumaki_new.exe")
 
 
+def test_launcher_enables_downloads_before_creating_the_webview_window():
+    """Regression guard for a real bug found live: every "⬇ Download ..."
+    button across the app (workbook exports throughout the Tally hub,
+    redaction/PDF tools, etc.) silently did nothing in the packaged .exe --
+    no error, no save dialog, nothing. Root cause: pywebview defaults
+    ALLOW_DOWNLOADS to False, so its embedded WebView2 window swallows the
+    browser-side download click st.download_button() triggers. This is a
+    window-level setting that must be set before webview.create_window()
+    is called, not a Streamlit-side bug at all -- guard both facts:
+    ALLOW_DOWNLOADS is set, and it happens before window creation."""
+    src = open(os.path.join(REPO_ROOT, "launcher.py"), encoding="utf-8").read()
+    assert 'webview.settings["ALLOW_DOWNLOADS"] = True' in src
+    assert src.index('webview.settings["ALLOW_DOWNLOADS"] = True') < src.index("webview.create_window(")
+
+
 def test_launcher_finishes_a_staged_update_once_it_is_the_last_process(monkeypatch, tmp_path):
     """Companion to the test above: launcher.py's parent process, once its
     own webview window has closed, must notice the sentinel
