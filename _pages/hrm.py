@@ -30,16 +30,23 @@ _FRONTEND_DIST = os.path.join(_REPO_ROOT, "hrm_tool", "frontend_dist")
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-from _pages.theme import page_header, footer
+from _pages.theme import footer
 
 HOST = "127.0.0.1"
 PORT = 8766
 
-page_header(
-    "🧑‍💼", "HRM — Manpower & Resource Tracking",
-    "Plan, allocate, and report deployment of staff across engagements — "
-    "scheduler board, capacity dashboards, timesheets, and forecasting.",
-    badges=["Own database (local)", "Login required", "Runs in-process"],
+# Deliberately NOT the full sa-hero page_header() banner every other hub
+# page uses (icon + title + subtitle + badges -- ~150-250px tall): real
+# feedback was that its login form is "down the scroll" on first open. The
+# login form lives INSIDE the embedded iframe below, already at the top of
+# HRM's own UI -- the only thing making it require a scroll at all was our
+# own host page's header pushing the whole iframe further down before the
+# user ever sees it. A single compact line here instead of the hero banner
+# gets the iframe (and the login form inside it) into view immediately.
+st.subheader("🧑‍💼 HRM — Manpower & Resource Tracking")
+st.caption(
+    "Scheduler board, capacity dashboards, timesheets, forecasting. "
+    "Own local database — login required, first run creates it."
 )
 
 
