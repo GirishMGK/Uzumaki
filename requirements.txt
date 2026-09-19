@@ -43,7 +43,15 @@ uvicorn[standard]
 sqlmodel
 pydantic-settings
 passlib[bcrypt]
-bcrypt
+# Pinned (not left to float like the deps above): passlib 1.7.4's bcrypt
+# backend probes bcrypt.__about__.__version__ to detect the installed
+# version -- removed in bcrypt>=4.1 -- which makes passlib misdetect and
+# raise "password cannot be longer than 72 bytes" even for short passwords
+# (hit live: the seeded "ChangeMe!2026" admin password triggered it on
+# first HRM launch). hrm_tool/backend/requirements.txt already pins the
+# same version for this reason; mirror it here since this file is what
+# actually gets installed for the packaged .exe.
+bcrypt==4.0.1
 pyjwt
 apscheduler
 rapidfuzz
