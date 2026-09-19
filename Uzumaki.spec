@@ -175,12 +175,14 @@ hiddenimports = [
 # way, but its own third-party imports (fastapi, sqlmodel, ...) still need
 # an entry point for that analysis to actually trace from -- same reasoning
 # as the runpy-invisible scripts above, applied to a plain lazy import.
-# Combined_PF_Statutory.py also lazily imports tkinter (inside
-# _pick_folder_files(), for the native "select a folder" dialog) --
-# tkinter is a stdlib package with its own built-in PyInstaller hook
-# (bundles _tkinter's C extension plus the Tcl/Tk runtime automatically
-# once the import is detected), so listing this script here is enough;
-# no extra hiddenimports/binaries needed for it specifically.
+# Combined_PF_Statutory.py's native "select a folder" dialog
+# (_pick_folder() in that file) shells out to PowerShell's built-in
+# System.Windows.Forms.FolderBrowserDialog on Windows rather than using
+# tkinter -- tkinter was tried first and PyInstaller's automatic hook
+# failed to bundle a working Tcl/Tk runtime for it ("Can't find a usable
+# init.tcl" at runtime, reproduced live). PowerShell + .NET WinForms ship
+# with every Windows install, so nothing extra needs to be bundled or
+# listed here for it.
 a = Analysis(
     ["launcher.py", "pdf_tools.py",
      os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py",
