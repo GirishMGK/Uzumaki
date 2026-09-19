@@ -30,8 +30,8 @@ from common.statutory_extractors import (
     compute_recon,
 )
 
-st.set_page_config(page_title="PF & Statutory Compliance Register", layout="wide")
-st.title("PF & Statutory Compliance Register")
+st.set_page_config(page_title="Statutory Extractor", layout="wide")
+st.title("Statutory Extractor")
 st.caption("PF Challan · ECR Return · TRRN  |  ESI · PT · TDS · GSTR-1 · GSTR-3B")
 
 # _read_pdf_text/g/g_last/period_from_filename/detect_statutory_type/
@@ -219,17 +219,32 @@ tab_pf, tab_stat = st.tabs(["PF Register", "Statutory Compliance"])
 with tab_pf:
     st.subheader("PF Consolidated Register")
     pf_uploaded = st.file_uploader(
-        "Upload PF Challan / TRRN PDFs", type="pdf", accept_multiple_files=True, key="pf_uploader"
+        "Upload PF Challan / TRRN PDFs — or a ZIP of them (to add a whole "
+        "folder: zip it first, or open the picker and select every file "
+        "inside the folder)",
+        type=["pdf", "zip"], accept_multiple_files=True, key="pf_uploader",
     )
     if st.button("Generate PF Register", type="primary", key="pf_gen"):
         if not pf_uploaded:
             st.error("Please upload PF PDFs")
         else:
+            pf_files = []
+            for f in pf_uploaded:
+                if f.name.lower().endswith(".zip"):
+                    with zipfile.ZipFile(f) as z:
+                        for name in z.namelist():
+                            if name.lower().endswith(".pdf"):
+                                pf_files.append((os.path.basename(name), z.read(name)))
+                else:
+                    pf_files.append((f.name, f.read()))
+
+            if not pf_files:
+                st.warning("No PDF files found in the upload.")
+                st.stop()
+
             challan_rows, detail_tables, trrn_rows, return_rows, pf_failed = [], [], [], [], []
             progress = st.progress(0)
-            for idx, file in enumerate(pf_uploaded):
-                file_name = file.name
-                file_bytes = file.read()
+            for idx, (file_name, file_bytes) in enumerate(pf_files):
                 temp = Path("data") / file_name
                 temp.parent.mkdir(exist_ok=True)
                 temp.write_bytes(file_bytes)
@@ -256,7 +271,7 @@ with tab_pf:
                             detail_tables.append(dtbl)
                 except Exception as e:
                     pf_failed.append(f"{file_name}: {e}")
-                progress.progress((idx + 1) / len(pf_uploaded))
+                progress.progress((idx + 1) / len(pf_files))
 
             parts = []
             if challan_rows: parts.append(f"**{len(challan_rows)}** Challan(s)")
@@ -301,6 +316,10 @@ with tab_pf:
 with tab_stat:
     st.subheader("Statutory Compliance Extractor")
     st.caption("ESI · PT · TDS (ITNS 281) · GSTR-1 · GSTR-3B")
+    st.caption(
+        "To add a whole folder of PDFs: zip the folder and upload the ZIP, "
+        "or open the file picker and select every PDF inside the folder."
+    )
 
     col1, col2 = st.columns(2)
     with col1:

@@ -148,7 +148,7 @@ _TOOLS = [
     },
     {
         "group": "Statutory & Payroll",
-        "icon": "🧾", "title": "PF & Statutory", "tag": "Streamlit",
+        "icon": "🧾", "title": "Statutory Extractor", "tag": "Streamlit",
         "desc": "PF Challan / ECR / TRRN, plus ESI · PT · TDS · GSTR-1 · GSTR-3B extraction and reconciliation.",
     },
     {
@@ -269,7 +269,7 @@ nav = st.navigation(
         ],
         "Tools": [
             st.Page("_pages/parquet.py", title="Parquet Tool", icon="🗄️"),
-            st.Page("_pages/pf_statutory.py", title="PF & Statutory", icon="🧾"),
+            st.Page("_pages/pf_statutory.py", title="Statutory Extractor", icon="🧾"),
             st.Page("_pages/form26as_page.py", title="Form 26AS Extractor", icon="🧮"),
             st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
             st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
