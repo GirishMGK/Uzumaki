@@ -1240,6 +1240,25 @@ def test_logo_banner_renders_at_top_of_every_page():
     assert ".sa-logo-banner" in theme_src
 
 
+def test_logo_banner_uses_the_real_uploaded_artwork():
+    """Follow-up user request: replace the emoji placeholder mark with the
+    user's actual logo file (uploaded to the repo as Picture1.png, cropped
+    here to just the icon -- the wordmark/"SINCE 2026" text baked into that
+    original image was dropped since this banner already renders its own
+    "UZUMAKI" text alongside it, and "Since 2026" was explicitly asked to
+    be removed). Guards the asset exists, is wired into Home.py's banner,
+    and that _logo_mark_b64() has a graceful (non-crashing) fallback to the
+    original emoji mark if the asset is ever missing."""
+    asset_path = os.path.join(REPO_ROOT, "_pages", "assets", "logo_mark.png")
+    assert os.path.exists(asset_path), "the real logo asset is missing from _pages/assets/"
+    assert os.path.getsize(asset_path) > 0
+
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert "logo_mark.png" in home_src
+    assert "base64" in home_src
+    assert "🥷" in home_src  # fallback mark, kept for when the asset is missing
+
+
 def test_girish_credit_appears_in_sidebar_and_footer():
     """User request: a personal branding credit somewhere visually pleasing
     -- placed in the sidebar (near "Check for Updates") and in the shared
