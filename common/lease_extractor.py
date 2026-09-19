@@ -18,12 +18,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-import fitz
+from .pdf_text import read_pdf_text
 
-
-def read_pdf_text(file_bytes: bytes) -> str:
-    pdf = fitz.open(stream=file_bytes, filetype="pdf")
-    return "\n".join(page.get_text(sort=True) for page in pdf)
+__all__ = [
+    "read_pdf_text", "extract_lease_terms", "igaap_straight_line",
+    "ind_as116_rou_and_liability", "LeaseTerms",
+]
 
 
 def _g(pattern: str, text: str, flags=re.I | re.S) -> str:
