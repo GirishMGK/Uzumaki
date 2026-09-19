@@ -56,6 +56,22 @@ actually clears SmartScreen's warning. If you'd rather avoid the prompt
 entirely, build from source instead (see "Run from source" above) or build
 the `.exe` yourself below.
 
+**"Smart App Control blocked an app that may be unsafe" (no "Run anyway"
+option, just Okay / Get apps from the Store):** this is a *different*,
+stricter Windows 11 feature than the SmartScreen prompt above, and it has
+no in-dialog bypass — same root cause (unsigned exe), harder consequence.
+Two ways forward, and they're not equivalent:
+- **Check whether Smart App Control is even on:** Windows Security → App
+  & browser control → Smart App Control settings. If you turn it off
+  there to unblock Uzumaki, know that Microsoft does not let you turn it
+  back on afterwards without a clean Windows reinstall — so treat that as
+  a real, one-way tradeoff, not a quick toggle.
+- **The actual fix is code-signing** the `.exe` with an Authenticode
+  certificate (a paid CA, or a free option like SignPath for open-source
+  projects) — that's what lets both SmartScreen and Smart App Control
+  trust it without anyone needing to touch a Windows setting at all. Not
+  yet set up for this build.
+
 ### Building the .exe yourself
 
 ```bash
