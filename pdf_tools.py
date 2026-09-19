@@ -913,8 +913,33 @@ def build_sidebar() -> None:
         )
 
 
+def build_topnav() -> None:
+    """A second, always-visible way to switch tools -- the sidebar one
+    (build_sidebar()) sits below the rest of Uzumaki's own hub sidebar
+    (logo banner, tool catalogue, "Check for Updates"), so switching PDF
+    Tools sub-pages meant scrolling down to find it every time. This
+    mirrors the same PAGES/session_state.page switching, just rendered as
+    a row of buttons at the top of the main content area instead."""
+    cols = st.columns(len(PAGES))
+    for col, (label, page_key) in zip(cols, PAGES.items()):
+        with col:
+            active = st.session_state.page == page_key
+            if st.button(
+                label, key=f"topnav_{page_key}", use_container_width=True,
+                type="primary" if active else "secondary",
+            ):
+                st.session_state.page = page_key
+                for key in [
+                    "merge_result", "split_result", "edit_result", "conv_result"
+                ]:
+                    st.session_state.pop(key, None)
+                st.rerun()
+    st.markdown("---")
+
+
 def main() -> None:
     build_sidebar()
+    build_topnav()
 
     page = st.session_state.page
     if page == "Home":
