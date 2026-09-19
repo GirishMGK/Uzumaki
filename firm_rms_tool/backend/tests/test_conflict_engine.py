@@ -24,6 +24,7 @@ from app.services.conflict_engine import (
     check_location_mismatch,
     check_no_exposure_diversity,
     check_outstation_breach,
+    check_concurrent_client_cap,
     check_skill_gap,
     check_sustained_overload,
     check_unapproved_pipeline,
@@ -445,6 +446,69 @@ def test_r24_cooling_off_warns_on_prior_employment_declaration(session):
     )
     v = check_cooling_off(session, cand, engagement)
     assert v is not None and v.code == "COOLING_OFF" and v.severity == "WARN"
+
+
+def test_r25_article_blocked_at_fourth_concurrent_client(session):
+    dept = make_department(session)
+    article = make_staff(session, staff_category=StaffCategory.ARTICLED_ASSISTANT, designation=Designation.ARTICLE_Y1)
+    clients = [make_client(session) for _ in range(4)]
+    engagements = [make_engagement(session, c.id, dept.id) for c in clients]
+
+    for eng in engagements[:3]:
+        _confirmed_allocation(session, eng, article, "2026-09-01", "2026-09-30")
+
+    # a 4th distinct, overlapping client -> blocked (cap is 3 for articles)
+    cand = AllocationCandidate(
+        engagement_id=engagements[3].id, staff_id=article.id, role_on_engagement=AllocationRole.ARTICLE,
+        date_from="2026-09-05", date_to="2026-09-10",
+    )
+    v = check_concurrent_client_cap(session, cand, article, engagements[3])
+    assert v is not None and v.code == "CONCURRENT_CLIENT_CAP" and v.severity == "BLOCK"
+
+    # extending an already-counted client's own dates is not a *new* client -> fine
+    same_client_cand = AllocationCandidate(
+        engagement_id=engagements[0].id, staff_id=article.id, role_on_engagement=AllocationRole.ARTICLE,
+        date_from="2026-09-05", date_to="2026-09-10",
+    )
+    assert check_concurrent_client_cap(session, same_client_cand, article, engagements[0]) is None
+
+
+def test_r25_ca_grade_allows_four_blocks_fifth(session):
+    dept = make_department(session)
+    manager = make_staff(session, staff_category=StaffCategory.EMPLOYEE_CA, designation=Designation.MANAGER)
+    clients = [make_client(session) for _ in range(5)]
+    engagements = [make_engagement(session, c.id, dept.id) for c in clients]
+
+    for eng in engagements[:4]:
+        _confirmed_allocation(session, eng, manager, "2026-09-01", "2026-09-30")
+
+    cand_ok = AllocationCandidate(
+        engagement_id=engagements[3].id, staff_id=manager.id, role_on_engagement=AllocationRole.TEAM_MEMBER,
+        date_from="2026-09-05", date_to="2026-09-10",
+    )
+    assert check_concurrent_client_cap(session, cand_ok, manager, engagements[3]) is None
+
+    cand_fifth = AllocationCandidate(
+        engagement_id=engagements[4].id, staff_id=manager.id, role_on_engagement=AllocationRole.TEAM_MEMBER,
+        date_from="2026-09-05", date_to="2026-09-10",
+    )
+    v = check_concurrent_client_cap(session, cand_fifth, manager, engagements[4])
+    assert v is not None and v.code == "CONCURRENT_CLIENT_CAP"
+
+
+def test_r25_partners_exempt_from_concurrent_client_cap(session):
+    dept = make_department(session)
+    partner = make_staff(session, staff_category=StaffCategory.PARTNER, designation=Designation.PARTNER)
+    clients = [make_client(session) for _ in range(6)]
+    engagements = [make_engagement(session, c.id, dept.id) for c in clients]
+    for eng in engagements[:5]:
+        _confirmed_allocation(session, eng, partner, "2026-09-01", "2026-09-30", role=AllocationRole.SIGNING_PARTNER)
+
+    cand = AllocationCandidate(
+        engagement_id=engagements[5].id, staff_id=partner.id, role_on_engagement=AllocationRole.SIGNING_PARTNER,
+        date_from="2026-09-05", date_to="2026-09-10",
+    )
+    assert check_concurrent_client_cap(session, cand, partner, engagements[5]) is None
 
 
 def test_p8_new_rules_wired_into_validate_allocation(session):

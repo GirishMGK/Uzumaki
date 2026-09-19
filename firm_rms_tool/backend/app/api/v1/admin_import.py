@@ -17,6 +17,7 @@ from app.core.deps import get_current_user, get_db, require_roles
 from app.importers.base import build_error_workbook, read_workbook_rows
 from app.importers.clients_importer import row_to_client_kwargs, validate_client_rows
 from app.importers.staff_importer import row_to_staff_kwargs, validate_staff_rows
+from app.importers.templates import build_clients_template, build_staff_template
 from app.models.client import Client
 from app.models.enums import AuditAction, UserRole
 from app.models.staff import Staff
@@ -37,13 +38,31 @@ def _summary(result, entity: str) -> dict:
     }
 
 
+@router.get("/staff/template")
+async def download_staff_template(user: User = Depends(require_roles(*IMPORT_ROLES))) -> StreamingResponse:
+    return StreamingResponse(
+        BytesIO(build_staff_template()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=staff_import_template.xlsx"},
+    )
+
+
+@router.get("/clients/template")
+async def download_clients_template(user: User = Depends(require_roles(*IMPORT_ROLES))) -> StreamingResponse:
+    return StreamingResponse(
+        BytesIO(build_clients_template()),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=clients_import_template.xlsx"},
+    )
+
+
 @router.post("/staff/validate")
 async def validate_staff_import(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*IMPORT_ROLES)),
 ) -> dict:
-    rows = read_workbook_rows(await file.read())
+    rows = read_workbook_rows(await file.read(), sheet_name="staff")
     result = validate_staff_rows(rows)
     return _summary(result, "staff")
 
@@ -54,7 +73,7 @@ async def validate_staff_import_workbook(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*IMPORT_ROLES)),
 ) -> StreamingResponse:
-    rows = read_workbook_rows(await file.read())
+    rows = read_workbook_rows(await file.read(), sheet_name="staff")
     result = validate_staff_rows(rows)
     xlsx_bytes = build_error_workbook(result.errors)
     return StreamingResponse(
@@ -71,7 +90,7 @@ async def commit_staff_import(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*IMPORT_ROLES)),
 ) -> dict:
-    rows = read_workbook_rows(await file.read())
+    rows = read_workbook_rows(await file.read(), sheet_name="staff")
     result = validate_staff_rows(rows)
 
     if result.errors and not commit_valid_only:
@@ -80,7 +99,7 @@ async def commit_staff_import(
     committed = 0
     codes_seen: set[str] = set()
     for row in result.valid_rows:
-        kwargs = row_to_staff_kwargs(row)
+        kwargs = row_to_staff_kwargs(row, db, user.id)
         if kwargs["employee_code"] in codes_seen:
             continue
         codes_seen.add(kwargs["employee_code"])
@@ -109,9 +128,25 @@ async def validate_clients_import(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*IMPORT_ROLES)),
 ) -> dict:
-    rows = read_workbook_rows(await file.read())
+    rows = read_workbook_rows(await file.read(), sheet_name="clients")
     result = validate_client_rows(rows)
     return _summary(result, "clients")
+
+
+@router.post("/clients/validate/error-workbook")
+async def validate_clients_import_workbook(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_roles(*IMPORT_ROLES)),
+) -> StreamingResponse:
+    rows = read_workbook_rows(await file.read(), sheet_name="clients")
+    result = validate_client_rows(rows)
+    xlsx_bytes = build_error_workbook(result.errors)
+    return StreamingResponse(
+        BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=clients_import_errors.xlsx"},
+    )
 
 
 @router.post("/clients/commit")
@@ -121,7 +156,7 @@ async def commit_clients_import(
     db: Session = Depends(get_db),
     user: User = Depends(require_roles(*IMPORT_ROLES)),
 ) -> dict:
-    rows = read_workbook_rows(await file.read())
+    rows = read_workbook_rows(await file.read(), sheet_name="clients")
     result = validate_client_rows(rows)
 
     if result.errors and not commit_valid_only:
@@ -130,7 +165,7 @@ async def commit_clients_import(
     committed = 0
     codes_seen: set[str] = set()
     for row in result.valid_rows:
-        kwargs = row_to_client_kwargs(row)
+        kwargs = row_to_client_kwargs(row, db, user.id)
         if kwargs["client_code"] in codes_seen:
             continue
         codes_seen.add(kwargs["client_code"])

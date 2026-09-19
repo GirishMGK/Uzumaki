@@ -296,6 +296,29 @@ def test_firm_rms_page_calls_real_functions():
         assert fn in src, f"_pages/firm_rms.py no longer calls {fn} — the tool may be disconnected"
 
 
+def test_firm_rms_backend_synced_from_manpower_tracker_declares_its_new_deps():
+    """Regression guard for a real bug found while syncing firm_rms_tool/
+    from the upstream Manpower-Tracker repo: the sync brought in a new
+    module (app/api/v1/updates.py, a "check for updates" feature) that
+    imports httpx at module level -- wired into the API router that
+    app.main (and so _pages/firm_rms.py's _start_backend()) imports
+    unconditionally. httpx happened to already be importable in this
+    sandbox (a transitive dependency of something else), which would have
+    hidden a real gap: it was never an explicit dependency of Uzumaki
+    itself, only of firm_rms_tool/backend's own requirements.txt (not
+    installed when building Uzumaki.exe) -- a fresh build environment
+    without that transitive pull-in would have failed to import
+    app.main and broken the whole Firm RMS page."""
+    root_reqs = open(os.path.join(REPO_ROOT, "requirements.txt"), encoding="utf-8").read()
+    assert "httpx" in root_reqs
+
+    updates_src = open(
+        os.path.join(REPO_ROOT, "firm_rms_tool", "backend", "app", "api", "v1", "updates.py"),
+        encoding="utf-8",
+    ).read()
+    assert "import httpx" in updates_src
+
+
 # ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────
 def test_tally_page_calls_real_functions():
     src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()

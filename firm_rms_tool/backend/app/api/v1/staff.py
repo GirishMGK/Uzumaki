@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlmodel import Session, select
+from sqlmodel import Session, or_, select
 
 from app.core.audit import write_audit_log
 from app.core.deps import can_see_financials, get_client_ip, get_current_user, get_db, require_roles
@@ -36,7 +36,7 @@ def list_staff(
     if staff_category:
         stmt = stmt.where(Staff.staff_category == staff_category)
     if q:
-        stmt = stmt.where(Staff.full_name.contains(q))  # type: ignore[union-attr]
+        stmt = stmt.where(or_(Staff.full_name.contains(q), Staff.employee_code.contains(q)))  # type: ignore[union-attr]
     stmt = stmt.offset(skip).limit(limit)
     rows = db.exec(stmt).all()
     mask = not can_see_financials(user)

@@ -10,13 +10,13 @@ from tests.conftest import auth_headers, make_user
 def _build_workbook(total_rows: int, bad_rows: int) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(["employee_code", "full_name", "staff_category", "designation", "grade_rank"])
+    ws.append(["employee_code", "full_name", "designation", "work_location", "status"])
     for i in range(total_rows):
         if i < bad_rows:
-            # invalid staff_category enum value
-            ws.append([f"E{i}", f"Person {i}", "NOT_A_CATEGORY", "ASSOCIATE", "8"])
+            # invalid designation label
+            ws.append([f"E{i}", f"Person {i}", "NOT_A_DESIGNATION", "Hyderabad", "Active"])
         else:
-            ws.append([f"E{i}", f"Person {i}", "EMPLOYEE_CA", "ASSOCIATE", "8"])
+            ws.append([f"E{i}", f"Person {i}", "Manager", "Hyderabad", "Active"])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

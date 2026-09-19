@@ -28,6 +28,8 @@ def _default_config() -> dict[str, dict]:
         "max_days_single_client": {"value": s.default_max_days_single_client, "description": "R20 NO_EXPOSURE_DIVERSITY threshold"},
         "article_secondment_cap": {"value": s.default_article_secondment_cap, "description": "R13 ICAI Reg. 43 secondment cap per principal"},
         "article_secondment_months_cap": {"value": s.default_article_secondment_months_cap, "description": "R13 aggregate secondment months cap"},
+        "max_concurrent_clients_article": {"value": s.default_max_concurrent_clients_article, "description": "R25 CONCURRENT_CLIENT_CAP for articles"},
+        "max_concurrent_clients_ca": {"value": s.default_max_concurrent_clients_ca, "description": "R25 CONCURRENT_CLIENT_CAP for non-article, non-partner staff"},
     }
 
 

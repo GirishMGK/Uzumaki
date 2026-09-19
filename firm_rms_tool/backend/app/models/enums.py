@@ -123,6 +123,11 @@ class ServiceType(str, Enum):
     STOCK_AUDIT = "STOCK_AUDIT"
     CONCURRENT_AUDIT = "CONCURRENT_AUDIT"
     BRANCH_AUDIT = "BRANCH_AUDIT"
+    # Added for the client master's "Type of engagement" field.
+    ITR = "ITR"
+    TAX_WORKS = "TAX_WORKS"
+    CONSULTANCY = "CONSULTANCY"
+    OPINION = "OPINION"
     OTHER = "OTHER"
 
 
@@ -177,6 +182,13 @@ class EntityClass(str, Enum):
     GOVT_COMPANY = "GOVT_COMPANY"
     TRUST = "TRUST"
     FOREIGN_SUB = "FOREIGN_SUB"
+    # Added for the "Nature" field on the Masters staff/clients page —
+    # legal structures the original 10-value set didn't cover.
+    SECTION_8 = "SECTION_8"
+    COOPERATIVE_SOCIETY = "COOPERATIVE_SOCIETY"
+    SOLE_PROPRIETORSHIP = "SOLE_PROPRIETORSHIP"
+    PARTNERSHIP_FIRM = "PARTNERSHIP_FIRM"
+    OTHERS = "OTHERS"
 
 
 class RelationshipStatus(str, Enum):
@@ -184,6 +196,22 @@ class RelationshipStatus(str, Enum):
     PROSPECT = "PROSPECT"
     DORMANT = "DORMANT"
     EXITED = "EXITED"
+    # A plain, firm-facing complement to the above — the Masters page
+    # exposes just Active/Inactive rather than this full lifecycle.
+    INACTIVE = "INACTIVE"
+
+
+class ClientPriority(str, Enum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
+class PracticingFirm(str, Enum):
+    """Which of the firm's practicing entities a client sits under."""
+
+    BCO = "BCO"
+    KSR = "KSR"
 
 
 class RiskRating(str, Enum):
