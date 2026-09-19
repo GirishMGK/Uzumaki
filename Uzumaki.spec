@@ -175,6 +175,12 @@ hiddenimports = [
 # way, but its own third-party imports (fastapi, sqlmodel, ...) still need
 # an entry point for that analysis to actually trace from -- same reasoning
 # as the runpy-invisible scripts above, applied to a plain lazy import.
+# Combined_PF_Statutory.py also lazily imports tkinter (inside
+# _pick_folder_files(), for the native "select a folder" dialog) --
+# tkinter is a stdlib package with its own built-in PyInstaller hook
+# (bundles _tkinter's C extension plus the Tcl/Tk runtime automatically
+# once the import is detected), so listing this script here is enough;
+# no extra hiddenimports/binaries needed for it specifically.
 a = Analysis(
     ["launcher.py", "pdf_tools.py",
      os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py",

@@ -43,6 +43,54 @@ st.caption("PF Challan · ECR Return · TRRN  |  ESI · PT · TDS · GSTR-1 · G
 # live in common/period_utils.py.
 normalize_period = _normalize_period
 
+# ── native folder picker ────────────────────────────────────────────────────
+# st.file_uploader has no "select a whole folder" mode -- browsers don't
+# expose that on a plain file input. This app runs as a local desktop app
+# (see launcher.py), so instead of working around the browser we use a real
+# native OS folder-picker dialog (tkinter, already used the same way by
+# redaction_tool/main.py and form26as_tool/form26as/gui.py) and walk the
+# chosen folder ourselves -- picking up every PDF, at any nesting depth,
+# whether it's a loose file or packed inside a ZIP found along the way.
+
+def _pick_folder_files(extensions=(".pdf",)):
+    """Opens a native folder-picker dialog and returns [(filename, bytes), ...]
+    for every matching file found recursively under the chosen folder,
+    including matching files inside any ZIPs encountered there. Returns []
+    if the user cancels, or if there's no display to show a dialog on
+    (e.g. running headless/from source on a server)."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        folder = filedialog.askdirectory(title="Select a folder")
+        root.destroy()
+    except Exception as e:
+        st.error(f"Couldn't open a folder picker here ({e}). "
+                 "Use the file uploader instead, or zip the folder and upload the ZIP.")
+        return []
+    if not folder:
+        return []
+
+    results = []
+    for dirpath, _dirs, filenames in os.walk(folder):
+        for fn in filenames:
+            full = os.path.join(dirpath, fn)
+            lower = fn.lower()
+            if lower.endswith(".zip"):
+                try:
+                    with zipfile.ZipFile(full) as z:
+                        for name in z.namelist():
+                            if name.lower().endswith(extensions):
+                                results.append((os.path.basename(name), z.read(name)))
+                except Exception:
+                    pass
+            elif lower.endswith(extensions):
+                with open(full, "rb") as f:
+                    results.append((fn, f.read()))
+    return results
+
 # ── PF detection / extraction (same as PF.py) ─────────────────────────────────
 
 def _detect_pf_type(text: str) -> str:
@@ -218,29 +266,46 @@ tab_pf, tab_stat = st.tabs(["PF Register", "Statutory Compliance"])
 
 with tab_pf:
     st.subheader("PF Consolidated Register")
+    if "pf_folder_files" not in st.session_state:
+        st.session_state.pf_folder_files = []
+
     pf_uploaded = st.file_uploader(
-        "Upload PF Challan / TRRN PDFs — or a ZIP of them (to add a whole "
-        "folder: zip it first, or open the picker and select every file "
-        "inside the folder)",
+        "Upload PF Challan / TRRN PDFs, or a ZIP of them",
         type=["pdf", "zip"], accept_multiple_files=True, key="pf_uploader",
     )
-    if st.button("Generate PF Register", type="primary", key="pf_gen"):
-        if not pf_uploaded:
-            st.error("Please upload PF PDFs")
-        else:
-            pf_files = []
-            for f in pf_uploaded:
-                if f.name.lower().endswith(".zip"):
-                    with zipfile.ZipFile(f) as z:
-                        for name in z.namelist():
-                            if name.lower().endswith(".pdf"):
-                                pf_files.append((os.path.basename(name), z.read(name)))
-                else:
-                    pf_files.append((f.name, f.read()))
+    col_f1, col_f2 = st.columns([1, 3])
+    with col_f1:
+        if st.button("📁 Select a folder", key="pf_folder_btn"):
+            picked = _pick_folder_files(extensions=(".pdf",))
+            if picked:
+                st.session_state.pf_folder_files = picked
+                st.success(f"Found {len(picked)} PDF(s) in the selected folder.")
+            elif picked == [] and st.session_state.pf_folder_files:
+                pass  # user cancelled the dialog -- keep the previous pick
+    with col_f2:
+        if st.session_state.pf_folder_files:
+            st.caption(
+                f"📁 {len(st.session_state.pf_folder_files)} PDF(s) picked from a folder "
+                f"(will be included below)."
+            )
+            if st.button("Clear folder selection", key="pf_folder_clear"):
+                st.session_state.pf_folder_files = []
+                st.rerun()
 
-            if not pf_files:
-                st.warning("No PDF files found in the upload.")
-                st.stop()
+    if st.button("Generate PF Register", type="primary", key="pf_gen"):
+        pf_files = list(st.session_state.pf_folder_files)
+        for f in (pf_uploaded or []):
+            if f.name.lower().endswith(".zip"):
+                with zipfile.ZipFile(f) as z:
+                    for name in z.namelist():
+                        if name.lower().endswith(".pdf"):
+                            pf_files.append((os.path.basename(name), z.read(name)))
+            else:
+                pf_files.append((f.name, f.read()))
+
+        if not pf_files:
+            st.error("Please upload PF PDFs or select a folder.")
+        else:
 
             challan_rows, detail_tables, trrn_rows, return_rows, pf_failed = [], [], [], [], []
             progress = st.progress(0)
@@ -316,16 +381,32 @@ with tab_pf:
 with tab_stat:
     st.subheader("Statutory Compliance Extractor")
     st.caption("ESI · PT · TDS (ITNS 281) · GSTR-1 · GSTR-3B")
-    st.caption(
-        "To add a whole folder of PDFs: zip the folder and upload the ZIP, "
-        "or open the file picker and select every PDF inside the folder."
-    )
+
+    if "stat_folder_files" not in st.session_state:
+        st.session_state.stat_folder_files = []
 
     col1, col2 = st.columns(2)
     with col1:
         stat_pdfs = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True, key="stat_pdf")
     with col2:
         stat_zips = st.file_uploader("Upload ZIPs", type="zip", accept_multiple_files=True, key="stat_zip")
+
+    col_f1, col_f2 = st.columns([1, 3])
+    with col_f1:
+        if st.button("📁 Select a folder", key="stat_folder_btn"):
+            picked = _pick_folder_files(extensions=(".pdf",))
+            if picked:
+                st.session_state.stat_folder_files = picked
+                st.success(f"Found {len(picked)} PDF(s) in the selected folder.")
+    with col_f2:
+        if st.session_state.stat_folder_files:
+            st.caption(
+                f"📁 {len(st.session_state.stat_folder_files)} PDF(s) picked from a folder "
+                f"(will be included in Extract All)."
+            )
+            if st.button("Clear folder selection", key="stat_folder_clear"):
+                st.session_state.stat_folder_files = []
+                st.rerun()
 
     col_b1, col_b2, col_b3 = st.columns(3)
     with col_b1:
@@ -335,12 +416,14 @@ with tab_stat:
             for _k in _STAT_KEYS: st.session_state[_k] = []
             st.session_state.stat_failed = []
             st.session_state.stat_recon = []
+            st.session_state.stat_folder_files = []
             st.success("Cleared.")
     with col_b3:
         if st.button("Reset", use_container_width=True, key="stat_reset"):
             for _k in _STAT_KEYS: st.session_state[_k] = []
             st.session_state.stat_failed = []
             st.session_state.stat_recon = []
+            st.session_state.stat_folder_files = []
             st.rerun()
 
     if stat_btn:
@@ -348,7 +431,8 @@ with tab_stat:
         st.session_state.stat_failed = []
         st.session_state.stat_recon = []
 
-        all_pdfs = [(f.name, f.read()) for f in (stat_pdfs or [])]
+        all_pdfs = list(st.session_state.stat_folder_files)
+        all_pdfs += [(f.name, f.read()) for f in (stat_pdfs or [])]
         for zf in (stat_zips or []):
             with zipfile.ZipFile(zf) as z:
                 for name in z.namelist():
