@@ -10,6 +10,7 @@ Run:
 
 from __future__ import annotations
 
+import base64
 import importlib
 import os
 import sys
@@ -25,16 +26,38 @@ import updater  # noqa: E402
 st.set_page_config(page_title="Uzumaki · Tools", page_icon="🧰", layout="wide")
 inject_css()
 
+_LOGO_MARK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pages", "assets", "logo_mark.png")
+
+
+@st.cache_data(show_spinner=False)
+def _logo_mark_b64() -> str | None:
+    """The real Uzumaki logo mark (cropped from the user-supplied artwork,
+    the wordmark/"SINCE 2026" text trimmed off since this banner already
+    renders its own "UZUMAKI" text alongside it), base64-encoded once and
+    cached -- cheap to inline directly in the page's HTML rather than
+    needing a separate static-file route. None if the asset is somehow
+    missing so the banner can fall back instead of crashing the page."""
+    try:
+        with open(_LOGO_MARK_PATH, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except OSError:
+        return None
+
 
 # ── top-of-app logo banner ───────────────────────────────────────────────────
 def _render_logo_banner() -> None:
     """Rendered above st.navigation()'s content on every page (Home.py is the
     entry script for all pages), so the "Uzumaki" brand mark sits at the top
     of the tool no matter which page is open."""
+    b64 = _logo_mark_b64()
+    mark_html = (
+        f'<img class="sa-logo-mark" src="data:image/png;base64,{b64}" alt="Uzumaki">'
+        if b64 else '<span class="sa-logo-mark">🥷</span>'
+    )
     st.markdown(
-        """
+        f"""
         <div class="sa-logo-banner">
-            <span class="sa-logo-mark">🥷</span>
+            {mark_html}
             <span class="sa-logo-word">UZUMAKI</span>
         </div>
         """,

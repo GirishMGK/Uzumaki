@@ -61,6 +61,7 @@ def inject_css() -> None:
             gap: .55rem; padding: .5rem 0 .1rem;
         }}
         .sa-logo-mark {{ font-size: 1.9rem; line-height: 1; }}
+        img.sa-logo-mark {{ height: 2.1rem; width: auto; display: block; }}
         .sa-logo-word {{
             font-size: 1.35rem; font-weight: 800; letter-spacing: .05em;
             color: #c81e1e;
