@@ -6,6 +6,7 @@ and Sales & Purchase Register tabs in _pages/tally_extractions.py -- every
 live-pull page (that one, plus the new GST Summary, TDS Summary, and
 Registers pages) calls this instead of reimplementing it again.
 """
+import datetime
 import os
 import sys
 
@@ -13,6 +14,22 @@ import streamlit as st
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tally_tool"))
 import tally_connector
+
+
+def _current_fy_start(today: datetime.date | None = None) -> datetime.date:
+    """Start of the current Indian financial year (1 April) as a sane
+    default for the live-pull date pickers -- previously hardcoded to
+    2000-01-01 across every Tally live-pull page, a 26-year span that made a
+    routine pull genuinely take Tally long enough to trip the request
+    timeout (confirmed live, on the Tally extraction tool page specifically
+    -- fixed there first, then found to still be present, unfixed, on every
+    OTHER Tally live-pull page too, since each was written independently
+    with its own copy of the same literal default). Most audit/statutory
+    work is done one FY at a time anyway; a 26-year default served nobody
+    and actively broke the common case."""
+    today = today or datetime.date.today()
+    year = today.year if today.month >= 4 else today.year - 1
+    return datetime.date(year, 4, 1)
 
 
 def render_connection_picker(key_prefix: str) -> tuple[str, int, str | None]:
