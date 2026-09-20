@@ -40,8 +40,18 @@ import urllib.request
 
 OWNER = "GirishMGK"
 REPO = "Uzumaki"
+# Releases (Uzumaki.exe + version.txt) are published to a SEPARATE, public
+# repo -- not this one. `Uzumaki` (source) is private; GitHub Release assets
+# on a private repo require an authenticated request to download, which
+# would mean embedding a credential in every distributed .exe (and anyone
+# who extracts it -- see README's decompilation note -- gets a live token
+# to the private source repo, a far worse leak than the bytecode itself).
+# Publishing built releases to a small, source-free public repo instead
+# keeps the self-update check/download fully anonymous, same as before.
+RELEASES_OWNER = "GirishMGK"
+RELEASES_REPO = "Uzumaki-releases"
 RELEASE_TAG = "latest"
-_GH_RELEASE_BASE = f"https://github.com/{OWNER}/{REPO}/releases/download/{RELEASE_TAG}"
+_GH_RELEASE_BASE = f"https://github.com/{RELEASES_OWNER}/{RELEASES_REPO}/releases/download/{RELEASE_TAG}"
 _VERSION_URL = f"{_GH_RELEASE_BASE}/version.txt"
 _EXE_URL = f"{_GH_RELEASE_BASE}/Uzumaki.exe"
 _TIMEOUT = 6  # seconds — a background check must never meaningfully delay anything

@@ -6,7 +6,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write  # required to create/update the "latest" release + assets
+  contents: read  # this repo is private; releases publish elsewhere (see below), nothing here needs write
 
 jobs:
   build:
@@ -42,8 +42,18 @@ jobs:
         run: test -f dist/Uzumaki.exe
 
       - name: Publish / update the rolling "latest" release
+        # Published to a SEPARATE public repo (GirishMGK/Uzumaki-releases),
+        # not this one -- this repo is private, and GitHub Release assets on
+        # a private repo require an authenticated request to download, which
+        # would mean Uzumaki.exe's self-updater needs an embedded credential
+        # (a real leak risk -- see README). RELEASES_REPO_TOKEN is a
+        # fine-grained PAT scoped to *only* Uzumaki-releases with
+        # Contents: Read and write, stored as a secret on this repo; it
+        # never leaves GitHub Actions and is never bundled into the .exe.
         uses: softprops/action-gh-release@v2
         with:
+          repository: GirishMGK/Uzumaki-releases
+          token: ${{ secrets.RELEASES_REPO_TOKEN }}
           tag_name: latest
           name: "Uzumaki (latest — ${{ steps.version.outputs.sha }})"
           body: |
@@ -54,5 +64,3 @@ jobs:
           files: |
             dist/Uzumaki.exe
             version.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
