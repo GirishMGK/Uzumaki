@@ -83,6 +83,32 @@ pyinstaller Uzumaki.spec
 Produces `dist/Uzumaki.exe`. Must be run **on Windows** to produce a Windows
 executable — PyInstaller doesn't cross-compile.
 
+## Login & user access
+
+Every launch is gated behind a login (`auth.py` + `Home.py`'s login screen) —
+per-user accounts, each assigned a **role** that controls which tools they
+can open. An account can also be an **Administrator**, which always has
+access to every tool regardless of role.
+
+**First run:** since there are no accounts yet, one is created automatically —
+username `admin`, password `ChangeMe!2026` (shown on the login screen itself
+until a second account exists). Log in with that, then go to **Admin → Users
+& Access** to:
+- create roles and pick exactly which tools each one can open
+- create user accounts and assign them a role (or make them an admin)
+- change passwords / edit / delete accounts
+
+Everything is stored locally per install (a small SQLite database next to
+where HRM keeps its own data — `%LOCALAPPDATA%\Uzumaki\auth.db` on Windows),
+not shared or synced anywhere. A tool a user's role doesn't grant isn't just
+hidden from the sidebar — its page is never registered with the app's
+navigation for that session at all, so it can't be reached directly either.
+
+This is separate from HRM's own login (its own users/database, for HRM's own
+`RMS_DATABASE_URL` — see `_pages/hrm.py`) — HRM is one of the tools this gate
+covers, so a role also needs HRM listed in its allowed tools before a user
+can even open it and reach that second, unrelated login screen.
+
 ## Tests
 
 A compile sweep, regression tests for bugs found in past reviews (e.g. a

@@ -21,10 +21,53 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _pages.theme import inject_css, footer  # noqa: E402
+import auth  # noqa: E402
 import updater  # noqa: E402
 
 st.set_page_config(page_title="Uzumaki · Tools", page_icon="🧰", layout="wide")
 inject_css()
+
+auth.init_db()
+
+
+def _render_login_screen() -> None:
+    """Blocks the whole app behind a login -- real request: per-user
+    accounts, with an admin able to restrict which tools a given role can
+    open. Runs before anything else in this file (including building the
+    nav), so an unauthenticated session never even sees the tool
+    catalogue, let alone a page."""
+    st.markdown(
+        """
+        <div style="max-width:420px;margin:4rem auto 0;text-align:center;">
+            <div class="sa-logo-mark" style="font-size:2.4rem;">🥷</div>
+            <h2 style="margin:.3rem 0 1.2rem;">Uzumaki</h2>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Log in", type="primary", use_container_width=True)
+        if submitted:
+            user = auth.authenticate(username.strip(), password)
+            if user:
+                st.session_state.auth_user = user
+                st.rerun()
+            else:
+                st.error("Incorrect username or password.")
+        if auth.get_user(auth.DEFAULT_ADMIN_USERNAME) and len(auth.list_users()) == 1:
+            st.caption(
+                f"First run — default admin login: **{auth.DEFAULT_ADMIN_USERNAME}** / "
+                f"**{auth.DEFAULT_ADMIN_PASSWORD}** (change this from Admin → Users once logged in)."
+            )
+
+
+if "auth_user" not in st.session_state:
+    _render_login_screen()
+    st.stop()
 
 _LOGO_MARK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pages", "assets", "logo_mark.png")
 
@@ -129,6 +172,18 @@ def _render_update_sidebar() -> None:
         )
 
 
+def _render_account_sidebar() -> None:
+    user = st.session_state.auth_user
+    with st.sidebar:
+        st.markdown("---")
+        label = user["full_name"] or user["username"]
+        role_label = "Administrator (full access)" if user["is_admin"] else user["role_name"]
+        st.caption(f"👤 **{label}** — {role_label}")
+        if st.button("Log out", key="logout_btn", use_container_width=True):
+            del st.session_state["auth_user"]
+            st.rerun()
+
+
 # ── tool catalogue ──────────────────────────────────────────────────────────────
 _TOOLS = [
     {
@@ -203,6 +258,9 @@ def _dep_status() -> list[tuple[str, bool]]:
 
 # ── landing page ───────────────────────────────────────────────────────────────
 def home():
+    allowed = set(st.session_state.auth_user["allowed_tools"])
+    visible_tools = [t for t in _TOOLS if t["title"] in allowed]
+
     st.markdown(
         f"""
         <div class="sa-hero">
@@ -210,7 +268,7 @@ def home():
             <p>A unified workspace for loan-audit, statutory-compliance, and document-processing
             tools — everything runs locally, nothing is uploaded to a server you don't control.</p>
             <div class="sa-badges">
-                <span class="sa-badge">{len(_TOOLS)} tools</span>
+                <span class="sa-badge">{len(visible_tools)} tools</span>
                 <span class="sa-badge">Local-only processing</span>
                 <span class="sa-badge">One app — one .exe</span>
             </div>
@@ -222,17 +280,22 @@ def home():
     st.page_link("_pages/about.py", label="🧩 Curious how this is built? See the tech behind it →")
 
     counts = {}
-    for t in _TOOLS:
+    for t in visible_tools:
         counts[t["group"]] = counts.get(t["group"], 0) + 1
     kpi_html = "".join(
         f'<div class="sa-kpi"><div class="sa-kpi-val">{counts[g]}</div>'
         f'<div class="sa-kpi-lbl">{g}</div></div>'
-        for g in _GROUP_ORDER
+        for g in _GROUP_ORDER if g in counts
     )
     st.markdown(f'<div class="sa-kpi-row">{kpi_html}</div>', unsafe_allow_html=True)
 
+    if not visible_tools:
+        st.info("Your account doesn't have access to any tools yet — ask an admin to grant your role access.")
+
     for group in _GROUP_ORDER:
-        group_tools = [t for t in _TOOLS if t["group"] == group]
+        group_tools = [t for t in visible_tools if t["group"] == group]
+        if not group_tools:
+            continue
         st.markdown(f'<div class="sa-section">{group}</div>', unsafe_allow_html=True)
         cols = st.columns(len(group_tools) if len(group_tools) <= 3 else 3)
         for i, t in enumerate(group_tools):
@@ -261,25 +324,35 @@ def home():
 
 
 # ── navigation: a "Tools" group with one page per tool ─────────────────────────
-nav = st.navigation(
-    {
-        "Home": [
-            st.Page(home, title="Home", icon="🏠", default=True),
-            st.Page("_pages/about.py", title="How it's built", icon="🧩"),
-        ],
-        "Tools": [
-            st.Page("_pages/parquet.py", title="Parquet Tool", icon="🗄️"),
-            st.Page("_pages/pf_statutory.py", title="Statutory Extractor", icon="🧾"),
-            st.Page("_pages/form26as_page.py", title="Form 26AS Extractor", icon="🧮"),
-            st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
-            st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
-            st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
-            st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
-            st.Page("_pages/tally_hub.py", title="Tally", icon="📒"),
-            st.Page("_pages/hrm.py", title="HRM", icon="🧑‍💼"),
-        ],
-    }
-)
+# Every entry's title must match a common.TOOL_KEYS / _TOOLS title exactly --
+# that's what a role's allowed_tools list restricts by. Non-admins only ever
+# see the Page objects their role grants; a page they don't have access to
+# isn't just hidden from the sidebar, it's never registered with
+# st.navigation() at all, so it can't be reached by a direct URL either.
+_ALL_TOOL_PAGES = {
+    "Parquet Tool": st.Page("_pages/parquet.py", title="Parquet Tool", icon="🗄️"),
+    "Statutory Extractor": st.Page("_pages/pf_statutory.py", title="Statutory Extractor", icon="🧾"),
+    "Form 26AS Extractor": st.Page("_pages/form26as_page.py", title="Form 26AS Extractor", icon="🧮"),
+    "PDF Tools": st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
+    "SOA · RPS · Reconcile": st.Page("_pages/soa.py", title="SOA · RPS · Reconcile", icon="📊"),
+    "Document Redaction": st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
+    "JE Audit Analytics": st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
+    "Tally": st.Page("_pages/tally_hub.py", title="Tally", icon="📒"),
+    "HRM": st.Page("_pages/hrm.py", title="HRM", icon="🧑‍💼"),
+}
+_allowed_tools = set(st.session_state.auth_user["allowed_tools"])
+_nav_dict = {
+    "Home": [
+        st.Page(home, title="Home", icon="🏠", default=True),
+        st.Page("_pages/about.py", title="How it's built", icon="🧩"),
+    ],
+    "Tools": [page for title, page in _ALL_TOOL_PAGES.items() if title in _allowed_tools],
+}
+if st.session_state.auth_user["is_admin"]:
+    _nav_dict["Admin"] = [st.Page("_pages/admin.py", title="Users & Access", icon="🛡️")]
+
+nav = st.navigation(_nav_dict)
 _render_logo_banner()
 _render_update_sidebar()
+_render_account_sidebar()
 nav.run()
