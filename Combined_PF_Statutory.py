@@ -198,13 +198,19 @@ def extract_pf_trrn(file_name, text):
     def acct_cols(n):
         # Three numbers on the "Account-N Amount (Rs)" row = Amount, 7Q,
         # 14B, in that column order (matches the Accounts / Amount (Rs) /
-        # 7Q / 14B table header on the actual PDF).
+        # 7Q / 14B table header on the actual PDF) -- only present when the
+        # receipt actually has 7Q/14B amounts; most challans/receipts don't.
         m = re.search(rf"Account-{n}\s+Amount\s*\(Rs\)\s*[:\s]+([\d,]+)\s+([\d,]+)\s+([\d,]+)", text, re.I)
         if m:
             return m.group(1).replace(",", ""), m.group(2).replace(",", ""), m.group(3).replace(",", "")
-        m = re.search(rf"([\d,]+)\s+Account-{n}\s+Amount\s*\(Rs\)", text, re.I)
-        if m:
-            return m.group(1).replace(",", ""), "", ""
+        # No 7Q/14B columns -- just "Account-N Amount (Rs) : <amount>".
+        # (A previous "<amount> Account-N Amount (Rs)" fallback -- for an
+        # amount-before-label layout -- was removed here: real bug found
+        # while testing a receipt with no 7Q/14B table -- since it searches
+        # for ANY number immediately preceding the label text, it happily
+        # matched the PREVIOUS account row's trailing amount instead
+        # whenever this exact "label : amount" layout repeats down a
+        # table, shifting every account's value by one row.)
         m = re.search(rf"Account-{n}\s+Amount\s*\(Rs\)\s*[:\s]+([\d,]+)", text, re.I)
         if m:
             return m.group(1).replace(",", ""), "", ""
