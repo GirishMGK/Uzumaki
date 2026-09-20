@@ -322,8 +322,18 @@ def test_firm_rms_removed_and_replaced_by_hrm():
 # ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────
 def test_tally_page_calls_real_functions():
     src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
-    for fn in ["ensure_utf8(", "extract_any(", "build_tables(", "write_output("]:
+    # extract_any_with_progress() (tally_common.py) wraps extract_any() with
+    # a real progress bar -- tally_hub.py calls that wrapper now, not
+    # extract_any() directly, but the wrapper itself must still call the
+    # real thing (checked separately below).
+    for fn in ["ensure_utf8(", "extract_any_with_progress(", "build_tables(", "write_output("]:
         assert fn in src, f"_pages/tally_hub.py no longer calls {fn} — the tool may be disconnected"
+
+    common_src = open(os.path.join(REPO_ROOT, "_pages", "tally_common.py"), encoding="utf-8").read()
+    assert "extract_any(" in common_src, (
+        "tally_common.extract_any_with_progress() no longer calls the real extract_any() "
+        "— every Tally hub activity's Upload tab goes through this wrapper"
+    )
 
 
 def _tally_fixture():
@@ -1102,7 +1112,7 @@ def test_tally_extractor_xml_matches_json_extractor(tmp_path):
 def test_tally_page_accepts_xml_uploads():
     src = open(os.path.join(REPO_ROOT, "_pages", "tally_hub.py"), encoding="utf-8").read()
     assert '"xml"' in src
-    assert "extract_any(" in src
+    assert "extract_any_with_progress(" in src
 
 
 def _fake_register_response_xml() -> str:

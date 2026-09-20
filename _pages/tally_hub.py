@@ -34,9 +34,11 @@ sys.path.insert(0, os.path.join(_ROOT, "tally_tool"))
 sys.path.insert(0, os.path.join(_ROOT, "je_audit_tool"))
 
 from _pages.theme import page_header, footer
-from _pages.tally_common import render_connection_picker, render_setup_help, _current_fy_start
+from _pages.tally_common import (
+    render_connection_picker, render_setup_help, _current_fy_start, extract_any_with_progress,
+)
 
-from extract_ledgers import ensure_utf8, extract_any, build_tables, write_output
+from extract_ledgers import ensure_utf8, build_tables, write_output
 from common.statutory_extractors import detect_statutory_type, extract_gstr1, extract_gstr3b, extract_tds, read_pdf_text
 from reports.sales_purchase_register import build_hsn_summary, extract_register_from_export
 from reports.gst_summary import build_gst_summary, build_month_pivot, build_unclassified
@@ -145,8 +147,7 @@ ledger-entry detail — everything this tool needs, in either format.
                 try:
                     with st.spinner("Checking encoding…"):
                         utf8_path = ensure_utf8(in_path)
-                    with st.spinner("Streaming the export (this can take a while for large files)…"):
-                        ledger_master, rows = extract_any(utf8_path)
+                    ledger_master, rows = extract_any_with_progress(utf8_path)
                     with st.spinner("Building ledger tables and running balances…"):
                         df, summary = build_tables(
                             ledger_master, rows, include_cancelled=include_cancelled_u,
@@ -308,8 +309,7 @@ def _render_register_tab():
                 try:
                     with st.spinner("Checking encoding…"):
                         utf8_path = ensure_utf8(in_path)
-                    with st.spinner("Reading the ledger master (for the GST breakup)…"):
-                        ledger_master, _rows = extract_any(utf8_path)
+                    ledger_master, _rows = extract_any_with_progress(utf8_path)
                     with st.spinner(f"Extracting {register_type_u} register from the export…"):
                         rows = extract_register_from_export(
                             utf8_path, {register_type_u}, include_cancelled=include_cancelled_u,
@@ -448,8 +448,7 @@ def _render_gst_tab():
                 try:
                     with st.spinner("Checking encoding…"):
                         utf8_path = ensure_utf8(in_path)
-                    with st.spinner("Streaming the export…"):
-                        ledger_master, rows = extract_any(utf8_path)
+                    ledger_master, rows = extract_any_with_progress(utf8_path)
                     with st.spinner("Filtering transactions…"):
                         df, _summary = build_tables(
                             ledger_master, rows, include_cancelled=include_cancelled_u,
@@ -650,8 +649,7 @@ def _render_tds_tab():
                 try:
                     with st.spinner("Checking encoding…"):
                         utf8_path = ensure_utf8(in_path)
-                    with st.spinner("Streaming the export…"):
-                        ledger_master, rows = extract_any(utf8_path)
+                    ledger_master, rows = extract_any_with_progress(utf8_path)
                     with st.spinner("Filtering transactions…"):
                         df, _summary = build_tables(
                             ledger_master, rows, include_cancelled=include_cancelled_u,
@@ -950,8 +948,7 @@ def _render_bank_recon_tab():
                 try:
                     with st.spinner("Checking encoding…"):
                         utf8_path = ensure_utf8(in_path)
-                    with st.spinner("Streaming the export…"):
-                        ledger_master, rows = extract_any(utf8_path)
+                    ledger_master, rows = extract_any_with_progress(utf8_path)
                     with st.spinner("Building ledger tables…"):
                         df, _summary = build_tables(
                             ledger_master, rows, include_cancelled=include_cancelled_u,

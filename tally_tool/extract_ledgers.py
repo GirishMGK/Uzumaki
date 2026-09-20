@@ -166,7 +166,13 @@ def clean_str(val) -> str:
 # --------------------------------------------------------------------------
 # Step 2 + 3: stream the JSON, collect Ledger masters and Voucher entries
 # --------------------------------------------------------------------------
-def extract(utf8_path: str):
+def extract(utf8_path: str, progress_callback=None):
+    """progress_callback(bytes_read: int, total_bytes: int), called
+    periodically (same cadence as the existing console log line) so a
+    caller (e.g. the Streamlit page) can drive a real progress bar off the
+    file's own byte position -- works regardless of voucher count or how
+    big any individual voucher is, unlike trying to estimate progress from
+    a row count with no way to know the total upfront."""
     ledger_master: dict[str, dict] = {}
     rows: list[dict] = []
 
@@ -174,6 +180,7 @@ def extract(utf8_path: str):
     entry_count = 0
     seq = 0
     t0 = time.time()
+    total_bytes = os.path.getsize(utf8_path)
 
     with open(utf8_path, "rb") as f:
         for item in ijson.items(f, "tallymessage.item"):
@@ -251,6 +258,12 @@ def extract(utf8_path: str):
                     print(f"  ...{voucher_count:,} vouchers / {entry_count:,} ledger entries "
                           f"processed ({elapsed:.0f}s elapsed)")
 
+                if progress_callback and voucher_count % 200 == 0:
+                    progress_callback(f.tell(), total_bytes)
+
+    if progress_callback:
+        progress_callback(total_bytes, total_bytes)
+
     elapsed = time.time() - t0
     print(f"  Finished streaming: {len(ledger_master):,} ledger masters, "
           f"{voucher_count:,} vouchers, {entry_count:,} ledger-entry rows ({elapsed:.0f}s)")
@@ -269,7 +282,10 @@ def extract(utf8_path: str):
 # at once, same reasoning as ijson's streaming for the JSON path -- each
 # LEDGER/VOUCHER element is cleared right after use.
 # --------------------------------------------------------------------------
-def extract_xml(utf8_path: str):
+def extract_xml(utf8_path: str, progress_callback=None):
+    """progress_callback(bytes_read, total_bytes) -- see extract()'s
+    docstring; same byte-position-based progress signal, just driven off
+    the underlying file object iterparse() reads from instead of ijson's."""
     import xml.etree.ElementTree as ET
 
     def _text(el, tag, default=""):
@@ -288,79 +304,89 @@ def extract_xml(utf8_path: str):
     entry_count = 0
     seq = 0
     t0 = time.time()
+    total_bytes = os.path.getsize(utf8_path)
 
-    for _event, elem in ET.iterparse(utf8_path, events=("end",)):
-        tag = elem.tag
+    # Pass an open file object (not the bare path) to iterparse() so we can
+    # read its current position for progress -- iterparse itself doesn't
+    # expose one when given a path string.
+    with open(utf8_path, "rb") as f:
+        for _event, elem in ET.iterparse(f, events=("end",)):
+            tag = elem.tag
 
-        if tag == "LEDGER":
-            name = clean_str(elem.get("NAME") or _text(elem, "NAME"))
-            if name:
-                ledger_master[name] = {
-                    "group": clean_str(_text(elem, "PARENT")),
-                    "opening_balance": clean_num(_text(elem, "OPENINGBALANCE")),
-                }
-            elem.clear()
-
-        elif tag == "VOUCHER":
-            voucher_count += 1
-            date = parse_tally_date(_text(elem, "DATE"))
-            vch_type = clean_str(_text(elem, "VOUCHERTYPENAME") or elem.get("VCHTYPE"))
-            vch_no = clean_str(_text(elem, "VOUCHERNUMBER"))
-            reference = clean_str(_text(elem, "REFERENCE"))
-            party = clean_str(_text(elem, "PARTYLEDGERNAME"))
-            narration = clean_str(_text(elem, "NARRATION"))
-            guid = clean_str(_text(elem, "GUID") or _text(elem, "REMOTEID"))
-            master_id = clean_str(_text(elem, "MASTERID"))
-            is_cancelled = _yes(elem, "ISCANCELLED")
-            is_optional = _yes(elem, "ISOPTIONAL")
-
-            entries = elem.findall("ALLLEDGERENTRIES.LIST") + elem.findall("LEDGERENTRIES.LIST")
-            for e in entries:
-                lname = clean_str(_text(e, "LEDGERNAME"))
-                if not lname:
-                    continue
-                # Same rule as extract(): the signed amount decides Debit/Credit,
-                # not ISDEEMEDPOSITIVE -- see extract()'s note above.
-                signed_amt = clean_num(_text(e, "AMOUNT"))
-                bill_ref = "; ".join(
-                    clean_str(_text(b, "NAME")) for b in e.findall("BILLALLOCATIONS.LIST")
-                    if _text(b, "NAME")
-                )
-                # Same graceful degrade as the JSON path -- empty when cost
-                # centres aren't enabled for this company/ledger.
-                cost_centre = "; ".join(
-                    clean_str(_text(c, "NAME")) for c in e.findall("COSTCENTREALLOCATIONS.LIST")
-                    if _text(c, "NAME")
-                )
-
-                seq += 1
-                entry_count += 1
-                rows.append(
-                    {
-                        "Ledger Name": lname,
-                        "Date": date,
-                        "Voucher Type": vch_type,
-                        "Voucher No": vch_no,
-                        "Reference": reference,
-                        "Party Ledger": party,
-                        "Narration": narration,
-                        "Debit": -signed_amt if signed_amt < 0 else 0.0,
-                        "Credit": signed_amt if signed_amt > 0 else 0.0,
-                        "Bill Reference": bill_ref,
-                        "Cost Centre": cost_centre,
-                        "Cancelled": is_cancelled,
-                        "Optional": is_optional,
-                        "Voucher GUID": guid,
-                        "Master ID": master_id,
-                        "_seq": seq,
+            if tag == "LEDGER":
+                name = clean_str(elem.get("NAME") or _text(elem, "NAME"))
+                if name:
+                    ledger_master[name] = {
+                        "group": clean_str(_text(elem, "PARENT")),
+                        "opening_balance": clean_num(_text(elem, "OPENINGBALANCE")),
                     }
-                )
+                elem.clear()
 
-            if voucher_count % 2000 == 0:
-                elapsed = time.time() - t0
-                print(f"  ...{voucher_count:,} vouchers / {entry_count:,} ledger entries "
-                      f"processed ({elapsed:.0f}s elapsed)")
-            elem.clear()
+            elif tag == "VOUCHER":
+                voucher_count += 1
+                date = parse_tally_date(_text(elem, "DATE"))
+                vch_type = clean_str(_text(elem, "VOUCHERTYPENAME") or elem.get("VCHTYPE"))
+                vch_no = clean_str(_text(elem, "VOUCHERNUMBER"))
+                reference = clean_str(_text(elem, "REFERENCE"))
+                party = clean_str(_text(elem, "PARTYLEDGERNAME"))
+                narration = clean_str(_text(elem, "NARRATION"))
+                guid = clean_str(_text(elem, "GUID") or _text(elem, "REMOTEID"))
+                master_id = clean_str(_text(elem, "MASTERID"))
+                is_cancelled = _yes(elem, "ISCANCELLED")
+                is_optional = _yes(elem, "ISOPTIONAL")
+
+                entries = elem.findall("ALLLEDGERENTRIES.LIST") + elem.findall("LEDGERENTRIES.LIST")
+                for e in entries:
+                    lname = clean_str(_text(e, "LEDGERNAME"))
+                    if not lname:
+                        continue
+                    # Same rule as extract(): the signed amount decides Debit/Credit,
+                    # not ISDEEMEDPOSITIVE -- see extract()'s note above.
+                    signed_amt = clean_num(_text(e, "AMOUNT"))
+                    bill_ref = "; ".join(
+                        clean_str(_text(b, "NAME")) for b in e.findall("BILLALLOCATIONS.LIST")
+                        if _text(b, "NAME")
+                    )
+                    # Same graceful degrade as the JSON path -- empty when cost
+                    # centres aren't enabled for this company/ledger.
+                    cost_centre = "; ".join(
+                        clean_str(_text(c, "NAME")) for c in e.findall("COSTCENTREALLOCATIONS.LIST")
+                        if _text(c, "NAME")
+                    )
+
+                    seq += 1
+                    entry_count += 1
+                    rows.append(
+                        {
+                            "Ledger Name": lname,
+                            "Date": date,
+                            "Voucher Type": vch_type,
+                            "Voucher No": vch_no,
+                            "Reference": reference,
+                            "Party Ledger": party,
+                            "Narration": narration,
+                            "Debit": -signed_amt if signed_amt < 0 else 0.0,
+                            "Credit": signed_amt if signed_amt > 0 else 0.0,
+                            "Bill Reference": bill_ref,
+                            "Cost Centre": cost_centre,
+                            "Cancelled": is_cancelled,
+                            "Optional": is_optional,
+                            "Voucher GUID": guid,
+                            "Master ID": master_id,
+                            "_seq": seq,
+                        }
+                    )
+
+                if voucher_count % 2000 == 0:
+                    elapsed = time.time() - t0
+                    print(f"  ...{voucher_count:,} vouchers / {entry_count:,} ledger entries "
+                          f"processed ({elapsed:.0f}s elapsed)")
+                if progress_callback and voucher_count % 200 == 0:
+                    progress_callback(f.tell(), total_bytes)
+                elem.clear()
+
+    if progress_callback:
+        progress_callback(total_bytes, total_bytes)
 
     elapsed = time.time() - t0
     print(f"  Finished streaming: {len(ledger_master):,} ledger masters, "
@@ -378,12 +404,16 @@ def sniff_format(utf8_path: str) -> str:
     return "json"
 
 
-def extract_any(utf8_path: str):
+def extract_any(utf8_path: str, progress_callback=None):
     """Dispatches to extract() or extract_xml() based on the file's actual
     content, so callers (CLI, Streamlit page) don't need to know or guess
     which export format the user gave them."""
     fmt = sniff_format(utf8_path)
-    return extract_xml(utf8_path) if fmt == "xml" else extract(utf8_path)
+    return (
+        extract_xml(utf8_path, progress_callback=progress_callback)
+        if fmt == "xml"
+        else extract(utf8_path, progress_callback=progress_callback)
+    )
 
 
 # --------------------------------------------------------------------------
