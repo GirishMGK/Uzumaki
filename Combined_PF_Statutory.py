@@ -136,7 +136,7 @@ def _detect_pf_type(text: str) -> str:
     if re.search(r"COMBINED\s+CHALLAN\s+OF\s+A/C|CHALLAN\s+FOR\s+WAGE\s+MONTH"
                  r"|Dues\s+for\s+the\s+wage\s+month|system\s+generated\s+challan", text, re.I):
         return "CHALLAN"
-    if re.search(r"ELECTRONIC\s+CHALLAN\s+CUM\s+RETURN|Return\s+Month"
+    if re.search(r"ELECTRONIC\s+CHALLAN\s+CUM\s+RETURN|RETURN\s+STATEMENT|Return\s+Month"
                  r"|Salary\s+Disbursement\s+Date|ECR\s+Type\b", text, re.I):
         return "RETURN"
     return "CHALLAN"
@@ -144,7 +144,7 @@ def _detect_pf_type(text: str) -> str:
 def _detect_pf_type_plumber(file_path) -> str:
     _C = re.compile(r"COMBINED\s+CHALLAN\s+OF\s+A/C|CHALLAN\s+FOR\s+WAGE\s+MONTH"
                     r"|Dues\s+for\s+the\s+wage\s+month|system\s+generated\s+challan", re.I)
-    _R = re.compile(r"ELECTRONIC\s+CHALLAN\s+CUM\s+RETURN|Return\s+Month"
+    _R = re.compile(r"ELECTRONIC\s+CHALLAN\s+CUM\s+RETURN|RETURN\s+STATEMENT|Return\s+Month"
                     r"|Salary\s+Disbursement\s+Date|ECR\s+Type\b", re.I)
     try:
         with pdfplumber.open(file_path) as pdf:
@@ -422,37 +422,62 @@ def extract_pf_data(pdf_path) -> dict:
     }
 
 def extract_ecr_return(file_name, text, file_path=None):
-    kv = {}
-    if file_path:
-        try:
-            with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages:
-                    for seg in re.split(r'\s{2,}', page.extract_text() or ""):
-                        m = re.match(r'^(.+?)\s*:\s*(.+)$', seg.strip())
-                        if m:
-                            kv.setdefault(m.group(1).strip().lower(), m.group(2).strip())
-        except Exception:
-            pass
-    def f(keys, pat, num=False):
-        for k in keys:
-            v = kv.get(k, "")
-            if v and v.lower() not in ("none", "na"): return re.sub(r"[,\s]", "", v) if num else v
+    """Real feedback, with a real "Return Statement" PDF: this previously
+    targeted a different, older "Electronic Challan cum Return (ECR)"
+    document (with "ECR Type"/"TRRN Number"/"Wage Month : Mon-YYYY"
+    labels) that a real Return-type upload apparently no longer looks
+    like at all -- the actual document is titled "RETURN STATEMENT
+    ( Regular Return ) : Sep 2025" and uses a completely different label
+    set (Name of Establishment, Establishment Id, LIN, Contribution Rate
+    (%), Return File Id, Uploaded Date Time, Total Members, Exemption
+    Status, Remarks, Total EPF/EPS/EPF-EPS Contribution, Total Refund of
+    Advances), none of which the old regexes recognized -- hence every
+    cell coming back blank. Rewritten against that real layout, reading
+    directly off the already-clean fitz text passed in as `text` (not
+    re-opening the file via pdfplumber, which was found elsewhere in this
+    file to corrupt tightly-packed table cells on this kind of document).
+    The old ECR-Type labels are kept as a fallback in case that older
+    document variant is still encountered."""
+    def g1(pat):
         m = re.search(pat, text, re.I)
-        return re.sub(r"[,\s]", "", m.group(1)) if m and num else (m.group(1).strip() if m else "")
+        return m.group(1).strip() if m else ""
+
+    def num(pat):
+        m = re.search(pat, text, re.I)
+        return m.group(1).replace(",", "") if m else ""
+
+    title_m = re.search(r"RETURN STATEMENT\s*\(\s*([^)]+?)\s*\)\s*:\s*([A-Za-z]+\s+\d{4})", text, re.I)
+    return_type = title_m.group(1).strip() if title_m else ""
+    wage_month_raw = title_m.group(2).strip() if title_m else g1(r"Wage Month\s*:?\s*([A-Za-z]+[\s\-]\d{4})")
+    # normalize_period()'s formats expect "Mon-YYYY" (hyphenated); the
+    # title gives "Mon YYYY" (space-separated) -- convert the separator
+    # before normalizing rather than leaving it un-normalized.
+    wage_month_raw = re.sub(r"\s+", "-", wage_month_raw) if wage_month_raw else wage_month_raw
+
     return {
         "File Name": file_name,
-        "Name of Establishment": f(["name of establishment"], r"Name of Establishment\s*:?\s*(.+?)(?=\n|$)"),
-        "Establishment Id": f(["establishment id"], r"Establishment Id\s*:?\s*([A-Z0-9/\-]+)"),
-        "Wage Month": f(["wage month"], r"Wage Month\s*:?\s*([A-Za-z]+-\d{4})"),
-        "Return Month": f(["return month"], r"Return Month\s*:?\s*([A-Za-z]+-\d{4})"),
-        "ECR Type": f(["ecr type"], r"ECR Type\s*:?\s*(\w+)"),
-        "TRRN No": f(["trrn number", "trrn no", "trrn"], r"TRRN(?:\s+Number|\s+No\.?|\b)\s*[:\s]+(\d+)"),
-        "Total Members": f(["total members", "total subscribers"],
-                           r"Total\s+(?:Members|Subscribers)\s*:?\s*([\d,]+)", num=True),
-        "Total EPF Contribution": f(["total epf contribution"],
-                                    r"Total EPF Contribution\s*:?\s*([\d,]+)", num=True),
-        "Total EPS Contribution": f(["total eps contribution"],
-                                    r"Total EPS Contribution\s*:?\s*([\d,]+)", num=True),
+        "Return Type": return_type,
+        "Wage Month": _normalize_period(wage_month_raw),
+        "Name of Establishment": g1(r"Name of Establishment\s*:?\s+(.+?)(?:\n|$)"),
+        "Establishment Id": g1(r"Establishment Id\s*:?\s+(\S+)"),
+        "LIN": g1(r"\bLIN\s*:?\s+(\S+)"),
+        "Contribution Rate (%)": g1(r"Contribution Rate\s*\(%\)\s*:?\s+([\d.]+)"),
+        "Return File Id": g1(r"Return File Id\s*:?\s+(\S+)"),
+        "Uploaded Date Time": g1(
+            r"Uploaded Date Time\s*:?\s+(\d{1,2}[-/][A-Za-z]{3}[-/]\d{4}\s+[\d:]+)"
+        ),
+        "Total Members": num(r"Total Members\s*:?\s+(\d+)")
+                          or num(r"Total\s+(?:Members|Subscribers)\s*:?\s*([\d,]+)"),
+        "Exemption Status": g1(r"Exemption Status\s*:?\s+(\S+)"),
+        "Remarks": g1(r"Remarks\s*:?\s+(.+?)(?:\n|$)"),
+        "Total EPF Contribution": num(r"Total EPF Contribution\s*:?\s+([\d,]+)"),
+        "Total EPS Contribution": num(r"Total EPS Contribution\s*:?\s+([\d,]+)"),
+        "Total EPF-EPS Contribution": num(r"Total EPF-EPS Contribution\s*:?\s+([\d,]+)"),
+        "Total Refund of Advances": num(r"Total Refund of Advances\s*:?\s+([\d,]+)"),
+        # Older ECR-type document fields, kept as a fallback -- blank on
+        # a real "Return Statement" (this document has no such labels).
+        "ECR Type": g1(r"ECR Type\s*:?\s*(\w+)"),
+        "TRRN No": g1(r"TRRN(?:\s+Number|\s+No\.?|\b)\s*[:\s]+(\d+)"),
     }
 
 # ── statutory detection / extraction (same as statutory_extractor.py) ─────────
