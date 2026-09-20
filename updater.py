@@ -56,6 +56,12 @@ _VERSION_URL = f"{_GH_RELEASE_BASE}/version.txt"
 _EXE_URL = f"{_GH_RELEASE_BASE}/Uzumaki.exe"
 _TIMEOUT = 6  # seconds — a background check must never meaningfully delay anything
 
+# Set by remote_version() on failure -- the exception type/message that
+# "couldn't reach GitHub" was hiding. See remote_version()'s own comment for
+# why this matters (SSL/cert errors and firewall blocks look identical to a
+# genuine outage otherwise).
+_last_remote_error: str | None = None
+
 
 def is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
@@ -77,10 +83,23 @@ def local_version() -> str:
 
 
 def remote_version() -> str | None:
+    global _last_remote_error
     try:
         with urllib.request.urlopen(_VERSION_URL, timeout=_TIMEOUT) as resp:
+            _last_remote_error = None
             return resp.read().decode("utf-8").strip()
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        # Stash *why* it failed instead of just returning None -- a bare
+        # "couldn't reach GitHub" is indistinguishable from a genuine outage,
+        # a DNS failure, an SSL/certificate error (a classic PyInstaller
+        # pitfall: the frozen build's urllib may not resolve trusted CAs the
+        # same way the dev machine's own Python install does), or a
+        # firewall/AV product silently blocking an unsigned .exe's outbound
+        # connections -- all of which need a different fix. Reported by
+        # check_update_status() so the UI shows something diagnosable
+        # instead of a dead end.
+        detail = getattr(e, "reason", None) or e
+        _last_remote_error = f"{type(e).__name__}: {detail}"
         return None
 
 
@@ -117,18 +136,26 @@ def check_update_status() -> dict:
 
     Returns a dict:
         {"local": str, "remote": str | None, "update_available": bool,
-         "checked": bool}
+         "checked": bool, "error": str | None}
     "checked" is False when running from source (nothing to self-replace)
     or when the remote check itself failed (offline/GitHub unreachable) --
-    in both cases "update_available" is always False too.
+    in both cases "update_available" is always False too. "error" carries
+    the actual exception (type + message) behind a failed remote check --
+    None when running from source (nothing was even attempted) or when the
+    check succeeded -- so a real cause (DNS failure, SSL/certificate error,
+    a firewall/AV product blocking the unsigned .exe's outbound connections)
+    doesn't get flattened into an indistinguishable "offline?" guess.
     """
     local = local_version()
     if not is_frozen():
-        return {"local": local, "remote": None, "update_available": False, "checked": False}
+        return {"local": local, "remote": None, "update_available": False, "checked": False, "error": None}
     remote = remote_version()
     if remote is None:
-        return {"local": local, "remote": None, "update_available": False, "checked": False}
-    return {"local": local, "remote": remote, "update_available": remote != local, "checked": True}
+        return {
+            "local": local, "remote": None, "update_available": False,
+            "checked": False, "error": _last_remote_error,
+        }
+    return {"local": local, "remote": remote, "update_available": remote != local, "checked": True, "error": None}
 
 
 def _write_and_launch_helper(exe_path: str, new_path: str) -> bool:

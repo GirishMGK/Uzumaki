@@ -165,6 +165,8 @@ def _render_update_sidebar() -> None:
                     st.caption("✅ You're on the latest version.")
                 elif status["remote"] is None and status["local"] != "0.0.0-dev":
                     st.caption("Couldn't reach GitHub to check — offline?")
+                    if status.get("error"):
+                        st.caption(f"`{status['error']}`")
 
         st.markdown(
             '<div class="sa-credit">Built by <strong>Girish</strong></div>',

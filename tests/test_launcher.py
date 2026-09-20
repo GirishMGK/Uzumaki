@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import urllib.error
 from unittest import mock
 
 import pytest
@@ -87,7 +88,9 @@ def test_check_update_status_reports_no_side_effects():
          mock.patch.object(updater, "self_update_and_relaunch") as upd:
         status = updater.check_update_status()
     upd.assert_not_called()
-    assert status == {"local": "v1", "remote": "v2", "update_available": True, "checked": True}
+    assert status == {
+        "local": "v1", "remote": "v2", "update_available": True, "checked": True, "error": None,
+    }
 
 
 def test_check_update_status_when_not_frozen():
@@ -104,6 +107,38 @@ def test_check_update_status_when_offline():
         status = updater.check_update_status()
     assert status["checked"] is False
     assert status["update_available"] is False
+
+
+def test_remote_version_failure_captures_diagnosable_error_not_just_none():
+    """Regression guard: a bare None on failure is indistinguishable from a
+    genuine outage, a DNS failure, an SSL/certificate error (a classic
+    PyInstaller pitfall on a frozen build), or a firewall/AV product
+    blocking the unsigned .exe's outbound connections -- all real, found
+    live on a real user's machine, and all needing a different fix. The
+    actual exception must be captured so the UI can show it instead of an
+    unhelpful "offline?" guess."""
+    sys.frozen = True
+    sys._MEIPASS = REPO_ROOT
+    with mock.patch(
+        "urllib.request.urlopen",
+        side_effect=urllib.error.URLError("[SSL: CERTIFICATE_VERIFY_FAILED] ..."),
+    ):
+        remote = updater.remote_version()
+        status = updater.check_update_status()
+    assert remote is None
+    assert status["error"] is not None
+    assert "CERTIFICATE_VERIFY_FAILED" in status["error"]
+
+
+def test_check_update_status_error_is_none_on_success_or_when_not_frozen():
+    with mock.patch.object(updater, "remote_version", return_value="v2"), \
+         mock.patch.object(updater, "local_version", return_value="v1"):
+        sys.frozen = True
+        sys._MEIPASS = REPO_ROOT
+        assert updater.check_update_status()["error"] is None
+
+    sys.frozen = False
+    assert updater.check_update_status()["error"] is None
 
 
 def test_perform_update_and_restart_reports_failure_without_exiting():
