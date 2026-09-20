@@ -158,57 +158,266 @@ def _detect_pf_type_plumber(file_path) -> str:
     return ""
 
 def extract_pf_trrn(file_name, text):
-    # Full implementation in PF.py — abbreviated key extraction here
+    # Ported from PF.py's fuller implementation (this file previously had
+    # an abbreviated version that dropped the per-account Account-1/2/10/
+    # 21/22 breakdown and the 7Q/14B damages-for-delay & interest-for-delay
+    # columns entirely) -- real feedback: every "Payment Confirmation
+    # Receipt" PDF must land in the TRRN sheet, and when it carries 7Q
+    # (interest) / 14B (damages) amounts alongside the base Account
+    # amount, those need their own separate columns, not folded into
+    # "Total Amount (Rs)".
     lines = [l.strip() for l in text.splitlines()]
     kv = {}
-    for i, line in enumerate(lines):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line or line == ':':
+            i += 1
+            continue
+        if line.lower() == "payment confirmation" and i + 1 < len(lines):
+            merged = line + " " + lines[i + 1]
+            m = re.match(r'^(.+?)\s*:\s*(.+)$', merged)
+            if m:
+                kv[m.group(1).strip().lower()] = m.group(2).strip()
+                i += 2
+                continue
         m = re.match(r'^(.+?)\s*:\s*(.+)$', line)
         if m:
             kv[m.group(1).strip().lower()] = m.group(2).strip()
+            i += 1
+            continue
+        if line and not re.match(r'^:+$', line):
+            key = line.lower()
+            for j in range(i + 1, min(i + 4, len(lines))):
+                cand = lines[j].strip()
+                if cand and cand != ':':
+                    kv[key] = cand
+                    break
+        i += 1
+
+    def acct_cols(n):
+        # Three numbers on the "Account-N Amount (Rs)" row = Amount, 7Q,
+        # 14B, in that column order (matches the Accounts / Amount (Rs) /
+        # 7Q / 14B table header on the actual PDF) -- only present when the
+        # receipt actually has 7Q/14B amounts; most challans/receipts don't.
+        m = re.search(rf"Account-{n}\s+Amount\s*\(Rs\)\s*[:\s]+([\d,]+)\s+([\d,]+)\s+([\d,]+)", text, re.I)
+        if m:
+            return m.group(1).replace(",", ""), m.group(2).replace(",", ""), m.group(3).replace(",", "")
+        # No 7Q/14B columns -- just "Account-N Amount (Rs) : <amount>".
+        # (A previous "<amount> Account-N Amount (Rs)" fallback -- for an
+        # amount-before-label layout -- was removed here: real bug found
+        # while testing a receipt with no 7Q/14B table -- since it searches
+        # for ANY number immediately preceding the label text, it happily
+        # matched the PREVIOUS account row's trailing amount instead
+        # whenever this exact "label : amount" layout repeats down a
+        # table, shifting every account's value by one row.)
+        m = re.search(rf"Account-{n}\s+Amount\s*\(Rs\)\s*[:\s]+([\d,]+)", text, re.I)
+        if m:
+            return m.group(1).replace(",", ""), "", ""
+        for key in [f"account-{n} amount (rs)", f"account-{n} amount(rs)"]:
+            v = kv.get(key, "")
+            if v:
+                nums = re.findall(r"[\d,]+", v)
+                if nums:
+                    return nums[0].replace(",", ""), "", ""
+        return "", "", ""
+
+    _acct_nums = [1, 2, 10, 21, 22]
+    _cols = {n: acct_cols(n) for n in _acct_nums}
+
+    def _sum_col(idx):
+        total, has_val = 0, False
+        for n in _acct_nums:
+            v = _cols[n][idx]
+            if v:
+                try:
+                    total += int(v)
+                    has_val = True
+                except ValueError:
+                    pass
+        return str(total) if has_val else ""
+
     def fv(*labels):
         for lbl in labels:
             v = kv.get(lbl.lower(), "")
-            if v: return v
+            if v:
+                return v
         return ""
+
+    _DATE_RE = r"(\d{2}[-/\.]\w{3}[-/\.]\d{4}|\d{2}[-/\.]\d{2}[-/\.]\d{4})"
+
+    def date_val(*labels):
+        for lbl in labels:
+            v = kv.get(lbl.lower(), "")
+            if v:
+                m = re.search(_DATE_RE, v)
+                if m:
+                    return m.group(1)
+                if re.match(r'^\d{2}[-/\.]\w', v):
+                    return v.split()[0]
+        for lbl in labels:
+            m = re.search(re.escape(lbl) + r"[\s\S]{0,30}?" + _DATE_RE, text, re.I)
+            if m:
+                return m.group(1)
+        return ""
+
+    wage_raw = fv("wage month")
+    wage_raw = re.split(r'\s+\d{2}:', wage_raw)[0].strip() if wage_raw else ""
+    total_amt = fv("total amount (rs)", "total amount(rs)")
+    if not total_amt or not re.search(r'\d', total_amt):
+        total_amt = g(r"Total Amount\s*\(Rs\)\s*[:\s]+([\d,]+)", text)
+    bank = fv("payment confirmation bank", "bank name", "remitting bank", "bank")
+    if not bank:
+        for pat in [
+            r"Payment\s+Confirmation\s*\n?\s*Bank\s*[:\s]+([A-Za-z][^\n]+)",
+            r"Bank\s+Name\s*[:\s]+([A-Za-z][^\n]+)",
+            r"Bank\s*[:\s]+([A-Z][A-Z &]+(?:BANK|LTD)[^\n]*)",
+        ]:
+            m = re.search(pat, text, re.I)
+            if m:
+                bank = m.group(1).strip()
+                break
+
     return {
         "File Name": file_name,
         "Client Name": fv("establishment name"),
         "Establishment ID": fv("establishment id"),
         "TRRN No": fv("trrn no", "trrn number", "trrn"),
         "Challan Status": fv("challan status"),
-        "Wage Month": _normalize_period(fv("wage month")),
-        "Total Amount (Rs)": fv("total amount (rs)", "total amount(rs)"),
-        "Payment Date": fv("payment date"),
-        "Bank": fv("bank name", "bank"),
+        "Challan Type": fv("challan type"),
+        "Wage Month": _normalize_period(wage_raw),
+        "Total Members": fv("total members"),
+        "Total Amount (Rs)": total_amt,
+        "Account-1 (EPF)": _cols[1][0],
+        "Account-2 (Admin EPF)": _cols[2][0],
+        "Account-10 (EPS)": _cols[10][0],
+        "Account-21 (EDLI)": _cols[21][0],
+        "Account-22 (Admin)": _cols[22][0],
+        "7Q Total": _sum_col(1),
+        "14B Total": _sum_col(2),
+        "Payment Date": date_val("payment date", "date of payment", "challan date", "value date"),
+        "Payment Confirmation Date": date_val("payment confirmation date", "confirmation date"),
+        "Bank": bank,
         "CRN": fv("crn"),
     }
 
+def _parse_challan_particulars_table(text: str):
+    """Regex-based extraction of a "Provisional Challan"-style particulars
+    table (Employee's Share Of Contribution / Employer's Share Of
+    Contribution / Admin/ Insp. Charges / 7Q / 14B rows, each with
+    A/C.01/02/10/21/22 + Total columns, "NA" for accounts that don't
+    apply), read directly off the linear extracted text -- NOT
+    pdfplumber's extract_tables() structural reconstruction, which was
+    found to corrupt cell values live: whenever a PARTICULARS cell's text
+    wraps within its column width, pdfplumber's table reconstruction
+    interleaves the wrapped fragment into the adjacent Amount column
+    instead of keeping it in the Particulars cell (e.g. "Employee's Share
+    Of Contribution" / "533766" corrupted into "...Of Contri" /
+    "bu5t3io3n766"). A fixed-label regex per row sidesteps that failure
+    mode entirely, at the cost of only recognizing this specific table's
+    known row labels rather than an arbitrary table shape.
+
+    Returns (DataFrame, grand_total) if this table is found, else
+    (None, "")."""
+    _TOKEN = r"(NA|[\d,]+)"
+    row_specs = [
+        ("Employee's Share Of Contribution", r"Employee'?s\s+Share\s+Of\s+Contribution"),
+        ("Employer's Share Of Contribution", r"Employer'?s\s+Share\s+Of\s+Contribution"),
+        ("Admin/ Insp. Charges", r"Admin[/\s]*\s*Insp\.?\s*Charges"),
+        ("7Q", r"(?<![\d.])7Q(?!\w)"),
+        ("14B", r"(?<![\d.])14B(?!\w)"),
+    ]
+    rows = []
+    for label, pat in row_specs:
+        # Boundary between the label and the first number is \s* (not
+        # \s+): real fitz text extraction sometimes drops the space
+        # between adjacent table cells entirely -- confirmed live, e.g.
+        # "...Of Contribution533766" with no separator at all -- so a
+        # required \s+ there missed rows whose label happens not to
+        # produce a visible gap, while every number-to-number boundary
+        # still requires \s+ since two bare digit runs jammed together
+        # would be ambiguous to split back apart.
+        m = re.search(pat + r"\s*" + r"\s+".join([_TOKEN] * 6), text, re.I)
+        if not m:
+            continue
+        vals = [g if g.upper() == "NA" else g.replace(",", "") for g in m.groups()]
+        rows.append([label] + vals)
+    if not rows:
+        return None, ""
+    columns = ["Particulars", "A/C.01 (Rs.)", "A/C.02 (Rs.)", "A/C.10 (Rs.)",
+               "A/C.21 (Rs.)", "A/C.22 (Rs.)", "Total"]
+    df = pd.DataFrame(rows, columns=columns)
+    gt_m = re.search(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I)
+    grand_total = gt_m.group(1).replace(",", "") if gt_m else ""
+    return df, grand_total
+
+
 def extract_pf_data(pdf_path) -> dict:
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[0]
-        text = page.extract_text() or ""
-        tables = page.extract_tables()
+    # Use fitz's text extraction (_read_pdf_text), not pdfplumber's
+    # page.extract_text(), for every regex below -- pdfplumber's own text
+    # extraction was found to corrupt exactly the kind of tightly-packed/
+    # wrapped table cell this challan layout has: characters from the
+    # Amount column interleaved INTO the middle of the Particulars label
+    # text ("...Of Contribution" + "533766" garbled into "...Of
+    # Contribu5t3io3n766"), not just its extract_tables() reconstruction.
+    # fitz doesn't have this failure mode on the same file. pdfplumber's
+    # extract_tables() is still used below, but only as a last-resort
+    # fallback for challan layouts _parse_challan_particulars_table()
+    # doesn't recognize.
+    with open(pdf_path, "rb") as f:
+        file_bytes = f.read()
+    text = _read_pdf_text(file_bytes)
     is_new = bool(re.search(r"CHALLAN FOR WAGE MONTH", text, re.I))
-    comp_m = re.search(r"^\s*Name\s*:\s*(.+)", text, re.I | re.M) if is_new else \
-             re.search(r"Establishment Code & Name\s+\S+\s+(.*?)(?=\nAddress|\n\n|$)", text, re.DOTALL)
+
+    # Establishment name: real layouts vary in which label they use --
+    # "Establishment Code & Name : <code> <name>" (seen on a real
+    # "Provisional Challan", which also matches CHALLAN FOR WAGE MONTH
+    # above, so it isn't safe to assume that header implies the "Name :"
+    # label alone) vs a plain "Name :" line elsewhere. Try both regardless
+    # of is_new instead of picking one based on it.
+    comp_m = (
+        re.search(r"Establishment Code\s*&\s*Name\s*:?\s*\S+\s+(.+?)(?:\n|$)", text, re.I)
+        or re.search(r"^\s*Name\s*:\s*(.+)", text, re.I | re.M)
+        or re.search(r"Establishment Code & Name\s+\S+\s+(.*?)(?=\nAddress|\n\n|$)", text, re.DOTALL)
+    )
     company = comp_m.group(1).strip().splitlines()[0].strip() if comp_m else ""
+
+    estab_id_m = re.search(r"Establishment (?:Code(?:\s*&\s*Name)?|ID)\s*:?\s*(\S+)", text, re.I)
+    establishment_id = estab_id_m.group(1).strip() if estab_id_m else ""
+
+    generated_on_m = re.search(
+        r"Generated\s+On\s*:?\s*([\d]{1,2}[-/][A-Za-z]{3}[-/][\d]{4}\s+[\d:]+|[\d]{1,2}[-/][\d]{1,2}[-/][\d]{4}\s+[\d:]+)",
+        text, re.I,
+    )
+    generated_on = generated_on_m.group(1).strip() if generated_on_m else ""
+
     wm_m = re.search(r"CHALLAN FOR WAGE MONTH\s*[:\-]\s*(\w+\s+\d{4})", text, re.I) if is_new else \
            re.search(r"Dues for the wage month of\s+(\w+\s*\d{4})", text, re.I)
     month = wm_m.group(1).replace(" ", "") if wm_m else ""
-    gt_matches = list(re.finditer(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I))
-    gt_m = gt_matches[-1] if gt_matches else None
-    detail_table_df = None
-    for t in (tables or []):
-        if not t: continue
-        header = [str(c or "").strip() for c in (t[0] or [])]
-        if "PARTICULARS" in " ".join(header).upper() and "A/C" in " ".join(header).upper():
-            cleaned = [[c if c is not None else "" for c in row] for row in t[1:] if row]
-            if cleaned:
-                detail_table_df = pd.DataFrame(cleaned, columns=header)
-                break
+
+    regex_df, regex_grand_total = _parse_challan_particulars_table(text)
+    if regex_df is not None:
+        detail_table_df = regex_df
+        grand_total = regex_grand_total
+    else:
+        gt_matches = list(re.finditer(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I))
+        grand_total = gt_matches[-1].group(1) if gt_matches else ""
+        detail_table_df = None
+        with pdfplumber.open(pdf_path) as pdf:
+            tables = pdf.pages[0].extract_tables()
+        for t in (tables or []):
+            if not t: continue
+            header = [str(c or "").strip() for c in (t[0] or [])]
+            if "PARTICULARS" in " ".join(header).upper() and "A/C" in " ".join(header).upper():
+                cleaned = [[c if c is not None else "" for c in row] for row in t[1:] if row]
+                if cleaned:
+                    detail_table_df = pd.DataFrame(cleaned, columns=header)
+                    break
+
     return {
-        "Company": company, "Month": month,
-        "Grand Total": gt_m.group(1) if gt_m else "",
+        "Company": company, "Establishment ID": establishment_id,
+        "Month": month, "Generated On": generated_on,
+        "Grand Total": grand_total,
         "Detail Table": detail_table_df, "Charges Table": detail_table_df,
     }
 
