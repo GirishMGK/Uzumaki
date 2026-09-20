@@ -14,16 +14,34 @@ streamlit run Home.py
 
 ## Run as a Windows app (Uzumaki.exe)
 
-Download the latest `Uzumaki.exe` from the repo's
-[**Releases**](../../releases/tag/latest) page (or build it yourself — see
-"Building the .exe" below) and double-click it. It opens in its own native
-desktop window (via [pywebview](https://pywebview.flowrl.com/), using
-Windows' built-in WebView2 runtime) — its own taskbar entry, no browser
-address bar/tabs, and no console window either. No Python install required.
+Download the latest `Uzumaki.exe` from
+[**GirishMGK/Uzumaki-releases**](https://github.com/GirishMGK/Uzumaki-releases/releases/tag/latest)
+(or build it yourself — see "Building the .exe" below) and double-click it.
+It opens in its own native desktop window (via
+[pywebview](https://pywebview.flowrl.com/), using Windows' built-in WebView2
+runtime) — its own taskbar entry, no browser address bar/tabs, and no console
+window either. No Python install required.
 
 Under the hood it still runs the same Streamlit hub — just as a headless
 background process the window connects to on a local port, rather than
 Streamlit opening a browser tab itself.
+
+**Why releases live in a separate repo:** this repo (source) is private.
+GitHub Release assets on a private repo require an authenticated request to
+download, which would mean `Uzumaki.exe`'s self-updater needs a credential
+baked into every distributed copy — and anyone who extracts that credential
+(PyInstaller `.exe`s are not hard to decompile back to close-to-original
+Python; see the note further down) gets live access to this entire private
+repo, a far worse leak than the app's own bytecode. Publishing built releases
+to [**Uzumaki-releases**](https://github.com/GirishMGK/Uzumaki-releases) — a
+small, source-free **public** repo — instead keeps the self-update
+check/download fully anonymous, with nothing to leak. `build-exe.yml`
+publishes there using a fine-grained PAT (repo secret `RELEASES_REPO_TOKEN`,
+scoped to *only* that repo) that never leaves GitHub Actions and is never
+bundled into the `.exe`. One unavoidable caveat: any `.exe` built and
+distributed *before* this split has the old (now-private) repo's URL baked
+in and can no longer self-update — only builds published after this change
+know to look at `Uzumaki-releases`.
 
 **Auto-update:** every time you launch `Uzumaki.exe`, it checks GitHub for a
 newer build. If one exists (published automatically whenever `main` is

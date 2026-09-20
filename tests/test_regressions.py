@@ -1502,3 +1502,35 @@ def test_update_swap_helper_hides_its_console_window_on_windows():
     assert "CREATE_NO_WINDOW" in helper_src
     assert "STARTUPINFO" in helper_src
     assert "SW_HIDE" in helper_src
+
+
+# ── updater.py / build-exe.yml: releases must publish to the public repo ───
+def test_updater_downloads_from_public_releases_repo_not_private_source():
+    """
+    Regression guard for the private-repo migration: `Uzumaki` (source) is
+    private, and GitHub Release assets on a private repo require an
+    authenticated request -- an anonymous download (what updater.py does)
+    would just fail, forever, for every distributed .exe. Releases must
+    come from the separate public Uzumaki-releases repo instead, and
+    build-exe.yml must publish there using a scoped PAT, never the default
+    same-repo GITHUB_TOKEN (which can't write to a different repo anyway).
+    """
+    src = open(os.path.join(REPO_ROOT, "updater.py"), encoding="utf-8").read()
+    assert 'RELEASES_REPO = "Uzumaki-releases"' in src, (
+        "updater.py must download releases from the separate public "
+        "Uzumaki-releases repo, not the private Uzumaki source repo"
+    )
+    assert '{RELEASES_OWNER}/{RELEASES_REPO}' in src.split("_GH_RELEASE_BASE")[1].split("\n")[0], (
+        "_GH_RELEASE_BASE must be built from RELEASES_OWNER/RELEASES_REPO"
+    )
+
+    workflow = open(
+        os.path.join(REPO_ROOT, ".github", "workflows", "build-exe.yml"), encoding="utf-8"
+    ).read()
+    assert "repository: GirishMGK/Uzumaki-releases" in workflow, (
+        "build-exe.yml must publish releases to GirishMGK/Uzumaki-releases explicitly"
+    )
+    assert "secrets.RELEASES_REPO_TOKEN" in workflow, (
+        "build-exe.yml must authenticate to Uzumaki-releases with the scoped "
+        "RELEASES_REPO_TOKEN secret, not the default same-repo GITHUB_TOKEN"
+    )
