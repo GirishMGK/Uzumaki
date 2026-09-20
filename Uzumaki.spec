@@ -97,16 +97,16 @@ datas = [
     (os.path.join(ROOT, "statutory_extractor.py"), "."),
     (os.path.join(ROOT, "Combined_PF_Statutory.py"), "."),
     _tree("_pages"),
-    # common/ (shared pure-Python helpers, e.g. common/lease_extractor.py)
+    # common/ (shared pure-Python helpers, e.g. common/statutory_extractors.py)
     # was previously bundled only by accident: PyInstaller's static analysis
     # discovered common.period_utils/common.statutory_extractors because
     # Combined_PF_Statutory.py (a traced extra Analysis() script below)
-    # imports them at its own top level. A _pages/*.py page -- e.g. the new
-    # _pages/lease_summary.py -- isn't traced that way (see the runpy/exec
-    # note further down), so a module only ever imported from one of those
-    # would silently be missing from the frozen build. Tree it explicitly,
-    # same as _pages/ itself, so every common/ import resolves from disk
-    # regardless of which page reaches for it.
+    # imports them at its own top level. A plain _pages/*.py page isn't
+    # traced that way (see the runpy/exec note further down), so a module
+    # only ever imported from one of those would silently be missing from
+    # the frozen build. Tree it explicitly, same as _pages/ itself, so
+    # every common/ import resolves from disk regardless of which page
+    # reaches for it.
     _tree("common"),
     _tree("tools"),
     _tree("redaction_tool"),

@@ -174,18 +174,6 @@ _TOOLS = [
                 "closing stock without reconnecting for each one.",
     },
     {
-        "group": "Statutory & Payroll",
-        "icon": "📑", "title": "Lease Terms Summary", "tag": "Streamlit",
-        "desc": "Upload a lease agreement — extracts key terms (editable) and computes lease-expense "
-                "recognition under IGAAP (AS 19, straight-line) and Ind AS 116 (ROU asset/lease liability).",
-    },
-    {
-        "group": "Statutory & Payroll",
-        "icon": "📝", "title": "Agreement Terms Summary", "tag": "Streamlit",
-        "desc": "Upload any contract — extracts parties, dates, and payment terms (editable), and flags "
-                "which standard clauses (confidentiality, indemnity, termination, etc.) are present or missing.",
-    },
-    {
         "group": "Workforce & Scheduling",
         "icon": "🧑‍💼", "title": "HRM", "tag": "FastAPI (in-process)",
         "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
@@ -288,8 +276,6 @@ nav = st.navigation(
             st.Page("_pages/redaction.py", title="Document Redaction", icon="🔒"),
             st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
             st.Page("_pages/tally_hub.py", title="Tally", icon="📒"),
-            st.Page("_pages/lease_summary.py", title="Lease Terms Summary", icon="📑"),
-            st.Page("_pages/agreement_summary.py", title="Agreement Terms Summary", icon="📝"),
             st.Page("_pages/hrm.py", title="HRM", icon="🧑‍💼"),
         ],
     }
