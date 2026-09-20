@@ -576,10 +576,26 @@ with tab_pf:
                         data.pop("Charges Table", None)
                         data["File Name"] = file_name
                         challan_rows.append(data)
+                        header_cols = {
+                            "File Name": file_name, "Company": data.get("Company", ""),
+                            "Establishment ID": data.get("Establishment ID", ""),
+                            "Month": data.get("Month", ""), "Generated On": data.get("Generated On", ""),
+                        }
                         if dtbl is not None and not dtbl.empty:
-                            dtbl.insert(0, "Company", data.get("Company", ""))
-                            dtbl.insert(1, "Month", data.get("Month", ""))
+                            for col, val in reversed(list(header_cols.items())):
+                                dtbl.insert(0, col, val)
                             detail_tables.append(dtbl)
+                        else:
+                            # Line-item table extraction failed for this
+                            # file (neither the regex row-parser nor the
+                            # pdfplumber-table fallback recognized it) --
+                            # still surface what WAS extracted (header
+                            # fields + Grand Total) as a single row, rather
+                            # than silently dropping the file out of the
+                            # "Challan" output entirely.
+                            detail_tables.append(pd.DataFrame([{
+                                **header_cols, "Grand Total": data.get("Grand Total", ""),
+                            }]))
                 except Exception as e:
                     pf_failed.append(f"{file_name}: {e}")
                 progress.progress((idx + 1) / len(pf_files))
@@ -597,14 +613,19 @@ with tab_pf:
 
             if challan_rows or trrn_rows or return_rows:
                 lbls, tab_idx = [], 0
-                if challan_rows: lbls.append(f"Challan ({len(challan_rows)})")
-                if detail_tables: lbls.append("Summary")
+                # One "Challan" tab, not two -- previously a near-useless
+                # header-only overview (Company/Month/Grand Total, no line
+                # items) sat in its own tab while the actual line-item
+                # table lived in a separate "Summary" tab that only
+                # appeared at all when extraction succeeded, silently
+                # vanishing otherwise. detail_tables now always has one
+                # entry per Challan file (the real line-item table when
+                # extraction worked, a single header-only fallback row
+                # when it didn't), so this is the one place to look.
+                if detail_tables: lbls.append(f"Challan ({len(challan_rows)})")
                 if return_rows: lbls.append(f"Return ({len(return_rows)})")
                 if trrn_rows: lbls.append(f"TRRN ({len(trrn_rows)})")
                 ptabs = st.tabs(lbls)
-                if challan_rows:
-                    with ptabs[tab_idx]: st.dataframe(pd.DataFrame(challan_rows), use_container_width=True)
-                    tab_idx += 1
                 if detail_tables:
                     with ptabs[tab_idx]: st.dataframe(pd.concat(detail_tables, ignore_index=True), use_container_width=True)
                     tab_idx += 1
@@ -616,8 +637,7 @@ with tab_pf:
 
                 buf = BytesIO()
                 with pd.ExcelWriter(buf, engine="openpyxl") as w:
-                    if challan_rows: pd.DataFrame(challan_rows).to_excel(w, sheet_name="Challan Header", index=False)
-                    if detail_tables: pd.concat(detail_tables, ignore_index=True).to_excel(w, sheet_name="Challan Summary", index=False)
+                    if detail_tables: pd.concat(detail_tables, ignore_index=True).to_excel(w, sheet_name="Challan", index=False)
                     if return_rows: pd.DataFrame(return_rows).to_excel(w, sheet_name="Return", index=False)
                     if trrn_rows: pd.DataFrame(trrn_rows).to_excel(w, sheet_name="TRRN", index=False)
                 buf.seek(0)

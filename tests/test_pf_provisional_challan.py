@@ -142,3 +142,94 @@ def test_provisional_challan_table_extracted_as_is(tmp_path):
     assert rows["Admin/ Insp. Charges"]["A/C.22 (Rs.)"] == "0"
     assert rows["7Q"]["A/C.01 (Rs.)"] == "0"
     assert rows["14B"]["A/C.01 (Rs.)"] == "0"
+
+
+def _build_unrecognized_challan_pdf(path: str) -> None:
+    """A challan whose particulars table extract_pf_data() won't
+    recognize (no matching row labels, no pdfplumber-detectable table) --
+    only its header (Company/Establishment ID/Month/Grand Total) is
+    extractable."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import Paragraph, SimpleDocTemplate
+
+    styles = getSampleStyleSheet()
+    elements = [
+        Paragraph("CHALLAN FOR WAGE MONTH : FEB 2026", styles["Normal"]),
+        Paragraph("Establishment Code & Name : XYZAB1234567 UNKNOWN FORMAT CO", styles["Normal"]),
+        Paragraph("Some completely different layout with no recognizable particulars table at all.", styles["Normal"]),
+        Paragraph("Grand Total : 99999", styles["Normal"]),
+    ]
+    SimpleDocTemplate(path, pagesize=A4).build(elements)
+
+
+def test_challan_tab_merges_header_and_detail_never_drops_a_file(tmp_path):
+    """Real feedback: the PF Register's old "Challan" tab only ever showed
+    header fields (Company/Month/Grand Total, no line items) in its own
+    tab, while the actual line-item detail table lived in a SEPARATE
+    "Summary" tab that only appeared at all once at least one file's table
+    extraction succeeded -- for a batch where table extraction failed for
+    every file (a real, if narrower, layout than the ones this file
+    already handles), the "Summary" tab silently never appeared and the
+    line-item data looked entirely missing ("what about i said to extract
+    the table from the challan pdf? its not working").
+
+    Fixed by merging into one "Challan" tab whose rows are, per file,
+    either its real line-item table (each row carrying Company/
+    Establishment ID/Month/Generated On as leading columns) or -- when
+    table extraction fails -- a single fallback row with just the header
+    fields and Grand Total, so a file is never silently dropped out of
+    the tab entirely. This test drives that exact merge logic (mirroring
+    _pages tab_pf's own loop) against one recognized and one unrecognized
+    challan PDF."""
+    import pandas as pd
+    from pathlib import Path
+
+    recognized_path = tmp_path / "recognized.pdf"
+    _build_provisional_challan_pdf(str(recognized_path))
+    unrecognized_path = tmp_path / "unrecognized.pdf"
+    _build_unrecognized_challan_pdf(str(unrecognized_path))
+
+    detail_tables = []
+    for fname, path in [("recognized.pdf", recognized_path), ("unrecognized.pdf", unrecognized_path)]:
+        data = extract_pf_data(Path(path))
+        dtbl = data.pop("Detail Table")
+        data.pop("Charges Table", None)
+        header_cols = {
+            "File Name": fname, "Company": data.get("Company", ""),
+            "Establishment ID": data.get("Establishment ID", ""),
+            "Month": data.get("Month", ""), "Generated On": data.get("Generated On", ""),
+        }
+        if dtbl is not None and not dtbl.empty:
+            for col, val in reversed(list(header_cols.items())):
+                dtbl.insert(0, col, val)
+            detail_tables.append(dtbl)
+        else:
+            detail_tables.append(pd.DataFrame([{**header_cols, "Grand Total": data.get("Grand Total", "")}]))
+
+    merged = pd.concat(detail_tables, ignore_index=True)
+
+    # Recognized file: real line-item rows, header columns present on each.
+    recognized_rows = merged[merged["File Name"] == "recognized.pdf"]
+    assert len(recognized_rows) == 5
+    assert (recognized_rows["Company"] == "TENET DIAGNOSTICS PRIVATE LIMITED").all()
+    assert (recognized_rows["Establishment ID"] == "BGBNG2410422000").all()
+
+    # Unrecognized file: NOT dropped -- exactly one fallback row with
+    # header fields + Grand Total, even though it has no Particulars.
+    unrecognized_rows = merged[merged["File Name"] == "unrecognized.pdf"]
+    assert len(unrecognized_rows) == 1
+    assert unrecognized_rows.iloc[0]["Company"] == "UNKNOWN FORMAT CO"
+    assert unrecognized_rows.iloc[0]["Establishment ID"] == "XYZAB1234567"
+    assert unrecognized_rows.iloc[0]["Grand Total"] == "99999"
+
+
+def test_pf_register_challan_tab_no_longer_a_separate_useless_overview():
+    """Structural guard: the old two-tab split ("Challan" header-only
+    overview + a separately-appearing "Summary" detail tab) must not
+    regress -- there should be exactly one Challan-labeled tab, built from
+    detail_tables (which always has an entry per Challan file)."""
+    src = open(os.path.join(REPO_ROOT, "Combined_PF_Statutory.py"), encoding="utf-8").read()
+    assert 'lbls.append(f"Challan ({len(challan_rows)})")' in src
+    assert 'lbls.append("Summary")' not in src
+    assert 'sheet_name="Challan Header"' not in src
