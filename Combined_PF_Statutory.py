@@ -158,28 +158,140 @@ def _detect_pf_type_plumber(file_path) -> str:
     return ""
 
 def extract_pf_trrn(file_name, text):
-    # Full implementation in PF.py — abbreviated key extraction here
+    # Ported from PF.py's fuller implementation (this file previously had
+    # an abbreviated version that dropped the per-account Account-1/2/10/
+    # 21/22 breakdown and the 7Q/14B damages-for-delay & interest-for-delay
+    # columns entirely) -- real feedback: every "Payment Confirmation
+    # Receipt" PDF must land in the TRRN sheet, and when it carries 7Q
+    # (interest) / 14B (damages) amounts alongside the base Account
+    # amount, those need their own separate columns, not folded into
+    # "Total Amount (Rs)".
     lines = [l.strip() for l in text.splitlines()]
     kv = {}
-    for i, line in enumerate(lines):
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if not line or line == ':':
+            i += 1
+            continue
+        if line.lower() == "payment confirmation" and i + 1 < len(lines):
+            merged = line + " " + lines[i + 1]
+            m = re.match(r'^(.+?)\s*:\s*(.+)$', merged)
+            if m:
+                kv[m.group(1).strip().lower()] = m.group(2).strip()
+                i += 2
+                continue
         m = re.match(r'^(.+?)\s*:\s*(.+)$', line)
         if m:
             kv[m.group(1).strip().lower()] = m.group(2).strip()
+            i += 1
+            continue
+        if line and not re.match(r'^:+$', line):
+            key = line.lower()
+            for j in range(i + 1, min(i + 4, len(lines))):
+                cand = lines[j].strip()
+                if cand and cand != ':':
+                    kv[key] = cand
+                    break
+        i += 1
+
+    def acct_cols(n):
+        # Three numbers on the "Account-N Amount (Rs)" row = Amount, 7Q,
+        # 14B, in that column order (matches the Accounts / Amount (Rs) /
+        # 7Q / 14B table header on the actual PDF).
+        m = re.search(rf"Account-{n}\s+Amount\s*\(Rs\)\s*[:\s]+([\d,]+)\s+([\d,]+)\s+([\d,]+)", text, re.I)
+        if m:
+            return m.group(1).replace(",", ""), m.group(2).replace(",", ""), m.group(3).replace(",", "")
+        m = re.search(rf"([\d,]+)\s+Account-{n}\s+Amount\s*\(Rs\)", text, re.I)
+        if m:
+            return m.group(1).replace(",", ""), "", ""
+        m = re.search(rf"Account-{n}\s+Amount\s*\(Rs\)\s*[:\s]+([\d,]+)", text, re.I)
+        if m:
+            return m.group(1).replace(",", ""), "", ""
+        for key in [f"account-{n} amount (rs)", f"account-{n} amount(rs)"]:
+            v = kv.get(key, "")
+            if v:
+                nums = re.findall(r"[\d,]+", v)
+                if nums:
+                    return nums[0].replace(",", ""), "", ""
+        return "", "", ""
+
+    _acct_nums = [1, 2, 10, 21, 22]
+    _cols = {n: acct_cols(n) for n in _acct_nums}
+
+    def _sum_col(idx):
+        total, has_val = 0, False
+        for n in _acct_nums:
+            v = _cols[n][idx]
+            if v:
+                try:
+                    total += int(v)
+                    has_val = True
+                except ValueError:
+                    pass
+        return str(total) if has_val else ""
+
     def fv(*labels):
         for lbl in labels:
             v = kv.get(lbl.lower(), "")
-            if v: return v
+            if v:
+                return v
         return ""
+
+    _DATE_RE = r"(\d{2}[-/\.]\w{3}[-/\.]\d{4}|\d{2}[-/\.]\d{2}[-/\.]\d{4})"
+
+    def date_val(*labels):
+        for lbl in labels:
+            v = kv.get(lbl.lower(), "")
+            if v:
+                m = re.search(_DATE_RE, v)
+                if m:
+                    return m.group(1)
+                if re.match(r'^\d{2}[-/\.]\w', v):
+                    return v.split()[0]
+        for lbl in labels:
+            m = re.search(re.escape(lbl) + r"[\s\S]{0,30}?" + _DATE_RE, text, re.I)
+            if m:
+                return m.group(1)
+        return ""
+
+    wage_raw = fv("wage month")
+    wage_raw = re.split(r'\s+\d{2}:', wage_raw)[0].strip() if wage_raw else ""
+    total_amt = fv("total amount (rs)", "total amount(rs)")
+    if not total_amt or not re.search(r'\d', total_amt):
+        total_amt = g(r"Total Amount\s*\(Rs\)\s*[:\s]+([\d,]+)", text)
+    bank = fv("payment confirmation bank", "bank name", "remitting bank", "bank")
+    if not bank:
+        for pat in [
+            r"Payment\s+Confirmation\s*\n?\s*Bank\s*[:\s]+([A-Za-z][^\n]+)",
+            r"Bank\s+Name\s*[:\s]+([A-Za-z][^\n]+)",
+            r"Bank\s*[:\s]+([A-Z][A-Z &]+(?:BANK|LTD)[^\n]*)",
+        ]:
+            m = re.search(pat, text, re.I)
+            if m:
+                bank = m.group(1).strip()
+                break
+
     return {
         "File Name": file_name,
         "Client Name": fv("establishment name"),
         "Establishment ID": fv("establishment id"),
         "TRRN No": fv("trrn no", "trrn number", "trrn"),
         "Challan Status": fv("challan status"),
-        "Wage Month": _normalize_period(fv("wage month")),
-        "Total Amount (Rs)": fv("total amount (rs)", "total amount(rs)"),
-        "Payment Date": fv("payment date"),
-        "Bank": fv("bank name", "bank"),
+        "Challan Type": fv("challan type"),
+        "Wage Month": _normalize_period(wage_raw),
+        "Total Members": fv("total members"),
+        "Total Amount (Rs)": total_amt,
+        "Account-1 (EPF)": _cols[1][0],
+        "Account-2 (Admin EPF)": _cols[2][0],
+        "Account-10 (EPS)": _cols[10][0],
+        "Account-21 (EDLI)": _cols[21][0],
+        "Account-22 (Admin)": _cols[22][0],
+        "7Q Total": _sum_col(1),
+        "14B Total": _sum_col(2),
+        "Payment Date": date_val("payment date", "date of payment", "challan date", "value date"),
+        "Payment Confirmation Date": date_val("payment confirmation date", "confirmation date"),
+        "Bank": bank,
         "CRN": fv("crn"),
     }
 
