@@ -14,6 +14,7 @@ import streamlit as st
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tally_tool"))
 import tally_connector
+from extract_ledgers import extract_any
 
 
 def _current_fy_start(today: datetime.date | None = None) -> datetime.date:
@@ -76,6 +77,26 @@ def render_connection_picker(key_prefix: str) -> tuple[str, int, str | None]:
         ) or None
 
     return host, int(port), company
+
+
+def extract_any_with_progress(utf8_path: str):
+    """extract_any(), but driving a real Streamlit progress bar off the
+    file's own byte position instead of a plain st.spinner() -- real
+    feedback asked for: exports can be hundreds of MB and take a genuine
+    while to stream, and an indeterminate spinner gives no sense of how
+    much is left. Used by every Tally hub activity's Upload tab (they all
+    stream the same export file the same way), so this lives here rather
+    than being duplicated five times."""
+    bar = st.progress(0.0, text="Streaming the export… 0%")
+
+    def _on_progress(bytes_read: int, total_bytes: int) -> None:
+        pct = min(bytes_read / total_bytes, 1.0) if total_bytes else 0.0
+        bar.progress(pct, text=f"Streaming the export… {pct * 100:.0f}%")
+
+    try:
+        return extract_any(utf8_path, progress_callback=_on_progress)
+    finally:
+        bar.empty()
 
 
 def render_setup_help(expanded: bool = False) -> None:
