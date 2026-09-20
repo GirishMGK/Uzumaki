@@ -301,32 +301,123 @@ def extract_pf_trrn(file_name, text):
         "CRN": fv("crn"),
     }
 
+def _parse_challan_particulars_table(text: str):
+    """Regex-based extraction of a "Provisional Challan"-style particulars
+    table (Employee's Share Of Contribution / Employer's Share Of
+    Contribution / Admin/ Insp. Charges / 7Q / 14B rows, each with
+    A/C.01/02/10/21/22 + Total columns, "NA" for accounts that don't
+    apply), read directly off the linear extracted text -- NOT
+    pdfplumber's extract_tables() structural reconstruction, which was
+    found to corrupt cell values live: whenever a PARTICULARS cell's text
+    wraps within its column width, pdfplumber's table reconstruction
+    interleaves the wrapped fragment into the adjacent Amount column
+    instead of keeping it in the Particulars cell (e.g. "Employee's Share
+    Of Contribution" / "533766" corrupted into "...Of Contri" /
+    "bu5t3io3n766"). A fixed-label regex per row sidesteps that failure
+    mode entirely, at the cost of only recognizing this specific table's
+    known row labels rather than an arbitrary table shape.
+
+    Returns (DataFrame, grand_total) if this table is found, else
+    (None, "")."""
+    _TOKEN = r"(NA|[\d,]+)"
+    row_specs = [
+        ("Employee's Share Of Contribution", r"Employee'?s\s+Share\s+Of\s+Contribution"),
+        ("Employer's Share Of Contribution", r"Employer'?s\s+Share\s+Of\s+Contribution"),
+        ("Admin/ Insp. Charges", r"Admin[/\s]*\s*Insp\.?\s*Charges"),
+        ("7Q", r"(?<![\d.])7Q(?!\w)"),
+        ("14B", r"(?<![\d.])14B(?!\w)"),
+    ]
+    rows = []
+    for label, pat in row_specs:
+        # Boundary between the label and the first number is \s* (not
+        # \s+): real fitz text extraction sometimes drops the space
+        # between adjacent table cells entirely -- confirmed live, e.g.
+        # "...Of Contribution533766" with no separator at all -- so a
+        # required \s+ there missed rows whose label happens not to
+        # produce a visible gap, while every number-to-number boundary
+        # still requires \s+ since two bare digit runs jammed together
+        # would be ambiguous to split back apart.
+        m = re.search(pat + r"\s*" + r"\s+".join([_TOKEN] * 6), text, re.I)
+        if not m:
+            continue
+        vals = [g if g.upper() == "NA" else g.replace(",", "") for g in m.groups()]
+        rows.append([label] + vals)
+    if not rows:
+        return None, ""
+    columns = ["Particulars", "A/C.01 (Rs.)", "A/C.02 (Rs.)", "A/C.10 (Rs.)",
+               "A/C.21 (Rs.)", "A/C.22 (Rs.)", "Total"]
+    df = pd.DataFrame(rows, columns=columns)
+    gt_m = re.search(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I)
+    grand_total = gt_m.group(1).replace(",", "") if gt_m else ""
+    return df, grand_total
+
+
 def extract_pf_data(pdf_path) -> dict:
-    with pdfplumber.open(pdf_path) as pdf:
-        page = pdf.pages[0]
-        text = page.extract_text() or ""
-        tables = page.extract_tables()
+    # Use fitz's text extraction (_read_pdf_text), not pdfplumber's
+    # page.extract_text(), for every regex below -- pdfplumber's own text
+    # extraction was found to corrupt exactly the kind of tightly-packed/
+    # wrapped table cell this challan layout has: characters from the
+    # Amount column interleaved INTO the middle of the Particulars label
+    # text ("...Of Contribution" + "533766" garbled into "...Of
+    # Contribu5t3io3n766"), not just its extract_tables() reconstruction.
+    # fitz doesn't have this failure mode on the same file. pdfplumber's
+    # extract_tables() is still used below, but only as a last-resort
+    # fallback for challan layouts _parse_challan_particulars_table()
+    # doesn't recognize.
+    with open(pdf_path, "rb") as f:
+        file_bytes = f.read()
+    text = _read_pdf_text(file_bytes)
     is_new = bool(re.search(r"CHALLAN FOR WAGE MONTH", text, re.I))
-    comp_m = re.search(r"^\s*Name\s*:\s*(.+)", text, re.I | re.M) if is_new else \
-             re.search(r"Establishment Code & Name\s+\S+\s+(.*?)(?=\nAddress|\n\n|$)", text, re.DOTALL)
+
+    # Establishment name: real layouts vary in which label they use --
+    # "Establishment Code & Name : <code> <name>" (seen on a real
+    # "Provisional Challan", which also matches CHALLAN FOR WAGE MONTH
+    # above, so it isn't safe to assume that header implies the "Name :"
+    # label alone) vs a plain "Name :" line elsewhere. Try both regardless
+    # of is_new instead of picking one based on it.
+    comp_m = (
+        re.search(r"Establishment Code\s*&\s*Name\s*:?\s*\S+\s+(.+?)(?:\n|$)", text, re.I)
+        or re.search(r"^\s*Name\s*:\s*(.+)", text, re.I | re.M)
+        or re.search(r"Establishment Code & Name\s+\S+\s+(.*?)(?=\nAddress|\n\n|$)", text, re.DOTALL)
+    )
     company = comp_m.group(1).strip().splitlines()[0].strip() if comp_m else ""
+
+    estab_id_m = re.search(r"Establishment (?:Code(?:\s*&\s*Name)?|ID)\s*:?\s*(\S+)", text, re.I)
+    establishment_id = estab_id_m.group(1).strip() if estab_id_m else ""
+
+    generated_on_m = re.search(
+        r"Generated\s+On\s*:?\s*([\d]{1,2}[-/][A-Za-z]{3}[-/][\d]{4}\s+[\d:]+|[\d]{1,2}[-/][\d]{1,2}[-/][\d]{4}\s+[\d:]+)",
+        text, re.I,
+    )
+    generated_on = generated_on_m.group(1).strip() if generated_on_m else ""
+
     wm_m = re.search(r"CHALLAN FOR WAGE MONTH\s*[:\-]\s*(\w+\s+\d{4})", text, re.I) if is_new else \
            re.search(r"Dues for the wage month of\s+(\w+\s*\d{4})", text, re.I)
     month = wm_m.group(1).replace(" ", "") if wm_m else ""
-    gt_matches = list(re.finditer(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I))
-    gt_m = gt_matches[-1] if gt_matches else None
-    detail_table_df = None
-    for t in (tables or []):
-        if not t: continue
-        header = [str(c or "").strip() for c in (t[0] or [])]
-        if "PARTICULARS" in " ".join(header).upper() and "A/C" in " ".join(header).upper():
-            cleaned = [[c if c is not None else "" for c in row] for row in t[1:] if row]
-            if cleaned:
-                detail_table_df = pd.DataFrame(cleaned, columns=header)
-                break
+
+    regex_df, regex_grand_total = _parse_challan_particulars_table(text)
+    if regex_df is not None:
+        detail_table_df = regex_df
+        grand_total = regex_grand_total
+    else:
+        gt_matches = list(re.finditer(r"Grand Total\s*[:\-]?[^\d]*([\d,]+)", text, re.I))
+        grand_total = gt_matches[-1].group(1) if gt_matches else ""
+        detail_table_df = None
+        with pdfplumber.open(pdf_path) as pdf:
+            tables = pdf.pages[0].extract_tables()
+        for t in (tables or []):
+            if not t: continue
+            header = [str(c or "").strip() for c in (t[0] or [])]
+            if "PARTICULARS" in " ".join(header).upper() and "A/C" in " ".join(header).upper():
+                cleaned = [[c if c is not None else "" for c in row] for row in t[1:] if row]
+                if cleaned:
+                    detail_table_df = pd.DataFrame(cleaned, columns=header)
+                    break
+
     return {
-        "Company": company, "Month": month,
-        "Grand Total": gt_m.group(1) if gt_m else "",
+        "Company": company, "Establishment ID": establishment_id,
+        "Month": month, "Generated On": generated_on,
+        "Grand Total": grand_total,
         "Detail Table": detail_table_df, "Charges Table": detail_table_df,
     }
 
