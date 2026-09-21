@@ -3,3 +3,4 @@ __pycache__/
 *_formatted.xlsx
 *_formatted.csv
 .venv/
+loans_tool/backend/data/
