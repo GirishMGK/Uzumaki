@@ -1345,6 +1345,21 @@ def test_sidebar_expander_css_is_readable_on_dark_background():
     assert "background: white" not in sidebar_expander_block
 
 
+def test_sidebar_inline_code_is_readable_on_dark_background():
+    """Regression guard for a real reported bug: the version number in
+    "Current version: `677bcaa`" (and the "Update available: `...`" /
+    Check-for-Updates error-diagnostic lines, all rendered as Markdown
+    inline `code`) was invisible in the sidebar -- same root cause as the
+    expander fix above, different element: Streamlit's default `code` span
+    keeps its own light background regardless of surrounding theme, and the
+    sidebar's blanket `color: #eef1fb !important` rule sits pale-on-pale on
+    top of it."""
+    src = open(os.path.join(REPO_ROOT, "_pages", "theme.py"), encoding="utf-8").read()
+    assert '[data-testid="stSidebar"] code' in src
+    sidebar_code_block = src.split('[data-testid="stSidebar"] code {')[1].split("}")[0]
+    assert "background" in sidebar_code_block
+
+
 def test_sidebar_stays_fully_opaque_during_reruns():
     """Regression guard for a real reported bug: the 'Check for Updates'
     panel (and its download progress bar) looked washed out/hard to see --
