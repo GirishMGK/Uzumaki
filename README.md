@@ -139,6 +139,7 @@ users who prefer that, but it's optional, not required to use the tool.
 | **Document Redaction** (`redaction_tool/`) | Auto-detect + redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email plus custom keywords across PDF (true redaction via PyMuPDF), DOCX, XLSX, and images (Tesseract OCR). Also ships as a standalone tkinter desktop app (`redaction_tool/main.py`). |
 | **JE Audit Analytics** (`je_audit_tool/`) | Journal Entry exception testing for statutory/forensic audit: Amount (duplicates, high-value, split transactions), Timing (weekend/holiday, year-end cutoff, reversals), User & Access Control (SOD violations, dormant users, related parties), Vendor Master Data (duplicate GSTIN/PAN, MSME delay, inactive vendors), Benford's Law (chi-square digit analysis). DuckDB-backed for large GL dumps; exports a multi-sheet Excel audit report + working paper. |
 | **Tally extraction tool** (`tally_tool/`) | Pulls every ledger's full transaction history out of Tally in one shot, instead of exporting each ledger one by one. Two ways in: upload a "JSON (Data Interchange)" **or** "XML (Data Interchange)" export (`extract_ledgers.py` — streams either format, doesn't load the whole file into memory, auto-detects which one you gave it), or **connect live** to a running TallyPrime instance over its XML/HTTP interface (`tally_connector.py` — no manual export step, requires ODBC/XML Server enabled in Tally). Computes a running balance per ledger and prints a Debit-vs-Credit control total as a sanity check either way. Debit/Credit is taken from the sign of Tally's `amount` field rather than its `isdeemedpositive` flag, which was found unreliable on some statutory/duty lines. A third tab pulls a **Sales & Purchase Register** item-wise (Stock Item, Quantity, Rate, Amount) via the same live connection. |
+| **Loan Analytics** (`loans_tool/`) | NBFC loan-portfolio audit analytics, vendored from the `FCMR` repo (originally "SanGir Automations") — deterministic, no AI/LLM anywhere. KYC/data-quality checks (24 rules: PAN/Aadhaar-Verhoeff/Voter/Passport/DL/Mobile/Email/DOB format, PIN/address validation against a bundled India Post master, PAN/Aadhaar/Mobile/Bank/Voter/Name+DOB/Address duplicate detection, UCID identity grouping), EAD/ECL file consolidation (merges L&T-Finance-style exports), and an ICAI-sampled 4-sheet Excel audit workpaper. Like HRM, a stateful multi-session app with its own FastAPI backend and database — but reuses your Uzumaki login instead of a second one; see "Loan Analytics is different" below. |
 | **Firm RMS** (`firm_rms_tool/`) | Manpower/resource management — scheduler board, capacity dashboards, report library, timesheets/actuals, forecasting, RBAC. Unlike every other tool above, this one is a **stateful multi-session app with its own database and login**, not a one-shot file processor — see "Firm RMS is different" below. |
 
 > A separate .NET/Blazor Server port of the JE Audit workflow exists at
@@ -149,6 +150,36 @@ users who prefer that, but it's optional, not required to use the tool.
 > **PF + Statutory combinable?** Yes — they already share `_read_pdf_text`,
 > `_g`/`normalize_period` helpers and live together in `Combined_PF_Statutory.py`
 > as two tabs, so the hub mounts that single file.
+
+### Loan Analytics is different too, in one specific way
+
+Same shape as Firm RMS/HRM below — a vendored FastAPI backend
+(`loans_tool/backend/`) started on a background thread by `_pages/loans.py`
+and embedded via iframe, with its own persistent database (per-user
+app-data, `%LOCALAPPDATA%\UzumakiLoanAnalytics` on Windows). The one
+deliberate difference: it does **not** have a second login. Its original
+repo (`FCMR`) has its own single hardcoded `admin`/`admin123` account —
+asking a user to log into it *again*, right after they already logged into
+Uzumaki, would be a redundant prompt, not real additional security, since
+this page is only reachable at all once Uzumaki's own login + role check
+already passed. `_pages/loans.py` sets `LOANS_TRUST_HOST_AUTH=1`, which its
+vendored `LoginRequiredMiddleware` (`loans_tool/backend/loan_app/main.py`)
+reads to auto-populate a valid session instead of redirecting to its own
+`/login` — same session shape a real login there would produce, so every
+route downstream behaves identically either way. The flag is only ever set
+from inside `_pages/loans.py`; a standalone run of the vendored backend (or
+the original, unvendored `FCMR` app it came from) keeps its own real login,
+untouched.
+
+One consequence worth knowing: actions inside Loan Analytics are attributed
+to its own internal `admin` account, not your actual Uzumaki username —
+there's no per-user identity bridge between the two apps, just a shared
+"you're allowed in" gate.
+
+Also renamed throughout — the vendored copy's UI says "Loan Analytics", not
+its original "SanGir Automations" branding (`fcmr_core`'s internal module/
+env-var names and the `%LOCALAPPDATA%\SanGirAutomations` data-folder name
+are unchanged, since those aren't user-facing).
 
 ### Firm RMS is different
 

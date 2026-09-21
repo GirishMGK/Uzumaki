@@ -1549,3 +1549,112 @@ def test_updater_downloads_from_public_releases_repo_not_private_source():
         "build-exe.yml must authenticate to Uzumaki-releases with the scoped "
         "RELEASES_REPO_TOKEN secret, not the default same-repo GITHUB_TOKEN"
     )
+
+
+# ── _pages/loans.py: must actually start & embed the vendored backend ──────
+def test_loans_page_calls_real_functions():
+    src = open(os.path.join(REPO_ROOT, "_pages", "loans.py"), encoding="utf-8").read()
+    for fn in ["uvicorn.run(", "st.components.v1.iframe(", "LOANS_TRUST_HOST_AUTH"]:
+        assert fn in src, f"_pages/loans.py no longer calls {fn} — the tool may be disconnected"
+
+
+def test_loans_backend_package_not_named_app_to_avoid_hrm_collision():
+    """
+    Regression guard for a real bug caught before it ever shipped: FCMR's
+    own repo layout has its FastAPI app at a top-level package literally
+    named `app` -- but hrm_tool/backend already has its own top-level `app`
+    package, and _pages/hrm.py and _pages/loans.py both do
+    sys.path.insert(0, <their own backend dir>) then `from app.main import
+    app`. With two same-named top-level packages both on sys.path,
+    Python's sys.modules cache means whichever tool's page happened to
+    import first would silently win for BOTH -- the second tool would
+    quietly run the wrong backend. Vendored under "loan_app" instead so the
+    two coexist safely; guard against this regressing back to "app".
+    """
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    assert not os.path.isdir(os.path.join(backend_dir, "app")), (
+        "loans_tool/backend must not have a top-level 'app' package -- "
+        "collides with hrm_tool/backend's own 'app' package on sys.path"
+    )
+    assert os.path.isdir(os.path.join(backend_dir, "loan_app"))
+    assert os.path.isfile(os.path.join(backend_dir, "loan_app", "main.py"))
+
+    main_src = open(
+        os.path.join(backend_dir, "loan_app", "main.py"), encoding="utf-8"
+    ).read()
+    assert "from loan_app.api import" in main_src
+    assert 'settings.base_dir / "loan_app" / "web" / "static"' in main_src, (
+        "static-file mount must use the renamed 'loan_app' path too, not the "
+        "original 'app' -- a literal string, invisible to an import-only check"
+    )
+
+    loans_page_src = open(os.path.join(REPO_ROOT, "_pages", "loans.py"), encoding="utf-8").read()
+    assert "from loan_app.main import app" in loans_page_src
+
+
+def test_loans_trust_host_auth_actually_bypasses_login():
+    """
+    Functional test (not just a source-string check) of the security-
+    relevant part of the Uzumaki integration: with LOANS_TRUST_HOST_AUTH=1
+    (set by _pages/loans.py because Uzumaki's own per-user login + role-
+    based tool access already gate whether this page is reachable at all),
+    a request with no session must NOT be redirected to /login -- it must
+    reach the real page directly, with a session auto-populated the same
+    shape a real login would produce. And the flag must be OFF by default
+    (standalone/Vercel/Electron-desktop deployments keep their own real
+    login) -- both directions verified against the actual middleware, not
+    a mock.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        import importlib
+
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+
+        # Default (standalone) behavior: no bypass, real login still required.
+        with TestClient(loan_main.app) as client:
+            resp = client.get("/", follow_redirects=False)
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/login"
+
+        # Uzumaki-embedded behavior: bypass active, no redirect, real content.
+        os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+        with TestClient(loan_main.app) as client:
+            resp = client.get("/", follow_redirects=False)
+            assert resp.status_code == 200
+            assert "Engagements" in resp.text
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+# ── Home.py / Uzumaki.spec / auth.py: Loan Analytics wiring ────────────────
+def test_loans_wired_into_home_spec_and_auth():
+    assert os.path.exists(os.path.join(REPO_ROOT, "loans_tool", "backend", "loan_app"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "loans_tool", "backend", "fcmr_core"))
+
+    home_src = open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8").read()
+    assert '"_pages/loans.py"' in home_src
+    assert '"Loan Analytics"' in home_src
+
+    spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    assert '_tree("loans_tool")' in spec_src
+    assert os.path.join("loans_tool", "backend", "loan_app", "main.py") in spec_src
+
+    auth_src = open(os.path.join(REPO_ROOT, "auth.py"), encoding="utf-8").read()
+    assert '"Loan Analytics"' in auth_src, (
+        "Loan Analytics must be in auth.TOOL_KEYS or an admin can never "
+        "grant/restrict a role's access to it"
+    )

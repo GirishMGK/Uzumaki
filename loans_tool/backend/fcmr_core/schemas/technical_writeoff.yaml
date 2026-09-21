@@ -1,0 +1,32 @@
+report_type: technical_writeoff
+
+columns:
+  loan_account_no:
+    aliases: [loan_account_no, lan, loan_id, account_no]
+    required: true
+    dtype: str
+
+  writeoff_date:
+    aliases: [writeoff_date, write_off_date, wo_date, date_of_writeoff]
+    required: false
+    dtype: str
+
+  writeoff_amount:
+    aliases: [writeoff_amount, write_off_amount, wo_amount, amount_written_off]
+    required: false
+    dtype: float
+
+  outstanding_at_writeoff:
+    aliases: [outstanding_at_writeoff, outstanding, principal_outstanding]
+    required: false
+    dtype: float
+
+  writeoff_reason:
+    aliases: [writeoff_reason, reason, remarks]
+    required: false
+    dtype: str
+
+  customer_id:
+    aliases: [customer_id, cust_id, borrower_id]
+    required: false
+    dtype: str

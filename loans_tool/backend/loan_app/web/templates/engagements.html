@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Engagements — Loan Analytics{% endblock %}
+{% block page_title %}Engagements{% endblock %}
+
+{% block content %}
+<div style="max-width: 900px;">
+
+  <div class="page-header">
+    <h1>Audit Engagements</h1>
+    <button class="btn btn-primary" id="create-btn" onclick="toggleCreateForm()">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+        <rect x="1" y="1" width="14" height="14" rx="3" stroke="white" stroke-width="1.4" fill="none"/>
+        <path d="M8 11V5M5 8H11" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      New Engagement
+    </button>
+  </div>
+
+  <!-- Create Engagement Form -->
+  <div id="create-form" class="card" style="display: none; margin-bottom: 20px;">
+    <form method="POST" action="/">
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="form-group">
+          <label for="name">Engagement Name *</label>
+          <input type="text" id="name" name="name" required>
+        </div>
+        <div class="form-group">
+          <label for="client_name">Client Name</label>
+          <input type="text" id="client_name" name="client_name">
+        </div>
+        <div class="form-group">
+          <label for="period_from">Period From</label>
+          <input type="date" id="period_from" name="period_from">
+        </div>
+        <div class="form-group">
+          <label for="period_to">Period To</label>
+          <input type="date" id="period_to" name="period_to">
+        </div>
+      </div>
+      <div class="form-actions" style="margin-top: 12px;">
+        <button type="submit" class="btn btn-primary">Create Engagement</button>
+        <button type="button" class="btn btn-ghost" onclick="toggleCreateForm()">Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Engagements List -->
+  {% if engagements %}
+  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
+    {% for eng in engagements %}
+    <div class="card">
+      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+        <div>
+          <div class="card-title" style="margin-bottom: 2px;">{{ eng.name }}</div>
+          {% if eng.client_name %}
+          <div style="font-size: 12px; color: var(--muted);">{{ eng.client_name }}</div>
+          {% endif %}
+        </div>
+        <span class="badge badge-{{ eng.status }}">{{ eng.status }}</span>
+      </div>
+
+      {% if eng.period_from or eng.period_to %}
+      <div style="font-size: 12px; color: var(--muted); margin-bottom: 12px;">
+        {% if eng.period_from %}{{ eng.period_from }}{% endif %}
+        {% if eng.period_from and eng.period_to %} — {% endif %}
+        {% if eng.period_to %}{{ eng.period_to }}{% endif %}
+      </div>
+      {% endif %}
+
+      <div style="font-size: 11px; color: var(--faint); margin-bottom: 14px;">
+        Created {{ eng.created_at[:10] }} by {{ eng.created_by }}
+      </div>
+
+      <form method="POST" action="/set-active/{{ eng.engagement_id }}">
+        <button type="submit" class="btn btn-primary" style="width: 100%;">
+          Open Engagement
+        </button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card empty-state">
+    <div class="empty-icon">📋</div>
+    <h2>No engagements yet</h2>
+    <p>Create your first audit engagement to get started.</p>
+    <button class="btn btn-primary" onclick="toggleCreateForm()">Create Engagement</button>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+function toggleCreateForm() {
+  const form = document.getElementById('create-form');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  if (form.style.display === 'block') {
+    document.getElementById('name').focus();
+  }
+}
+</script>
+{% endblock %}

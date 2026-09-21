@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}Settings — Loan Analytics{% endblock %}
+{% block page_title %}System Settings & Monitoring{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard" class="btn btn-ghost" style="margin-left:auto;">← Dashboard</a>
+{% endblock %}
+
+{% block content %}
+
+{# System Info Card #}
+<div class="card" id="system-info-card">
+  <div class="card-title">System Information</div>
+  <div class="detail-grid" style="margin-top:12px;">
+    <dt>Detected Tier</dt><dd id="tier-badge"><span class="badge badge-info">—</span></dd>
+    <dt>Total RAM</dt><dd id="total-ram">—</dd>
+    <dt>CPU Cores</dt><dd id="cpu-cores">—</dd>
+    <dt>CPU Frequency</dt><dd id="cpu-freq">—</dd>
+  </div>
+</div>
+
+{# DuckDB Configuration Card #}
+<div class="card" id="duckdb-config-card">
+  <div class="card-title">DuckDB Configuration</div>
+  <div class="detail-grid" style="margin-top:12px;">
+    <dt>Memory Limit</dt><dd id="duckdb-memory">—</dd>
+    <dt>Thread Count</dt><dd id="duckdb-threads">—</dd>
+    <dt>Spill Directory</dt><dd id="spill-dir" style="font-size:12px; color:var(--muted); word-break:break-all;">—</dd>
+  </div>
+  <div class="help-text" style="margin-top:12px;">
+    <strong>Note:</strong> DuckDB limits are auto-detected based on system RAM and can be overridden via environment variables.
+  </div>
+</div>
+
+{# Live Resource Monitor #}
+<div class="card" id="resource-monitor-card">
+  <div class="card-title">Live Resource Monitor</div>
+  <p class="help-text" style="margin-top:8px; margin-bottom:12px;">
+    Updates every 2 seconds while this page is open.
+  </p>
+
+  {# RAM usage #}
+  <div style="margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+      <span style="font-weight:600;">RAM Usage</span>
+      <span id="ram-percent" style="font-weight:600;">—%</span>
+    </div>
+    <div style="background:var(--border); border-radius:6px; height:16px; overflow:hidden;">
+      <div id="ram-bar"
+           style="height:100%; width:0%; background:linear-gradient(90deg, oklch(60% 0.16 260), oklch(55% 0.18 25));
+                  transition:width 0.5s ease;">
+      </div>
+    </div>
+    <div id="ram-detail" style="font-size:12px; color:var(--muted); margin-top:6px;">—</div>
+  </div>
+
+  {# CPU usage #}
+  <div style="margin-bottom:20px;">
+    <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+      <span style="font-weight:600;">CPU Usage</span>
+      <span id="cpu-percent" style="font-weight:600;">—%</span>
+    </div>
+    <div style="background:var(--border); border-radius:6px; height:16px; overflow:hidden;">
+      <div id="cpu-bar"
+           style="height:100%; width:0%; background:linear-gradient(90deg, oklch(60% 0.16 145), oklch(55% 0.18 145));
+                  transition:width 0.5s ease;">
+      </div>
+    </div>
+  </div>
+
+  {# Disk Spill #}
+  <div>
+    <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+      <span style="font-weight:600;">Disk Spill (DuckDB temp)</span>
+      <span id="spill-mb" style="font-weight:600;">—</span>
+    </div>
+    <div id="spill-detail" style="font-size:12px; color:var(--muted);">—</div>
+  </div>
+
+  <div style="margin-top:16px; display:flex; gap:8px;">
+    <button id="refresh-monitor-btn" onclick="updateResourceUsage()" class="btn btn-sm btn-ghost">
+      ↻ Refresh Now
+    </button>
+    <button id="toggle-monitor-btn" onclick="toggleMonitoring()" class="btn btn-sm btn-ghost">
+      ⏸ Pause Monitoring
+    </button>
+  </div>
+</div>
+
+{# Logs Viewer #}
+<div class="card" id="logs-card">
+  <div class="card-title">Recent Logs</div>
+  <div id="logs-container"
+       style="background:var(--bg-alt); border:1px solid var(--border); border-radius:6px;
+              padding:12px; max-height:300px; overflow-y:auto; font-family:monospace;
+              font-size:12px; color:var(--muted); white-space:pre-wrap; word-break:break-word; margin-bottom:8px;">
+    Loading…
+  </div>
+  <div id="logs-meta" style="font-size:11px; color:var(--muted);"></div>
+</div>
+
+<div style="max-width:600px;">
+
+  {% if message %}
+  <div class="notice" style="margin-bottom:16px; background:var(--ok-bg); border-left:4px solid var(--ok-text);">
+    {{ message }}
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-title">Column Mapping</div>
+    <div class="card-sub">Fuzzy matching threshold (0.0–1.0)</div>
+
+    <form method="POST" action="/settings">
+      <div class="form-group">
+        <label for="threshold">Fuzzy Match Threshold</label>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <input type="range" id="threshold" name="value" min="0" max="100" value="{{ (settings.get('fuzzy_match_threshold', '0.6') | float * 100) | int }}" step="5" style="flex:1; max-width:300px;">
+          <span id="threshold-display" style="font-weight:600; min-width:50px; text-align:right;">0.60</span>
+        </div>
+        <p class="help-text" style="margin-top:8px;">
+          <strong>Lower = more suggestions</strong> (e.g., 0.5 suggests more fuzzy matches)
+          <br/><strong>Higher = stricter</strong> (e.g., 0.8 only suggests close matches)
+          <br/>Default: 0.6 (60% similarity required)
+        </p>
+      </div>
+
+      <input type="hidden" name="key" value="fuzzy_match_threshold">
+
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="background:var(--row-alt);">
+    <div class="card-title" style="font-size:14px; margin-bottom:8px;">Examples</div>
+    <ul style="padding-left:18px; margin:0; display:flex; flex-direction:column; gap:6px;">
+      <li style="font-size:12.5px;"><code>0.5</code> — Matches "customer name" → "full_name", "email addr" → "email"</li>
+      <li style="font-size:12.5px;"><code>0.6</code> — Matches "cust_id" → "customer_id", "pan_no" → "pan"</li>
+      <li style="font-size:12.5px;"><code>0.8</code> — Matches only very close variations (e.g., "PAN" → "pan")</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Data Backup</div>
+    <div class="card-sub">Download a backup of your catalog and generated reports</div>
+
+    <form method="POST" action="/settings/backup" style="display:inline;">
+      <button type="submit" class="btn btn-ghost">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M6 1V8M3 5.5L6 8L9 5.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="1" y="10" width="14" height="5" rx="1" stroke="currentColor" stroke-width="1.5" fill="none"/>
+        </svg>
+        Download Backup
+      </button>
+    </form>
+    <p class="help-text" style="margin-top:8px; font-size:12.5px;">
+      Creates a ZIP file with your catalog database and all generated reports.
+      Store backups safely for data recovery.
+    </p>
+  </div>
+
+</div>
+
+<script>
+  // System monitoring
+  let monitoringEnabled = true;
+  let monitorInterval = null;
+
+  async function loadSystemInfo() {
+    try {
+      const res = await fetch('/api/system/info');
+      const data = await res.json();
+
+      const tierBadgeClass = {
+        'low': 'warning',
+        'mid': 'info',
+        'high': 'success'
+      }[data.hardware.tier] || 'info';
+
+      document.getElementById('tier-badge').innerHTML =
+        `<span class="badge badge-${tierBadgeClass}">${data.hardware.tier.toUpperCase()}</span>`;
+      document.getElementById('total-ram').textContent = data.hardware.total_ram_gb + ' GB';
+      document.getElementById('cpu-cores').textContent = data.hardware.cpu_cores;
+      document.getElementById('cpu-freq').textContent = (data.hardware.cpu_freq_ghz || '—') + ' GHz';
+
+      document.getElementById('duckdb-memory').textContent = data.duckdb.memory_limit;
+      document.getElementById('duckdb-threads').textContent = data.duckdb.threads;
+      document.getElementById('spill-dir').textContent = data.duckdb.temp_directory;
+    } catch (e) {
+      console.error('Failed to load system info:', e);
+    }
+  }
+
+  window.updateResourceUsage = async function() {
+    try {
+      const res = await fetch('/api/system/usage');
+      const data = await res.json();
+
+      const ramPct = data.ram.percent;
+      const cpuPct = data.cpu.percent;
+
+      document.getElementById('ram-percent').textContent = Math.round(ramPct) + '%';
+      document.getElementById('ram-bar').style.width = ramPct + '%';
+      document.getElementById('ram-detail').textContent =
+        `${data.ram.used_gb.toFixed(1)} GB / ${data.ram.total_gb.toFixed(1)} GB (${data.ram.available_gb.toFixed(1)} GB available)`;
+
+      document.getElementById('cpu-percent').textContent = Math.round(cpuPct) + '%';
+      document.getElementById('cpu-bar').style.width = cpuPct + '%';
+
+      document.getElementById('spill-mb').textContent = data.disk_spill_mb.toLocaleString() + ' MB';
+      const spillGb = (data.disk_spill_mb / 1024).toFixed(2);
+      document.getElementById('spill-detail').textContent =
+        data.disk_spill_mb > 0
+          ? `DuckDB is using ${spillGb} GB of disk for queries (memory spill)`
+          : 'No disk spill — all queries fit in memory';
+    } catch (e) {
+      console.error('Failed to update resource usage:', e);
+    }
+  };
+
+  async function refreshLogs() {
+    try {
+      const res = await fetch('/api/system/logs?lines=50');
+      const data = await res.json();
+
+      const logsContainer = document.getElementById('logs-container');
+      if (data.logs.length === 0) {
+        logsContainer.textContent = '(no logs yet)';
+      } else {
+        logsContainer.textContent = data.logs.join('\n');
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+      }
+
+      document.getElementById('logs-meta').textContent =
+        `Showing last 50 of ${data.total_lines} lines`;
+    } catch (e) {
+      console.error('Failed to load logs:', e);
+    }
+  }
+
+  window.toggleMonitoring = function () {
+    monitoringEnabled = !monitoringEnabled;
+    const btn = document.getElementById('toggle-monitor-btn');
+    btn.textContent = monitoringEnabled ? '⏸ Pause Monitoring' : '▶ Resume Monitoring';
+    if (monitoringEnabled) {
+      startMonitoring();
+    } else if (monitorInterval) {
+      clearInterval(monitorInterval);
+      monitorInterval = null;
+    }
+  };
+
+  function startMonitoring() {
+    monitorInterval = setInterval(updateResourceUsage, 2000);
+    updateResourceUsage();
+  }
+
+  // Fuzzy match threshold slider
+  const slider = document.getElementById('threshold');
+  const display = document.getElementById('threshold-display');
+
+  function updateDisplay() {
+    const val = (slider.value / 100).toFixed(2);
+    display.textContent = val;
+  }
+
+  if (slider) {
+    slider.addEventListener('input', updateDisplay);
+    updateDisplay();
+  }
+
+  // Initialize on page load
+  loadSystemInfo();
+  refreshLogs();
+  startMonitoring();
+
+  // Stop monitoring when user leaves the page
+  window.addEventListener('beforeunload', () => {
+    if (monitorInterval) clearInterval(monitorInterval);
+  });
+</script>
+
+{% endblock %}

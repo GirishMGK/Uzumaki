@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Loan Analytics — Audit Analytics{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Lora:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+  <!-- ═══ SIDEBAR ═══ -->
+  <aside class="sidebar">
+    <div class="sidebar-logo" style="font-size: 28px; text-align: center;">📒</div>
+    <div style="padding: 0 15px; text-align: center; font-size: 12px; font-weight: 600; color: var(--text); margin-top: 8px;">Loan Analytics</div>
+
+    <nav class="sidebar-nav">
+
+      <a href="/" class="nav-item {% if request.url.path == '/' %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor"/>
+          <rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/>
+          <rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/>
+          <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".38"/>
+        </svg>
+        Engagements
+      </a>
+
+      <a href="/dashboard" class="nav-item {% if request.url.path.startswith('/dashboard') %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <rect x="1" y="1" width="6" height="6" rx="1.5" fill="currentColor"/>
+          <rect x="9" y="1" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/>
+          <rect x="1" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".7"/>
+          <rect x="9" y="9" width="6" height="6" rx="1.5" fill="currentColor" opacity=".38"/>
+        </svg>
+        Dashboard
+      </a>
+
+      <a href="/dashboard/upload" class="nav-item {% if request.url.path == '/dashboard/upload' %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <rect x="1" y="1" width="14" height="14" rx="3" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".55"/>
+          <path d="M8 11V5M5.5 7.5L8 5L10.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        New Upload
+      </a>
+
+      <a href="/dashboard" class="nav-item {% if '/map-columns' in request.url.path %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <rect x="1" y="2" width="8" height="1.8" rx=".9" fill="currentColor" opacity=".7"/>
+          <rect x="1" y="7" width="5" height="1.8" rx=".9" fill="currentColor"/>
+          <rect x="1" y="12" width="6" height="1.8" rx=".9" fill="currentColor" opacity=".5"/>
+          <path d="M11 5L14 7.9L11 10.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+        Column Mapping
+      </a>
+
+      <a href="/dashboard" class="nav-item {% if request.url.path.startswith('/runs/') %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".6"/>
+          <path d="M6.5 5.5L11 8L6.5 10.5Z" fill="currentColor"/>
+        </svg>
+        Data Analytics
+      </a>
+
+      <a href="/dashboard" class="nav-item {% if request.url.path.startswith('/dashboard/uploads') and '/map-columns' not in request.url.path %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="11" width="12" height="3.5" rx="1.5" fill="currentColor" opacity=".45"/>
+          <path d="M8 9.5V2M5 5L8 2L11 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+        Uploads
+      </a>
+
+      <a href="/settings" class="nav-item {% if request.url.path == '/settings' %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="2" fill="currentColor"/>
+          <path d="M8 3.5V2M8 14v-1.5M12 8h1.5M2.5 8H4M11 5l1-1M3 13l1-1M11 11l1 1M3 3l1 1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+        Settings
+      </a>
+
+    </nav>
+
+    <div style="padding: 12px 15px; margin-top: auto; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted, #888); text-align: center;">
+      Part of Uzumaki — sign out from there
+    </div>
+  </aside>
+
+  <!-- ═══ MAIN AREA ═══ -->
+  <div class="main-area">
+
+    <header class="topbar">
+      <span class="topbar-title">{% block page_title %}Loan Analytics{% endblock %}</span>
+      {% block topbar_actions %}{% endblock %}
+    </header>
+
+    <div class="page-content">
+      {% block content %}{% endblock %}
+    </div>
+
+  </div>
+
+</body>
+</html>

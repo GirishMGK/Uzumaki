@@ -62,3 +62,16 @@ email-validator
 # dependency here, not something that merely happens to already be
 # importable transitively via another package in some environments.
 httpx
+
+# Loan Analytics (loans_tool/) -- vendored FastAPI backend (originally
+# "SanGir Automations" / FCMR), run in-process by _pages/loans.py, same
+# pattern as HRM above. fastapi/uvicorn[standard]/pydantic-settings/duckdb/
+# pyarrow/openpyxl are already covered by other tools' deps above; these
+# are the ones genuinely new to this hub.
+polars
+pyyaml
+python-multipart
+aiofiles
+itsdangerous
+psutil
+jinja2

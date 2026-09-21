@@ -115,6 +115,7 @@ datas = [
     _tree("form26as_tool"),
     _tree("hrm_tool"),
     _tree("tally_tool"),
+    _tree("loans_tool"),
 ] + metadata_datas + streamlit_data + reportlab_data
 
 hiddenimports = [
@@ -163,6 +164,11 @@ hiddenimports = [
     # transitively (streamlit depends on it, already in _METADATA_PACKAGES
     # above), but list it explicitly here too as belt-and-suspenders.
     "requests",
+    # Loan Analytics backend (FastAPI, vendored from FCMR) -- reuses the same
+    # lazy-import-from-a-Streamlit-page pattern as HRM/Tally above, so it
+    # gets its own Analysis() entry script below for the same reason. These
+    # are its own top-level deps not already covered by another tool's list.
+    "polars", "yaml", "aiofiles", "itsdangerous", "psutil", "jinja2",
 ] + streamlit_submodules + passlib_submodules + reportlab_submodules + ijson_submodules
 
 # Three hub pages (_pages/pdf_tools_page.py, je_audit.py, pf_statutory.py)
@@ -187,6 +193,13 @@ hiddenimports = [
 # way, but its own third-party imports (fastapi, sqlmodel, ...) still need
 # an entry point for that analysis to actually trace from -- same reasoning
 # as the runpy-invisible scripts above, applied to a plain lazy import.
+# loans_tool/backend/loan_app/main.py (Loan Analytics, vendored from FCMR)
+# is lazily imported the exact same way from _pages/loans.py -- same fix.
+# ("loan_app", not "app": hrm_tool/backend already has its own top-level
+# "app" package, and both being on sys.path at once at the same name would
+# collide in sys.modules -- whichever tool's page happened to import first
+# would silently win for both. Vendored under a package name unique across
+# every hub tool instead.)
 # Combined_PF_Statutory.py's native "select a folder" dialog
 # (_pick_folder() in that file) shells out to PowerShell's built-in
 # System.Windows.Forms.FolderBrowserDialog on Windows rather than using
@@ -199,7 +212,8 @@ a = Analysis(
     ["launcher.py", "pdf_tools.py",
      os.path.join("je_audit_tool", "app.py"), "Combined_PF_Statutory.py",
      os.path.join("hrm_tool", "backend", "app", "main.py"),
-     os.path.join("tally_tool", "extract_ledgers.py")],
+     os.path.join("tally_tool", "extract_ledgers.py"),
+     os.path.join("loans_tool", "backend", "loan_app", "main.py")],
     pathex=[
         ROOT,
         os.path.join(ROOT, "redaction_tool"),
@@ -207,6 +221,7 @@ a = Analysis(
         os.path.join(ROOT, "form26as_tool"),
         os.path.join(ROOT, "hrm_tool", "backend"),
         os.path.join(ROOT, "tally_tool"),
+        os.path.join(ROOT, "loans_tool", "backend"),
     ],
     binaries=[],
     datas=datas,

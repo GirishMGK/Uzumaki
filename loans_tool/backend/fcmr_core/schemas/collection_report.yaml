@@ -1,0 +1,32 @@
+report_type: collection_report
+
+columns:
+  loan_account_no:
+    aliases: [loan_account_no, lan, loan_account, loan_id]
+    required: true
+    dtype: str
+
+  collection_date:
+    aliases: [collection_date, payment_date, receipt_date, date]
+    required: false
+    dtype: str
+
+  amount_collected:
+    aliases: [amount_collected, collected_amount, payment_amount, receipt_amount, amount]
+    required: false
+    dtype: float
+
+  collection_mode:
+    aliases: [collection_mode, payment_mode, mode_of_payment]
+    required: false
+    dtype: str
+
+  agent_id:
+    aliases: [agent_id, collector_id, field_agent]
+    required: false
+    dtype: str
+
+  dpd:
+    aliases: [dpd, days_past_due, overdue_days]
+    required: false
+    dtype: int

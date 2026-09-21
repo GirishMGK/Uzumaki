@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}EAD File Consolidation — Loan Analytics{% endblock %}
+{% block page_title %}EAD File Consolidation{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard/upload" class="btn btn-primary" style="margin-left:auto;">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+      <rect x="1" y="1" width="14" height="14" rx="3" stroke="white" stroke-width="1.6" fill="none"/>
+      <path d="M8 11V5M5.5 7.5L8 5L10.5 7.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    Upload More
+  </a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:760px; margin:0 auto;">
+
+  {% if total == 0 %}
+  <div class="card empty-state">
+    <div class="empty-icon">📊</div>
+    <h2>No EAD Files Ready</h2>
+    <p>Upload and map at least one EAD file before consolidating.</p>
+    {% if ead_pending %}
+    <p style="color:var(--warn-text); font-size:13px;">{{ ead_pending | length }} file(s) are still awaiting column mapping.</p>
+    {% endif %}
+    <a href="/dashboard/upload" class="btn btn-primary" style="margin-top:12px;">Upload EAD File</a>
+  </div>
+
+  {% else %}
+  <div class="card">
+    <div class="card-title">Ready to Consolidate</div>
+    <div class="card-sub">{{ total }} EAD file(s) mapped and ready. Consolidation stacks all files into a single dataset using canonical column names.</div>
+
+    <table class="data-table" style="margin-top:16px;">
+      <thead>
+        <tr>
+          <th>Filename</th>
+          <th style="text-align:right">Rows</th>
+          <th>Ingested</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in ead_ready %}
+        <tr>
+          <td class="filename">{{ u.filename }}</td>
+          <td class="mono right">{{ "{:,}".format(u.row_count) if u.row_count else "—" }}</td>
+          <td class="timestamp">{{ u.ingested_at[:16].replace("T"," ") if u.ingested_at else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if ead_pending %}
+    <div style="margin-top:14px; padding:10px 14px; background:var(--warn-bg, #fffbe6); border:1px solid var(--warn-border, #ffe58f); border-radius:6px; font-size:13px; color:var(--warn-text, #7c5c00);">
+      ⚠ {{ ead_pending | length }} file(s) still pending column mapping — they will NOT be included in this consolidation.
+      {% for p in ead_pending %}
+        <a href="/dashboard/uploads/{{ p.upload_id }}/map-columns" style="margin-left:6px;">Map {{ p.filename }}</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="form-actions" style="margin-top:24px; gap:12px;">
+      <a href="/" class="btn btn-ghost">Back to Dashboard</a>
+      <a href="/dashboard/ead/download/csv" class="btn btn-ghost" id="btn-csv"
+         onclick="showLoading(this, 'Generating CSV…')">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="margin-right:4px;">
+          <path d="M8 11V3M5 8l3 3 3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="2" y="13" width="12" height="1.5" rx="0.75" fill="currentColor"/>
+        </svg>
+        Download CSV
+      </a>
+      <a href="/dashboard/ead/download/excel" class="btn btn-primary" id="btn-excel"
+         onclick="showLoading(this, 'Generating Excel…')">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="margin-right:4px;">
+          <path d="M8 11V3M5 8l3 3 3-3" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="2" y="13" width="12" height="1.5" rx="0.75" fill="white"/>
+        </svg>
+        Download Excel
+      </a>
+    </div>
+  </div>
+
+  <div class="card" style="background:var(--row-alt);">
+    <div class="card-title">What does consolidation do?</div>
+    <ol style="padding-left:18px; margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+      <li style="font-size:13px;"><strong>Canonical Rename</strong> — Each file's raw headers are renamed to standard ECL field names (e.g., DrsPOS → outstanding_principal).</li>
+      <li style="font-size:13px;"><strong>Stack</strong> — All rows from all files are combined into one dataset. Missing columns are filled with nulls.</li>
+      <li style="font-size:13px;"><strong>Source Tracking</strong> — A <code>_source_file</code> column is added so each row can be traced back to its original file.</li>
+      <li style="font-size:13px;"><strong>Excel</strong> includes a Summary sheet listing all source files, total rows, and generation timestamp.</li>
+    </ol>
+  </div>
+  {% endif %}
+
+</div>
+
+<script>
+function showLoading(el, msg) {
+  setTimeout(function() {
+    el.textContent = msg;
+    el.style.opacity = "0.6";
+    el.style.pointerEvents = "none";
+    // Re-enable after 15s in case download fails
+    setTimeout(function() {
+      el.style.opacity = "1";
+      el.style.pointerEvents = "";
+      el.innerHTML = el.id === 'btn-excel' ? '⬇ Download Excel' : '⬇ Download CSV';
+    }, 15000);
+  }, 50);
+}
+</script>
+{% endblock %}
