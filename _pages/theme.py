@@ -163,6 +163,15 @@ def inject_css() -> None:
             border: 1px solid rgba(255,255,255,.25) !important;
         }}
 
+        /* ── sidebar inline code (e.g. the version number in "Current
+        version: `677bcaa`") ── same root cause as the expander fix above:
+        Streamlit's default `code` span keeps its own light background
+        regardless of surrounding theme, and the sidebar's forced light
+        text color sits invisibly on top of it. */
+        [data-testid="stSidebar"] code {{
+            background: rgba(255,255,255,.15);
+        }}
+
         /* ── sidebar credit line ── */
         .sa-credit {{
             margin: 1.4rem 0 .6rem; padding-top: .9rem;
