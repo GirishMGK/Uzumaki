@@ -1,5 +1,5 @@
 """
-Parquet Tool  —  Python / Streamlit port of the Sangir Analytics
+Parquet Tool  —  Python / Streamlit port of the original
 WPF desktop application (DishaParquetTool).
 
 Rebuilds the desktop app's modules on the pandas / pyarrow / duckdb stack:
