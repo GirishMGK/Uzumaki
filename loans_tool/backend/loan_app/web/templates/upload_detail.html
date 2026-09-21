@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}{{ upload.filename }} — Loan Analytics{% endblock %}
+{% block page_title %}Uploads{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard" class="btn btn-ghost" style="margin-left:auto;">← Dashboard</a>
+{% endblock %}
+
+{% block content %}
+
+{# ── Upload info card ── #}
+<div class="card">
+  <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
+    <div>
+      <div class="card-title" style="font-size:16px; margin-bottom:6px;">{{ upload.filename }}</div>
+      <dl class="detail-grid" style="margin-top:8px;">
+        <dt>Report Type</dt><dd><span class="badge badge-type">{{ "EAD Files" if upload.report_type == "ead_files" else upload.report_type.replace("_"," ").title() }}</span></dd>
+        <dt>Status</dt><dd><span class="badge badge-{{ upload.status }}">{{ upload.status.replace("_"," ") }}</span></dd>
+        <dt>Row Count</dt><dd class="mono">{{ "{:,}".format(upload.row_count) if upload.row_count else "—" }}</dd>
+        <dt>Uploaded</dt><dd class="timestamp">{{ upload.created_at[:19].replace("T"," ") }} UTC</dd>
+        {% if upload.ingested_at %}
+        <dt>Ingested</dt><dd class="timestamp">{{ upload.ingested_at[:19].replace("T"," ") }} UTC</dd>
+        {% endif %}
+        {% if upload.batch_id %}
+        <dt>Batch ID</dt><dd class="mono" style="font-size:11px;">{{ upload.batch_id }}</dd>
+        {% endif %}
+        <dt>Upload ID</dt><dd class="mono" style="font-size:11px;">{{ upload.upload_id }}</dd>
+      </dl>
+    </div>
+    <div class="card-actions" style="margin-top:0; flex-shrink:0;">
+      {% if upload.status == "mapping_pending" %}
+        <a href="/dashboard/uploads/{{ upload.upload_id }}/map-columns" class="btn btn-primary">Map Columns →</a>
+        <p class="help-text" style="margin-top:8px;">Column mapping required before analytics can run.</p>
+      {% elif upload.status == "ready" %}
+        <form method="POST" action="/uploads/{{ upload.upload_id }}/run" id="run_form">
+          <button type="submit" name="mode" value="all" class="btn btn-run">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="6.5" stroke="white" stroke-width="1.4" fill="none" opacity=".7"/>
+              <path d="M6.5 5.5L11 8L6.5 10.5Z" fill="white"/>
+            </svg>
+            Run Analytics
+          </button>
+        </form>
+        {% if categories %}
+        <form method="POST" action="/uploads/{{ upload.upload_id }}/run" style="margin-top:16px;">
+          <input type="hidden" name="mode" value="selected">
+          <div style="padding:16px; background:var(--subtle-bg); border-radius:6px; border:1px solid var(--border);">
+            <div style="font-weight:500; margin-bottom:12px;">Select categories to run (or click Run Analytics above to run all)</div>
+            {% for cat in categories %}
+            <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border);">
+              <label style="display:flex; align-items:center; cursor:pointer; font-weight:500; gap:8px;">
+                <input type="checkbox" name="categories" value="{{ cat.id }}" class="cat_checkbox" data-cat="{{ cat.id }}">
+                {{ cat.label }} ({{ cat.count }} rules)
+              </label>
+              <div style="margin-left:24px; margin-top:8px; display:flex; flex-direction:column; gap:6px;">
+                {% for rule in cat.rules %}
+                <label style="display:flex; align-items:center; cursor:pointer; font-size:13px; gap:6px;">
+                  <input type="checkbox" name="rules" value="{{ rule.id }}" class="rule_checkbox" data-cat="{{ cat.id }}">
+                  {{ rule.description }}
+                </label>
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+            <button type="submit" class="btn btn-sm btn-primary" style="width:100%; margin-top:12px;">Run Selected Rules</button>
+          </div>
+        </form>
+        <script>
+          const catCheckboxes = document.querySelectorAll('.cat_checkbox');
+          const ruleCheckboxes = document.querySelectorAll('.rule_checkbox');
+          catCheckboxes.forEach(catCb => {
+            catCb.addEventListener('change', function() {
+              const catId = this.getAttribute('data-cat');
+              const rulesInCat = document.querySelectorAll(`.rule_checkbox[data-cat="${catId}"]`);
+              rulesInCat.forEach(r => r.checked = this.checked);
+            });
+          });
+          ruleCheckboxes.forEach(ruleCb => {
+            ruleCb.addEventListener('change', function() {
+              const catId = this.getAttribute('data-cat');
+              const catCb = document.querySelector(`.cat_checkbox[data-cat="${catId}"]`);
+              const rulesInCat = document.querySelectorAll(`.rule_checkbox[data-cat="${catId}"]`);
+              const allChecked = Array.from(rulesInCat).every(r => r.checked);
+              const someChecked = Array.from(rulesInCat).some(r => r.checked);
+              catCb.checked = allChecked;
+              catCb.indeterminate = someChecked && !allChecked;
+            });
+          });
+        </script>
+        {% endif %}
+      {% elif upload.status == "failed" %}
+        <p class="error-text" style="font-size:13px;">Ingestion failed. Please re-upload the file.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ── Column mapping display ── #}
+{% if mapping_display %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:16px 20px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px;">
+    <div class="card-title" style="margin-bottom:0;">Active Column Mapping</div>
+    <a href="/dashboard/uploads/{{ upload.upload_id }}/map-columns" class="btn btn-sm btn-ghost" style="margin-left:auto;">Edit &amp; Re-ingest</a>
+  </div>
+  <table class="data-table" style="max-width:100%;">
+    <thead>
+      <tr>
+        <th>CSV Column</th>
+        <th>Canonical Field</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for raw, canonical in mapping_display %}
+      <tr>
+        <td class="mono">{{ raw }}</td>
+        <td class="mono" style="color:var(--ok-text);">{{ canonical }}</td>
+        <td><span class="badge badge-auto">Auto</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# ── Analytics runs ── #}
+{% if runs %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:16px 20px 14px; border-bottom:1px solid var(--border);">
+    <div class="card-title" style="margin-bottom:0;">Analytics Runs</div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Run ID</th>
+        <th>Status</th>
+        <th>Started</th>
+        <th>Finished</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td class="mono" style="font-size:11px;">{{ r.run_id[:8] }}…</td>
+        <td><span class="badge badge-{{ r.status }}">{{ r.status }}</span></td>
+        <td class="timestamp">{{ r.started_at[:19].replace("T"," ") if r.started_at else "—" }}</td>
+        <td class="timestamp">{{ r.finished_at[:19].replace("T"," ") if r.finished_at else "—" }}</td>
+        <td style="text-align:right; white-space:nowrap;">
+          <a href="/runs/{{ r.run_id }}" class="btn btn-sm btn-ghost">Results</a>
+          {% if r.status == "completed" %}
+          <a href="/runs/{{ r.run_id }}/download/wide" class="btn btn-sm btn-ghost" style="margin-left:4px;">Wide CSV</a>
+          <a href="/runs/{{ r.run_id }}/download/long" class="btn btn-sm btn-ghost" style="margin-left:4px;">Long CSV</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% elif upload.status == "ready" %}
+<div class="card empty-state" style="padding:32px 24px;">
+  <div class="empty-icon">▶</div>
+  <h2>No runs yet</h2>
+  <p>Click <strong>Run Analytics</strong> above to start.</p>
+</div>
+{% endif %}
+
+{% endblock %}

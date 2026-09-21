@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+{% block title %}New Upload — Loan Analytics{% endblock %}
+{% block page_title %}New Upload{% endblock %}
+
+{% block content %}
+<div style="max-width:600px; margin:0 auto;">
+
+  <div class="card">
+    <div class="card-title">Upload Report CSV</div>
+    <div class="card-sub">Select the report type and drop your CSV file. Files are streamed to Parquet — no full load into memory.</div>
+
+    <form method="POST" action="/dashboard/upload" enctype="multipart/form-data">
+
+      <div class="form-group">
+        <label for="report_type">Report Type</label>
+        <select name="report_type" id="report_type" required>
+          {% for rt in report_types %}
+          <option value="{{ rt }}">{{ "EAD Files" if rt == "ead_files" else rt.replace("_"," ").title() }}</option>
+          {% endfor %}
+        </select>
+        <p class="help-text">Select the type of report you are uploading.</p>
+      </div>
+
+      <!-- Folder picker -->
+      <div class="form-group">
+        <label for="folder">Upload Folder</label>
+        <div class="file-drop" id="folder-drop">
+          <input type="file" name="folder" id="folder" webkitdirectory multiple />
+          <div class="file-drop-label">
+            <span class="file-icon">📁</span>
+            <span style="font-size:13.5px;">Drop folder here or <strong>click to browse</strong></span>
+            <span class="file-hint">All CSVs in folder will be uploaded as one batch</span>
+          </div>
+        </div>
+        <p class="file-selected" id="folder-selected"></p>
+      </div>
+
+      <!-- Multi-file picker -->
+      <div class="form-group">
+        <label for="files">Or Select Files</label>
+        <div class="file-drop" id="files-drop">
+          <input type="file" name="files" id="files" accept=".csv,.zip" multiple />
+          <div class="file-drop-label">
+            <span class="file-icon">📄</span>
+            <span style="font-size:13.5px;">Drop files here or <strong>click to browse</strong></span>
+            <span class="file-hint">Max 2 GB per file · CSV or ZIP format</span>
+          </div>
+        </div>
+        <p class="file-selected" id="files-selected"></p>
+      </div>
+
+      <!-- Progress bar (hidden until upload starts) -->
+      <div id="upload-progress-wrap" style="display:none; margin-top:16px;">
+        <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-bottom:6px;">
+          <span id="progress-label">Uploading…</span>
+          <span id="progress-pct">0%</span>
+        </div>
+        <div style="background:var(--row-alt); border-radius:6px; height:8px; overflow:hidden;">
+          <div id="progress-bar" style="height:100%; width:0%; background:var(--accent); border-radius:6px; transition:width 0.2s ease;"></div>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a href="/" class="btn btn-ghost" id="cancel-btn">Cancel</a>
+        <button type="submit" class="btn btn-primary" id="upload-btn">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+            <rect x="1" y="1" width="14" height="14" rx="3" stroke="white" stroke-width="1.6" fill="none"/>
+            <path d="M8 11V5M5.5 7.5L8 5L10.5 7.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Upload &amp; Continue
+        </button>
+      </div>
+
+    </form>
+  </div>
+
+  <div class="card" style="background:var(--row-alt);">
+    <div class="card-title">What happens next?</div>
+    <ol style="padding-left:18px; margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+      <li style="font-size:13px;"><strong>Column Mapping</strong> — Match your CSV headers to canonical fields. Auto-suggestions are shown.</li>
+      <li style="font-size:13px;"><strong>Ingestion</strong> — CSV is streamed to Parquet; malformed rows are quarantined.</li>
+      <li style="font-size:13px;"><strong>Analytics</strong> — Run KYC format, duplicate, PIN and address checks.</li>
+      <li style="font-size:13px;"><strong>Download</strong> — Get a Wide CSV (one row per record) and Long CSV (one row per exception).</li>
+    </ol>
+  </div>
+
+</div>
+
+<script>
+  function updateFileCount(inputId, labelId) {
+    const input = document.getElementById(inputId);
+    const label = document.getElementById(labelId);
+    if (input.files.length === 0) {
+      label.textContent = "";
+    } else if (input.files.length === 1) {
+      label.textContent = "Selected: " + input.files[0].name;
+    } else {
+      label.textContent = "Selected: " + input.files.length + " files";
+    }
+  }
+
+  document.getElementById("folder").addEventListener("change", function() {
+    updateFileCount("folder", "folder-selected");
+    if (this.files.length > 0) {
+      document.getElementById("files").value = "";
+      updateFileCount("files", "files-selected");
+    }
+  });
+
+  document.getElementById("files").addEventListener("change", function() {
+    updateFileCount("files", "files-selected");
+    if (this.files.length > 0) {
+      document.getElementById("folder").value = "";
+      updateFileCount("folder", "folder-selected");
+    }
+  });
+
+  const BLOB_THRESHOLD = 4 * 1024 * 1024; // 4 MB — use Vercel Blob above this
+
+  document.querySelector("form").addEventListener("submit", async function(e) {
+    e.preventDefault();
+    const form = this;
+
+    const progressWrap = document.getElementById("upload-progress-wrap");
+    const progressBar  = document.getElementById("progress-bar");
+    const progressPct  = document.getElementById("progress-pct");
+    const progressLabel = document.getElementById("progress-label");
+    const uploadBtn    = document.getElementById("upload-btn");
+    const cancelBtn    = document.getElementById("cancel-btn");
+
+    progressWrap.style.display = "block";
+    uploadBtn.disabled = true;
+    uploadBtn.style.opacity = "0.6";
+    cancelBtn.style.pointerEvents = "none";
+    cancelBtn.style.opacity = "0.4";
+
+    function setError(msg) {
+      progressLabel.textContent = msg;
+      progressBar.style.background = "var(--error-text, #c0392b)";
+      uploadBtn.disabled = false;
+      uploadBtn.style.opacity = "1";
+      cancelBtn.style.pointerEvents = "";
+      cancelBtn.style.opacity = "1";
+    }
+
+    // Determine which file the user picked
+    const folderInput = document.getElementById("folder");
+    const filesInput  = document.getElementById("files");
+    const pickedFile  = (folderInput.files.length > 0 ? folderInput.files[0] : null)
+                     || (filesInput.files.length > 0  ? filesInput.files[0]  : null);
+
+    const reportType = document.getElementById("report_type").value;
+
+    // ── Large file path: upload directly to Vercel Blob ──────────────────────
+    if (pickedFile && pickedFile.size > BLOB_THRESHOLD) {
+      progressLabel.textContent = "Getting upload token…";
+
+      let tokenData;
+      try {
+        const tokenResp = await fetch("/api/blob-token?filename=" + encodeURIComponent(pickedFile.name));
+        tokenData = await tokenResp.json();
+      } catch (err) {
+        setError("Could not get upload token. Please try again."); return;
+      }
+
+      if (!tokenData.configured) {
+        // Blob not set up — fall through to direct XHR and let server reject with a clear message
+        progressLabel.textContent = "Blob storage not configured — trying direct upload…";
+      } else {
+        // Upload directly to Vercel Blob
+        progressLabel.textContent = "Uploading to blob storage…";
+        try {
+          const blobResp = await fetch(tokenData.url, {
+            method: "PUT",
+            headers: {
+              "Authorization": "Bearer " + tokenData.clientToken,
+              "x-api-version": "7",
+              "content-type": "text/csv",
+            },
+            body: pickedFile,
+          });
+          if (!blobResp.ok) { setError("Blob upload failed (" + blobResp.status + "). Please try again."); return; }
+          const blobData = await blobResp.json();
+
+          // Register the blob URL with the backend
+          progressLabel.textContent = "Registering upload…";
+          progressBar.style.width = "100%";
+          progressPct.textContent = "100%";
+
+          const regForm = new FormData();
+          regForm.append("blob_url", blobData.url);
+          regForm.append("filename", pickedFile.name);
+          regForm.append("report_type", reportType);
+
+          const regResp = await fetch("/dashboard/upload-from-blob", { method: "POST", body: regForm });
+          if (regResp.ok || regResp.redirected) {
+            progressLabel.textContent = "Done! Redirecting…";
+            window.location.href = regResp.url;
+          } else {
+            setError("Registration failed (" + regResp.status + "). Please try again.");
+          }
+        } catch (err) {
+          setError("Upload error: " + err.message);
+        }
+        return;
+      }
+    }
+
+    // ── Small file path: standard XHR upload through the server ──────────────
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener("progress", function(ev) {
+      if (ev.lengthComputable) {
+        const pct = Math.round((ev.loaded / ev.total) * 100);
+        progressBar.style.width = pct + "%";
+        progressPct.textContent = pct + "%";
+        if (pct === 100) progressLabel.textContent = "Processing on server…";
+      }
+    });
+
+    xhr.upload.addEventListener("load", function() {
+      progressBar.style.width = "100%";
+      progressPct.textContent = "100%";
+      progressLabel.textContent = "Processing on server…";
+    });
+
+    xhr.addEventListener("load", function() {
+      if (xhr.status >= 200 && xhr.status < 400) {
+        progressLabel.textContent = "Done! Redirecting…";
+        window.location.href = xhr.responseURL;
+      } else if (xhr.status === 413) {
+        setError("File too large for direct upload. Ask your admin to configure Vercel Blob storage.");
+      } else {
+        setError("Upload failed (status " + xhr.status + "). Please try again.");
+      }
+    });
+
+    xhr.addEventListener("error", function() {
+      setError("Network error. Please try again.");
+    });
+
+    xhr.open("POST", form.action);
+    xhr.send(new FormData(form));
+  });
+</script>
+{% endblock %}

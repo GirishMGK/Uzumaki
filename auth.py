@@ -41,6 +41,7 @@ TOOL_KEYS: list[str] = [
     "JE Audit Analytics",
     "Tally",
     "HRM",
+    "Loan Analytics",
 ]
 
 DEFAULT_ADMIN_USERNAME = "admin"

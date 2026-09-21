@@ -1,0 +1,192 @@
+report_type: ead_files
+
+columns:
+  loan_id:
+    aliases: [AgreementNo, agreement_no, loan_id, lan, loan_account_no, account_no, loanid, agreementid, AGREEMENTID_R]
+    required: true
+    dtype: str
+
+  entity:
+    aliases: [Entity, entity, company, company_name]
+    required: false
+    dtype: str
+
+  source_system_id:
+    aliases: [SourcesystemID, source_system_id, system_id, sourcesystemid]
+    required: false
+    dtype: str
+
+  scheme_id:
+    aliases: [SchemeID, scheme_id, ProductID, product_id, portfolio_code, schemeid, productid]
+    required: false
+    dtype: str
+
+  scheme_name:
+    aliases: [SchemeName, scheme_name, ProductName, product_name, product, schemename, productname]
+    required: false
+    dtype: str
+
+  sbu:
+    aliases: [SBU, sbu, sub_business_unit, segment, business_unit]
+    required: false
+    dtype: str
+
+  sub_sbu:
+    aliases: [SubSBU, sub_sbu, subsbu, sub_segment]
+    required: false
+    dtype: str
+
+  branch_id:
+    aliases: [BranchID, branch_id, branch_code, branchid]
+    required: false
+    dtype: str
+
+  branch_name:
+    aliases: [BranchName, branch_name, branch, branchname]
+    required: false
+    dtype: str
+
+  state:
+    aliases: [State, state, state_name, geography]
+    required: false
+    dtype: str
+
+  channel_code:
+    aliases: [ChannelCode, channel_code, channel, channelcode]
+    required: false
+    dtype: str
+
+  channel_desc:
+    aliases: [ChannelCodeDesc, channel_desc, channel_description, sourcing_channel, channelcodedesc]
+    required: false
+    dtype: str
+
+  loan_status:
+    aliases: [LoanStatus, loan_status, status, account_status, loanstatus]
+    required: false
+    dtype: str
+
+  stage:
+    aliases: [Stage, stage, ecl_stage, ind_as_stage, ind_as_109_stage]
+    required: false
+    dtype: str
+
+  dpd_bucket:
+    aliases: [DPDBucketing, dpd_bucket, dpd_band, dpd_range, days_past_due, dpdbucketing, dpd]
+    required: false
+    dtype: str
+
+  disbursement_date:
+    aliases: [DisbursalDate, disbursement_date, disbursal_date, disb_date, disbursaldate, disbursed_on]
+    required: false
+    dtype: str
+
+  mob:
+    aliases: [MOB, mob, months_on_book, tenure_months, months_outstanding]
+    required: false
+    dtype: int
+
+  sanction_amount:
+    aliases: [SANCTIONAMOUNT, sanction_amount, sanctioned_amount, loan_amount, sanctionamount]
+    required: false
+    dtype: float
+
+  disbursed_amount:
+    aliases: [DISBURSEDAMOUNT, disbursed_amount, disbursement_amount, disbursedamount]
+    required: false
+    dtype: float
+
+  outstanding_principal:
+    aliases: [DrsPOS, outstanding_principal, drs_pos, principal_outstanding, outstanding_pos, drspos, os_principal]
+    required: false
+    dtype: float
+
+  outstanding_interest:
+    aliases: [DrsInt, outstanding_interest, drs_int, interest_outstanding, drsint, os_interest]
+    required: false
+    dtype: float
+
+  accrued_interest:
+    aliases: [AccruedInterest, accrued_interest, accrued_int, accruedinterest, interest_accrued]
+    required: false
+    dtype: float
+
+  overdue_charges:
+    aliases: [OverDueCharges, overdue_charges, cbc_unpaid, odc_unpaid, charges_overdue, overduecharges, penal_charges]
+    required: false
+    dtype: float
+
+  future_pos:
+    aliases: [FuturePOS, future_pos, future_principal, lifetime_ead, futurepos, future_outstanding]
+    required: false
+    dtype: float
+
+  gross_book_value:
+    aliases: [Gross_Loans_and_Advances, gross_book_value, gross_loans, gross_advances, gbv, gross_loans_and_advances]
+    required: false
+    dtype: float
+
+  ead:
+    aliases: [EAD, ead, exposure_at_default, exposure]
+    required: false
+    dtype: float
+
+  collateral_value:
+    aliases: [National_Asset_Value, collateral_value, national_asset_value, asset_value, security_value, nationalassetvalue]
+    required: false
+    dtype: float
+
+  covered_portion:
+    aliases: [Covered_Portion, covered_portion, secured_portion, coveredportion]
+    required: false
+    dtype: float
+
+  uncovered_portion:
+    aliases: [Uncovered_Portion, uncovered_portion, unsecured_portion, uncoveredportion]
+    required: false
+    dtype: float
+
+  existing_provision:
+    aliases: [Provsion_as_per_Policy, existing_provision, provision_as_per_policy, policy_provision, provsion_as_per_policy]
+    required: false
+    dtype: float
+
+  additional_provision:
+    aliases: [AdditionalProvision, additional_provision, management_overlay, overlay, additionalprovision]
+    required: false
+    dtype: float
+
+  total_provision:
+    aliases: [Total_Provision, total_provision, ecl_provision, total_ecl, totalprovision]
+    required: false
+    dtype: float
+
+  principal_paid:
+    aliases: [PrincipalPaid, principal_paid, principalpaid]
+    required: false
+    dtype: float
+
+  interest_paid:
+    aliases: [InterestPaid, interest_paid, interestpaid]
+    required: false
+    dtype: float
+
+  emi_amount:
+    aliases: [EMI Amount, emi_amount, emi, installment_amount, emiamount]
+    required: false
+    dtype: float
+
+  written_off:
+    aliases: [WrittenOff, written_off, writtenoff, write_off_amount]
+    required: false
+    dtype: float
+
+  otr_flag:
+    aliases: [otr_flag, is_otr, restructured, rescheduled, one_time_restructured]
+    required: false
+    dtype: str
+
+  onan_flag:
+    aliases: [onan_flag, is_onan, once_npa_always_npa, onan]
+    required: false
+    dtype: str

@@ -1,0 +1,42 @@
+report_type: disbursement_report
+
+columns:
+  loan_account_no:
+    aliases: [loan_account_no, lan, loan_id]
+    required: true
+    dtype: str
+
+  disbursement_date:
+    aliases: [disbursement_date, disbursal_date, disb_date]
+    required: true
+    dtype: str
+
+  disbursed_amount:
+    aliases: [disbursed_amount, disbursement_amount, amount, loan_amount]
+    required: false
+    dtype: float
+
+  beneficiary_name:
+    aliases: [beneficiary_name, borrower_name, customer_name]
+    required: false
+    dtype: str
+
+  beneficiary_account:
+    aliases: [beneficiary_account, bank_account, account_no]
+    required: false
+    dtype: str
+
+  ifsc:
+    aliases: [ifsc, ifsc_code]
+    required: false
+    dtype: str
+
+  mode:
+    aliases: [mode, disbursement_mode, payment_mode]
+    required: false
+    dtype: str
+
+  branch:
+    aliases: [branch, branch_name, branch_code]
+    required: false
+    dtype: str

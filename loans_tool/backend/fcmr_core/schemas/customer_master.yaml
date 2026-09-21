@@ -1,0 +1,110 @@
+# Column mapping for the Customer Master upload.
+# Keys = canonical field names used throughout fcmr_core.
+# Values = list of accepted header variations (case-insensitive, whitespace-stripped).
+report_type: customer_master
+
+columns:
+  customer_id:
+    aliases: [customer_id, cust_id, customerid, client_id, borrower_id]
+    required: true
+    dtype: str
+
+  full_name:
+    aliases: [full_name, customer_name, name, borrower_name, applicant_name]
+    required: true
+    dtype: str
+
+  dob:
+    aliases: [dob, date_of_birth, birth_date, dateofbirth]
+    required: false
+    dtype: str   # kept as str; parsed in KYC rule
+
+  gender:
+    aliases: [gender, sex]
+    required: false
+    dtype: str
+
+  mobile:
+    aliases: [mobile, mobile_no, mobile_number, phone, phone_no, contact_no, contact_number]
+    required: false
+    dtype: str
+
+  email:
+    aliases: [email, email_id, email_address, emailid]
+    required: false
+    dtype: str
+
+  pan:
+    aliases: [pan, pan_no, pan_number, permanent_account_number]
+    required: false
+    dtype: str
+
+  aadhaar:
+    aliases: [aadhaar, aadhaar_no, aadhaar_number, aadhar, aadhar_no, uid]
+    required: false
+    dtype: str
+
+  voter_id:
+    aliases: [voter_id, voter_id_no, epic_no, epic_number, voter_card]
+    required: false
+    dtype: str
+
+  passport:
+    aliases: [passport, passport_no, passport_number]
+    required: false
+    dtype: str
+
+  driving_licence:
+    aliases: [driving_licence, dl_no, dl_number, driving_license, licence_no, license_no]
+    required: false
+    dtype: str
+
+  address_line1:
+    aliases: [address_line1, address1, address_line_1, addr1, address]
+    required: false
+    dtype: str
+
+  address_line2:
+    aliases: [address_line2, address2, address_line_2, addr2]
+    required: false
+    dtype: str
+
+  city:
+    aliases: [city, city_name, town]
+    required: false
+    dtype: str
+
+  district:
+    aliases: [district, district_name]
+    required: false
+    dtype: str
+
+  state:
+    aliases: [state, state_name]
+    required: false
+    dtype: str
+
+  pincode:
+    aliases: [pincode, pin_code, pin, postal_code, zip, zipcode]
+    required: false
+    dtype: str
+
+  bank_account:
+    aliases: [bank_account, bank_account_no, account_no, account_number, bank_acc]
+    required: false
+    dtype: str
+
+  ifsc:
+    aliases: [ifsc, ifsc_code, bank_ifsc]
+    required: false
+    dtype: str
+
+  lan:
+    aliases: [lan, loan_agreement_number, loan_account_no, loan_id, loan_no, account_no_loan]
+    required: true
+    dtype: str
+
+  coapplicant_mobile:
+    aliases: [co_applicant_mobile, coapplicant_phone, coapp_mobile, guarantor_mobile, coapplicant_contact]
+    required: false
+    dtype: str

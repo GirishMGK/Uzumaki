@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Loan Analytics{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block topbar_actions %}
+  {% set ead_ready_count = uploads | selectattr("report_type", "equalto", "ead_files") | selectattr("status", "equalto", "ready") | list | length %}
+  {% if ead_ready_count > 0 %}
+  <a href="/dashboard/ead/consolidate" class="btn btn-ghost" style="margin-left:auto;">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="margin-right:2px;">
+      <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    Consolidate EAD Files ({{ ead_ready_count }})
+  </a>
+  <a href="/dashboard/upload" class="btn btn-primary" style="margin-left:8px;">
+  {% else %}
+  <a href="/dashboard/upload" class="btn btn-primary" style="margin-left:auto;">
+  {% endif %}
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+      <rect x="1" y="1" width="14" height="14" rx="3" stroke="white" stroke-width="1.6" fill="none"/>
+      <path d="M8 11V5M5.5 7.5L8 5L10.5 7.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    New Upload
+  </a>
+{% endblock %}
+
+{% block content %}
+
+{# ── Stat cards ── #}
+{% set total = uploads | length %}
+{% set ready = uploads | selectattr("status", "equalto", "ready") | list | length %}
+{% set pending = uploads | selectattr("status", "equalto", "mapping_pending") | list | length %}
+{% set failed = uploads | selectattr("status", "equalto", "failed") | list | length %}
+
+<div class="stat-row">
+  <div class="stat-card">
+    <div class="stat-label">Total Uploads</div>
+    <div class="stat-value">{{ total }}</div>
+    <div class="stat-meta">all time</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Ready to Run</div>
+    <div class="stat-value">{{ ready }}</div>
+    <div class="stat-meta">analytics available</div>
+  </div>
+  <div class="stat-card stat-ok">
+    <div class="stat-label">Mapping Pending</div>
+    <div class="stat-value">{{ pending }}</div>
+    <div class="stat-meta">awaiting column map</div>
+  </div>
+  <div class="stat-card stat-warn">
+    <div class="stat-label">Failed</div>
+    <div class="stat-value">{{ failed }}</div>
+    <div class="stat-meta">ingestion errors</div>
+  </div>
+</div>
+
+{# ── Uploads table ── #}
+{% if uploads %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:16px 20px 14px; border-bottom:1px solid var(--border);">
+    <div class="card-title">Recent Uploads</div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>File</th>
+        <th>Report Type</th>
+        <th style="text-align:right">Rows</th>
+        <th>Status</th>
+        <th>Uploaded</th>
+        <th>Ingested</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in uploads %}
+      <tr>
+        <td class="filename">
+          {% if u.batch_id %}<span style="font-size:11px; color:var(--muted);">{{ u.batch_id[:8] }}</span><br/>{% endif %}
+          {{ u.filename }}
+        </td>
+        <td><span class="badge badge-type">{{ "EAD Files" if u.report_type == "ead_files" else u.report_type.replace("_"," ").title() }}</span></td>
+        <td class="mono right">{{ "{:,}".format(u.row_count) if u.row_count else "—" }}</td>
+        <td><span class="badge badge-{{ u.status }}">{{ u.status.replace("_"," ") }}</span></td>
+        <td class="timestamp">{{ u.created_at[:16].replace("T"," ") }}</td>
+        <td class="timestamp">{{ u.ingested_at[:16].replace("T"," ") if u.ingested_at else "—" }}</td>
+        <td style="text-align:right; white-space:nowrap;">
+          <a href="/dashboard/uploads/{{ u.upload_id }}" class="btn btn-sm btn-ghost">View</a>
+          {% if u.status == "ready" %}
+          <form method="POST" action="/uploads/{{ u.upload_id }}/run" style="display:inline">
+            <button type="submit" class="btn btn-sm btn-run" style="margin-left:4px;">▶ Run</button>
+          </form>
+          {% elif u.status == "mapping_pending" %}
+          <a href="/dashboard/uploads/{{ u.upload_id }}/map-columns" class="btn btn-sm btn-primary" style="margin-left:4px;">Map →</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+<div class="card empty-state">
+  <div class="empty-icon">📂</div>
+  <h2>No uploads yet</h2>
+  <p>Upload a customer master or other report CSV to get started.</p>
+  <a href="/dashboard/upload" class="btn btn-primary">Upload your first file</a>
+</div>
+{% endif %}
+
+{% endblock %}

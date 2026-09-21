@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}Map Columns — {{ upload.filename }} — Loan Analytics{% endblock %}
+{% block page_title %}Column Mapping{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard" class="btn btn-ghost" style="margin-left:auto;">← Dashboard</a>
+{% endblock %}
+
+{% block content %}
+
+<div class="card" style="padding:16px 20px; margin-bottom:16px;">
+  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+    <div>
+      <div class="card-title" style="margin-bottom:2px;">{{ upload.filename }}</div>
+      <div style="font-size:12.5px; color:var(--muted);">
+        <span class="badge badge-type">{{ upload.report_type.replace("_"," ").title() }}</span>
+        &nbsp;·&nbsp; {{ raw_headers | length }} column(s) detected
+      </div>
+    </div>
+    <div style="margin-left:auto; font-size:12.5px; color:var(--muted);">
+      Map each column to a canonical field. Set unused columns to <em>— Skip —</em>.
+    </div>
+  </div>
+</div>
+
+{% if profile_applied %}
+<div class="notice" style="margin-bottom:16px; background:var(--ok-bg); border-left:4px solid var(--ok-text);">
+  <strong>✓ Profile applied</strong> — This mapping was auto-detected from a saved profile ({{ profile_id[:8] }})
+</div>
+{% endif %}
+
+{% set required_fields = canonical_fields | selectattr("required") | list %}
+{% if required_fields %}
+<div class="notice notice-warn" style="margin-bottom:16px;">
+  <strong>Required fields:</strong>
+  {% for spec in required_fields %}<code class="mono">{{ spec.canonical }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+  — must be mapped for analytics to run correctly.
+</div>
+{% endif %}
+
+<form method="POST" action="/dashboard/uploads/{{ upload.upload_id }}/map-columns">
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:30%">Canonical Field</th>
+          <th style="width:80px; text-align:center">Required</th>
+          <th>CSV Column</th>
+          <th style="width:90px; text-align:center">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for spec in canonical_fields %}
+        {% set auto_raw = suggested_inverse.get(spec.canonical, "") %}
+        <tr class="map-row{% if not auto_raw %} row-skip{% endif %}" data-canonical="{{ spec.canonical }}">
+          <td>
+            <code class="mono">{{ spec.canonical }}</code>
+            {% if spec.required %}<span style="color:var(--error-text); margin-left:4px;">*</span>{% endif %}
+          </td>
+          <td style="text-align:center;">
+            {% if spec.required %}
+              <span class="badge badge-auto">Yes</span>
+            {% else %}
+              <span style="color:var(--faint); font-size:12px;">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <select name="map_{{ spec.canonical }}" class="col-select" data-canonical="{{ spec.canonical }}">
+              <option value="__skip__"{% if not auto_raw %} selected{% endif %}>— Skip —</option>
+              {% for header in raw_headers %}
+              <option value="{{ header }}" data-header="{{ header }}"{% if auto_raw == header %} selected{% endif %}>
+                {{ header }}
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+          <td style="text-align:center;">
+            <span class="badge status-badge-{{ spec.canonical | replace(' ','_') }}
+              {% if not auto_raw %}badge-skip{% else %}badge-auto{% endif %}">
+              {% if not auto_raw %}Skip{% else %}Auto{% endif %}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="form-actions" style="margin-top:4px;">
+    <a href="/" class="btn btn-ghost">Cancel</a>
+    <button type="submit" class="btn btn-primary">Confirm Mapping &amp; Ingest →</button>
+  </div>
+</form>
+
+<script>
+function updateAllDropdowns() {
+  var allSelects = document.querySelectorAll('.col-select');
+
+  // Collect all currently selected raw headers (non-skip)
+  var selectedHeaders = new Set();
+  allSelects.forEach(function(sel) {
+    if (sel.value && sel.value !== '__skip__') {
+      selectedHeaders.add(sel.value);
+    }
+  });
+
+  // For each dropdown, hide options already selected elsewhere
+  allSelects.forEach(function(sel) {
+    var currentValue = sel.value;
+    var options = sel.querySelectorAll('option[data-header]');
+    options.forEach(function(opt) {
+      var header = opt.getAttribute('data-header');
+      var isSelected = (header === currentValue);
+      var isUsedElsewhere = selectedHeaders.has(header) && !isSelected;
+      opt.style.display = isUsedElsewhere ? 'none' : '';
+    });
+  });
+}
+
+document.querySelectorAll('.col-select').forEach(function(sel) {
+  function update() {
+    var canonical = sel.dataset.canonical;
+    var safeKey = canonical.replace(/ /g, '_');
+    var row = sel.closest('tr');
+    var badge = document.querySelector('.status-badge-' + safeKey);
+    if (sel.value === '__skip__') {
+      row.classList.add('row-skip');
+      badge.textContent = 'Skip';
+      badge.className = 'badge badge-skip status-badge-' + safeKey;
+    } else {
+      row.classList.remove('row-skip');
+      badge.textContent = 'Manual';
+      badge.className = 'badge badge-manual status-badge-' + safeKey;
+    }
+    updateAllDropdowns();
+  }
+  sel.addEventListener('change', update);
+});
+
+updateAllDropdowns();
+</script>
+{% endblock %}

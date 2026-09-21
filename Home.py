@@ -231,6 +231,13 @@ _TOOLS = [
                 "closing stock without reconnecting for each one.",
     },
     {
+        "group": "Finance & Loan Audit",
+        "icon": "🏦", "title": "Loan Analytics", "tag": "FastAPI (in-process)",
+        "desc": "NBFC loan-portfolio audit analytics — KYC/data-quality checks, duplicate/UCID "
+                "detection, PIN/address validation, ICAI-sampled Excel workpapers, EAD/ECL file "
+                "consolidation. Deterministic — no AI/LLM. Uses your Uzumaki login.",
+    },
+    {
         "group": "Workforce & Scheduling",
         "icon": "🧑‍💼", "title": "HRM", "tag": "FastAPI (in-process)",
         "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
@@ -341,6 +348,7 @@ _ALL_TOOL_PAGES = {
     "JE Audit Analytics": st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
     "Tally": st.Page("_pages/tally_hub.py", title="Tally", icon="📒"),
     "HRM": st.Page("_pages/hrm.py", title="HRM", icon="🧑‍💼"),
+    "Loan Analytics": st.Page("_pages/loans.py", title="Loan Analytics", icon="🏦"),
 }
 _allowed_tools = set(st.session_state.auth_user["allowed_tools"])
 _nav_dict = {
