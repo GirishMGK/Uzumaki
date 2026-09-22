@@ -1653,6 +1653,12 @@ def test_loans_wired_into_home_spec_and_auth():
     assert '_tree("loans_tool")' in spec_src
     assert os.path.join("loans_tool", "backend", "loan_app", "main.py") in spec_src
 
+    auth_src = open(os.path.join(REPO_ROOT, "auth.py"), encoding="utf-8").read()
+    assert '"Loan Analytics"' in auth_src, (
+        "Loan Analytics must be in auth.TOOL_KEYS or an admin can never "
+        "grant/restrict a role's access to it"
+    )
+
 
 # ── loan_app/api/ead_consolidate.py: Parquet download ───────────────────────
 def test_ead_consolidate_parquet_download_round_trips():
@@ -1708,9 +1714,3 @@ def test_ead_consolidate_parquet_download_round_trips():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
-
-    auth_src = open(os.path.join(REPO_ROOT, "auth.py"), encoding="utf-8").read()
-    assert '"Loan Analytics"' in auth_src, (
-        "Loan Analytics must be in auth.TOOL_KEYS or an admin can never "
-        "grant/restrict a role's access to it"
-    )
