@@ -6,7 +6,7 @@
   <title>{% block title %}Loan Analytics — Audit Analytics{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Lora:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/main.css" />
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
   {% block head %}{% endblock %}
@@ -15,10 +15,10 @@
 
   <!-- ═══ SIDEBAR ═══ -->
   <aside class="sidebar">
-    <div class="sidebar-logo" style="font-size: 28px; text-align: center;">📒</div>
-    <div style="padding: 0 15px; text-align: center; font-size: 12px; font-weight: 600; color: var(--text); margin-top: 8px;">Loan Analytics</div>
-
-    <nav class="sidebar-nav">
+    <!-- No logo/title header here on purpose: this iframe sits directly
+    under Uzumaki's own "Loan Analytics" page header and nav entry, so
+    repeating the name a third time here just adds noise. -->
+    <nav class="sidebar-nav" style="padding-top: 14px;">
 
       <a href="/" class="nav-item {% if request.url.path == '/' %}active{% endif %}">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
