@@ -12,7 +12,6 @@ from starlette.responses import RedirectResponse, Response
 
 from loan_app.api import (
     auth,
-    blob_upload,
     downloads,
     ead_consolidate,
     engagements,
@@ -66,8 +65,7 @@ def _ensure_initialized() -> None:
 
 # Login requirement middleware
 class LoginRequiredMiddleware(BaseHTTPMiddleware):
-    """Gates every path except /login, /static, /api/blob-noop behind a
-    session.
+    """Gates every path except /login and /static behind a session.
 
     Trust-host-auth mode (LOANS_TRUST_HOST_AUTH=1, set by _pages/loans.py
     when this runs embedded inside Uzumaki): Uzumaki's own per-user login +
@@ -89,7 +87,7 @@ class LoginRequiredMiddleware(BaseHTTPMiddleware):
             request.session["username"] = auth._ADMIN_USERNAME
             request.session["display_name"] = "Loan Analytics"
             return await call_next(request)
-        public_paths = {"/login", "/static", "/api/blob-noop"}
+        public_paths = {"/login", "/static"}
         # Check if path starts with any public path
         is_public = any(request.url.path.startswith(p) for p in public_paths)
         if is_public:
@@ -128,9 +126,6 @@ app.include_router(settings_api.router, prefix="", tags=["settings"])
 
 # System info & monitoring routes — require login
 app.include_router(system.router, prefix="/api", tags=["system"])
-
-# Blob upload routes (token endpoint is public; register endpoint requires login)
-app.include_router(blob_upload.router, prefix="", tags=["blob"])
 
 # EAD consolidation routes — require login
 app.include_router(ead_consolidate.router, prefix="", tags=["ead"])
