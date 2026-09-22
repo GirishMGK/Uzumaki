@@ -1658,3 +1658,59 @@ def test_loans_wired_into_home_spec_and_auth():
         "Loan Analytics must be in auth.TOOL_KEYS or an admin can never "
         "grant/restrict a role's access to it"
     )
+
+
+# ── loan_app/api/ead_consolidate.py: Parquet download ───────────────────────
+def test_ead_consolidate_parquet_download_round_trips():
+    """
+    Functional test of the EAD Consolidation "Download Parquet" button:
+    hits the real route through the real app/middleware (LOANS_TRUST_HOST_AUTH
+    bypass, same as production when embedded in Uzumaki), with
+    _build_consolidated_df monkeypatched to a known small DataFrame so the
+    test doesn't need to drive the full upload/column-mapping pipeline just
+    to exercise the new serialization endpoint. Verifies the response is
+    genuinely valid Parquet bytes that round-trip to the same data, not just
+    a 200 status.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import io
+
+        import polars as pl
+        from fastapi.testclient import TestClient
+        from loan_app.api import ead_consolidate
+
+        expected = pl.DataFrame({"pan": ["ABCDE1234F"], "outstanding_principal": [100000.5]})
+        ead_consolidate._build_consolidated_df = lambda engagement_id: expected
+
+        with TestClient(loan_main.app) as client:
+            resp = client.get("/dashboard/ead/download/parquet")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == "application/octet-stream"
+            assert ".parquet" in resp.headers["content-disposition"]
+
+            round_tripped = pl.read_parquet(io.BytesIO(resp.content))
+            assert round_tripped.to_dicts() == expected.to_dicts()
+
+            # Empty result still 404s, same as the existing CSV/Excel routes.
+            ead_consolidate._build_consolidated_df = lambda engagement_id: pl.DataFrame()
+            resp = client.get("/dashboard/ead/download/parquet")
+            assert resp.status_code == 404
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
