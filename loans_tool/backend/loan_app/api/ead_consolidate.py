@@ -77,6 +77,26 @@ async def ead_download_csv(request: Request):
     )
 
 
+@router.get("/dashboard/ead/download/parquet")
+async def ead_download_parquet(request: Request):
+    engagement_id = request.session.get("engagement_id")
+    df = _build_consolidated_df(engagement_id)
+    if df.is_empty():
+        raise HTTPException(status_code=404, detail="No ready EAD files found to consolidate.")
+
+    buf = io.BytesIO()
+    df.write_parquet(buf)
+    buf.seek(0)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    filename = f"EAD_Consolidated_{timestamp}.parquet"
+    return StreamingResponse(
+        buf,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/dashboard/ead/download/excel")
 async def ead_download_excel(request: Request):
     engagement_id = request.session.get("engagement_id")

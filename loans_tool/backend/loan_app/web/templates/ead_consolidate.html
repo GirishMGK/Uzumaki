@@ -77,6 +77,14 @@
         </svg>
         Download Excel
       </a>
+      <a href="/dashboard/ead/download/parquet" class="btn btn-ghost" id="btn-parquet"
+         onclick="showLoading(this, 'Generating Parquet…')">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="margin-right:4px;">
+          <path d="M8 11V3M5 8l3 3 3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="2" y="13" width="12" height="1.5" rx="0.75" fill="currentColor"/>
+        </svg>
+        Download Parquet
+      </a>
     </div>
   </div>
 
@@ -103,7 +111,10 @@ function showLoading(el, msg) {
     setTimeout(function() {
       el.style.opacity = "1";
       el.style.pointerEvents = "";
-      el.innerHTML = el.id === 'btn-excel' ? '⬇ Download Excel' : '⬇ Download CSV';
+      el.innerHTML = {
+        'btn-excel': '⬇ Download Excel',
+        'btn-parquet': '⬇ Download Parquet',
+      }[el.id] || '⬇ Download CSV';
     }, 15000);
   }, 50);
 }
