@@ -1714,3 +1714,93 @@ def test_ead_consolidate_parquet_download_round_trips():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── loan_app/api/sql_analytics.py: ad-hoc SQL over ingested reports ────────
+def test_sql_analytics_runs_real_query_across_report_types():
+    """
+    Functional test of the SQL Analytics feature end to end through the
+    real app/middleware: monkeypatches store.build_consolidated_df (the
+    same helper EAD Consolidation uses, now generalized) to return two
+    known small DataFrames standing in for two different report types,
+    then verifies a real JOIN across them executes correctly through the
+    actual /run and /export routes -- not just that a table lookup
+    happens, but that DuckDB genuinely joins data registered from two
+    separate report types together, which is the entire point of the
+    feature. Also checks the bad-SQL and no-data-yet error paths return
+    a clean 400 rather than a 500.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+    pytest.importorskip("duckdb")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import polars as pl
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        customer_df = pl.DataFrame({"pan": ["ABCDE1234F", "FGHIJ5678K"], "full_name": ["Alice", "Bob"]})
+        ead_df = pl.DataFrame({"pan": ["ABCDE1234F"], "outstanding_principal": [100000.0]})
+
+        def fake_build(engagement_id, report_type):
+            if report_type == "customer_master":
+                return customer_df
+            if report_type == "ead_files":
+                return ead_df
+            return pl.DataFrame()
+
+        catalog_store.build_consolidated_df = fake_build
+
+        with TestClient(loan_main.app) as client:
+            # Page loads and lists both tables.
+            resp = client.get("/dashboard/analytics/sql")
+            assert resp.status_code == 200
+            assert "customer_master" in resp.text
+            assert "ead_files" in resp.text
+
+            # A real cross-report-type JOIN, not just a single-table select.
+            join_sql = (
+                "SELECT c.pan, c.full_name, e.outstanding_principal "
+                "FROM customer_master c LEFT JOIN ead_files e ON c.pan = e.pan "
+                "ORDER BY c.pan"
+            )
+            resp = client.post("/dashboard/analytics/sql/run", data={"sql": join_sql})
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["total_rows"] == 2
+            assert body["rows"][0] == {
+                "pan": "ABCDE1234F", "full_name": "Alice", "outstanding_principal": 100000.0,
+            }
+            assert body["rows"][1]["outstanding_principal"] is None  # Bob has no EAD row
+
+            # Export produces genuine CSV of the same result.
+            resp = client.post("/dashboard/analytics/sql/export", data={"sql": join_sql})
+            assert resp.status_code == 200
+            assert resp.headers["content-type"].startswith("text/csv")
+            assert "Alice" in resp.text and "Bob" in resp.text
+
+            # Bad SQL -> clean 400, not a 500.
+            resp = client.post("/dashboard/analytics/sql/run", data={"sql": "SELECT * FROM no_such_table"})
+            assert resp.status_code == 400
+            assert "error" in resp.json()
+
+            # No tables ready yet -> clean 400 on run.
+            catalog_store.build_consolidated_df = lambda engagement_id, report_type: pl.DataFrame()
+            resp = client.post("/dashboard/analytics/sql/run", data={"sql": "SELECT 1"})
+            assert resp.status_code == 400
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]

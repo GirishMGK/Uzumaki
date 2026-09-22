@@ -16,6 +16,7 @@ from loan_app.api import (
     ead_consolidate,
     engagements,
     runs,
+    sql_analytics,
     system,
     uploads,
 )
@@ -129,3 +130,6 @@ app.include_router(system.router, prefix="/api", tags=["system"])
 
 # EAD consolidation routes — require login
 app.include_router(ead_consolidate.router, prefix="", tags=["ead"])
+
+# SQL Analytics routes — require login
+app.include_router(sql_analytics.router, prefix="", tags=["sql-analytics"])

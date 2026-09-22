@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}SQL Analytics — Loan Analytics{% endblock %}
+{% block page_title %}SQL Analytics{% endblock %}
+
+{% block content %}
+<div style="max-width:900px; margin:0 auto;">
+
+  {% if not tables %}
+  <div class="card empty-state">
+    <div class="empty-icon">🔎</div>
+    <h2>No Files Ready to Query</h2>
+    <p>Upload and map at least one file before running SQL analytics.</p>
+    <a href="/dashboard/upload" class="btn btn-primary" style="margin-top:12px;">Upload a File</a>
+  </div>
+
+  {% else %}
+  <div class="card">
+    <div class="card-title">Available Tables</div>
+    <div class="card-sub">Every ready, mapped upload for this engagement, consolidated one table per report type. Query them directly by name below.</div>
+    <table class="data-table" style="margin-top:12px;">
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th style="text-align:right">Rows</th>
+          <th>Columns</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tables %}
+        <tr>
+          <td class="mono">{{ t.name }}</td>
+          <td class="mono right">{{ "{:,}".format(t.rows) }}</td>
+          <td class="filename" style="max-width:none; white-space:normal;">{{ t.columns | join(", ") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Run a Query</div>
+    <div class="card-sub">Standard SQL (DuckDB syntax). Runs only against the tables above, in an isolated session — never against the app's own data.</div>
+
+    <div class="form-group" style="margin-top:14px;">
+      <textarea id="sql-box" rows="6" style="width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); font-family:'IBM Plex Mono', monospace; font-size:12.5px; color:var(--text); background:var(--surface);">{{ default_sql }}</textarea>
+    </div>
+
+    <div class="form-actions">
+      <button type="button" class="btn btn-primary" id="run-btn">▶ Run</button>
+      <button type="button" class="btn btn-ghost" id="export-btn">⬇ Download CSV</button>
+    </div>
+
+    <div id="error-box" class="notice notice-err" style="display:none; margin-top:16px;"></div>
+
+    <div id="result-wrap" style="display:none; margin-top:16px;">
+      <p id="result-caption" class="timestamp" style="margin-bottom:8px;"></p>
+      <div style="overflow-x:auto;">
+        <table class="data-table" id="result-table"></table>
+      </div>
+    </div>
+  </div>
+
+  <form id="export-form" method="POST" action="/dashboard/analytics/sql/export" style="display:none;">
+    <input type="hidden" name="sql" id="export-sql">
+  </form>
+
+  <script>
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
+function showError(msg) {
+  const box = document.getElementById("error-box");
+  box.textContent = msg;
+  box.style.display = "block";
+  document.getElementById("result-wrap").style.display = "none";
+}
+
+function renderResult(data) {
+  document.getElementById("error-box").style.display = "none";
+
+  const table = document.getElementById("result-table");
+  const cols = data.columns;
+  let html = "<thead><tr>" + cols.map(c => "<th>" + escapeHtml(c) + "</th>").join("") + "</tr></thead><tbody>";
+  for (const row of data.rows) {
+    html += "<tr>" + cols.map(c => {
+      const v = row[c];
+      return "<td>" + (v === null || v === undefined ? "" : escapeHtml(v)) + "</td>";
+    }).join("") + "</tr>";
+  }
+  html += "</tbody>";
+  table.innerHTML = html;
+
+  const caption = document.getElementById("result-caption");
+  if (data.total_rows > data.rows.length) {
+    caption.textContent = "Showing first " + data.rows.length.toLocaleString() + " of " + data.total_rows.toLocaleString() + " rows — use Download CSV for the full result.";
+  } else {
+    caption.textContent = data.total_rows.toLocaleString() + " row(s).";
+  }
+
+  document.getElementById("result-wrap").style.display = "block";
+}
+
+document.getElementById("run-btn").addEventListener("click", async function() {
+  const sql = document.getElementById("sql-box").value.trim();
+  if (!sql) { showError("Enter a SQL query."); return; }
+
+  const btn = this;
+  btn.disabled = true;
+  btn.textContent = "Running…";
+  try {
+    const resp = await fetch("/dashboard/analytics/sql/run", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      body: "sql=" + encodeURIComponent(sql),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { showError(data.error || "Query failed."); return; }
+    renderResult(data);
+  } catch (err) {
+    showError("Network error: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "▶ Run";
+  }
+});
+
+document.getElementById("export-btn").addEventListener("click", function() {
+  const sql = document.getElementById("sql-box").value.trim();
+  if (!sql) { showError("Enter a SQL query."); return; }
+  document.getElementById("export-sql").value = sql;
+  document.getElementById("export-form").submit();
+});
+  </script>
+  {% endif %}
+
+</div>
+{% endblock %}
