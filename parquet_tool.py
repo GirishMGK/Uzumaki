@@ -40,11 +40,45 @@ except Exception:  # pragma: no cover
 
 
 COMPRESSIONS = ["snappy", "gzip", "brotli", "zstd", "lz4", "none"]
+_TABULAR_EXTS = (".csv", ".txt", ".tsv", ".xlsx", ".xls")
+_MAX_UPLOAD_MB = 5120  # 5 GB per file, up from Streamlit's 200MB default
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # helpers
 # ══════════════════════════════════════════════════════════════════════════════
+class _ZipEntryFile:
+    """Wraps a zip-archive member so it looks like an UploadedFile to
+    `_read_tabular()` (only `.name` / `.getvalue()` are used)."""
+
+    def __init__(self, name: str, data: bytes):
+        self.name = name
+        self._data = data
+
+    def getvalue(self) -> bytes:
+        return self._data
+
+
+def _expand_zip_uploads(files):
+    """Flattens a mix of plain tabular uploads and .zip uploads into a single
+    list of upload-like objects: every supported tabular file inside a zip
+    (at any depth, so a zipped folder tree works the same as a flat zip) is
+    pulled out as its own entry; non-zip uploads pass through unchanged."""
+    out = []
+    for f in files:
+        if f.name.lower().endswith(".zip"):
+            with zipfile.ZipFile(io.BytesIO(f.getvalue())) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    base = os.path.basename(info.filename)
+                    if base.lower().endswith(_TABULAR_EXTS):
+                        out.append(_ZipEntryFile(base, zf.read(info)))
+        else:
+            out.append(f)
+    return out
+
+
 def _read_tabular(uploaded, *, sep=None, encoding="utf-8", sheet=0) -> pd.DataFrame:
     """Read an uploaded CSV / Excel file into a DataFrame."""
     name = uploaded.name.lower()
@@ -108,12 +142,21 @@ def _parquet_meta(data: bytes) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 def _page_convert():
     st.subheader("Convert  ·  CSV / Excel → Parquet")
-    files = st.file_uploader(
-        "Upload one or more CSV / Excel files",
-        type=["csv", "txt", "tsv", "xlsx", "xls"],
-        accept_multiple_files=True,
-        key="conv_files",
+    mode = st.radio(
+        "Upload as", ["Files (or .zip)", "Folder"], horizontal=True, key="conv_mode",
+        help="\"Folder\" opens your browser's folder picker and pulls in every "
+             "matching file from it, subfolders included.",
     )
+    files = st.file_uploader(
+        "Upload one or more CSV / Excel files, or a .zip containing them"
+        if mode == "Files (or .zip)" else "Select a folder of CSV / Excel files",
+        type=["csv", "txt", "tsv", "xlsx", "xls"] + (["zip"] if mode == "Files (or .zip)" else []),
+        accept_multiple_files="directory" if mode == "Folder" else True,
+        max_upload_size=_MAX_UPLOAD_MB,
+        key=f"conv_files_{mode}",
+    )
+    if files:
+        files = _expand_zip_uploads(files)
     c1, c2, c3 = st.columns(3)
     with c1:
         compression = st.selectbox("Compression", COMPRESSIONS, index=0, key="conv_comp")
