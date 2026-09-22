@@ -66,6 +66,15 @@
         Data Analytics
       </a>
 
+      <a href="/dashboard/analytics/sql" class="nav-item {% if request.url.path == '/dashboard/analytics/sql' %}active{% endif %}">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <rect x="1" y="1" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".55"/>
+          <path d="M4 6.5L6.5 8.5L4 10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+          <path d="M8 11H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        SQL Analytics
+      </a>
+
       <a href="/dashboard" class="nav-item {% if request.url.path.startswith('/dashboard/uploads') and '/map-columns' not in request.url.path %}active{% endif %}">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
           <rect x="2" y="11" width="12" height="3.5" rx="1.5" fill="currentColor" opacity=".45"/>

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
+import polars as pl
 
 from fcmr_core.config import apply_duckdb_limits, settings
 
@@ -382,6 +383,33 @@ def list_uploads(engagement_id: str | None = None) -> list[dict]:
             rows = con.execute("SELECT * FROM uploads ORDER BY created_at DESC").fetchall()
         cols = [d[0] for d in con.description]
     return [dict(zip(cols, r)) for r in rows]
+
+
+def build_consolidated_df(engagement_id: str | None, report_type: str) -> pl.DataFrame:
+    """Stack every ready upload of one report type for an engagement into a
+    single DataFrame, renamed to canonical columns per each upload's saved
+    mapping. Column sets don't have to match exactly across uploads --
+    ``diagonal_relaxed`` fills anything missing with nulls rather than
+    erroring, since consecutive months' exports rarely have identical
+    columns. Originally EAD-Consolidation-specific; generalized so the same
+    logic backs SQL Analytics' per-report-type tables too.
+    """
+    uploads = list_uploads(engagement_id=engagement_id)
+    ready = [u for u in uploads if u["report_type"] == report_type and u["status"] == "ready"]
+    if not ready:
+        return pl.DataFrame()
+
+    frames: list[pl.DataFrame] = []
+    for upload in ready:
+        df = get_upload_df(upload["upload_id"])
+        mapping: dict[str, str] = json.loads(upload.get("column_mapping") or "{}")
+        rename = {raw: canonical for raw, canonical in mapping.items() if raw in df.columns}
+        if rename:
+            df = df.rename(rename)
+        df = df.with_columns(pl.lit(upload["filename"]).alias("_source_file"))
+        frames.append(df)
+
+    return pl.concat(frames, how="diagonal_relaxed")
 
 
 def save_mapping_profile(

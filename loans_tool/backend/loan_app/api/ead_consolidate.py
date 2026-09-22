@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,25 +19,13 @@ templates = Jinja2Templates(directory=str(_templates_dir))
 
 
 def _build_consolidated_df(engagement_id: str | None) -> pl.DataFrame:
-    """Load all ready EAD uploads for the engagement, rename to canonical columns, and stack."""
-    uploads = store.list_uploads(engagement_id=engagement_id)
-    ead_ready = [u for u in uploads if u["report_type"] == "ead_files" and u["status"] == "ready"]
-    if not ead_ready:
-        return pl.DataFrame()
-
-    frames: list[pl.DataFrame] = []
-    for upload in ead_ready:
-        df = store.get_upload_df(upload["upload_id"])
-        # Rename raw → canonical using stored column_mapping {raw: canonical}
-        mapping: dict[str, str] = json.loads(upload.get("column_mapping") or "{}")
-        rename = {raw: canonical for raw, canonical in mapping.items() if raw in df.columns}
-        if rename:
-            df = df.rename(rename)
-        # Add source filename column so user can trace back
-        df = df.with_columns(pl.lit(upload["filename"]).alias("_source_file"))
-        frames.append(df)
-
-    return pl.concat(frames, how="diagonal_relaxed")
+    """Load all ready EAD uploads for the engagement, rename to canonical
+    columns, and stack. Thin wrapper over the now-generic
+    store.build_consolidated_df (also used by SQL Analytics for the other
+    report types) -- kept as its own function here since it's the one
+    that's actually called throughout this module.
+    """
+    return store.build_consolidated_df(engagement_id, "ead_files")
 
 
 @router.get("/dashboard/ead/consolidate", response_class=HTMLResponse)
