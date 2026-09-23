@@ -56,13 +56,18 @@
 
 {# ── Uploads table ── #}
 {% if uploads %}
+<form method="POST" action="/dashboard/uploads/bulk-delete" id="bulk-delete-form"
+      onsubmit="return confirmBulkDelete();">
 <div class="card" style="padding:0; overflow:hidden;">
-  <div style="padding:16px 20px 14px; border-bottom:1px solid var(--border);">
-    <div class="card-title">Recent Uploads</div>
+  <div style="padding:16px 20px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px;">
+    <div class="card-title" style="margin-bottom:0;">Recent Uploads</div>
+    <button type="submit" class="btn btn-sm btn-ghost" id="bulk-delete-btn" disabled
+            style="margin-left:auto; color:var(--err-text);">Delete Selected</button>
   </div>
   <table class="data-table">
     <thead>
       <tr>
+        <th style="width:32px;"><input type="checkbox" id="select-all-uploads"></th>
         <th>File</th>
         <th>Report Type</th>
         <th style="text-align:right">Rows</th>
@@ -75,6 +80,7 @@
     <tbody>
       {% for u in uploads %}
       <tr>
+        <td><input type="checkbox" name="upload_ids" value="{{ u.upload_id }}" class="upload-row-checkbox"></td>
         <td class="filename">
           {% if u.batch_id %}<span style="font-size:11px; color:var(--muted);">{{ u.batch_id[:8] }}</span><br/>{% endif %}
           {{ u.filename }}
@@ -87,22 +93,46 @@
         <td style="text-align:right; white-space:nowrap;">
           <a href="/dashboard/uploads/{{ u.upload_id }}" class="btn btn-sm btn-ghost">View</a>
           {% if u.status == "ready" %}
-          <form method="POST" action="/uploads/{{ u.upload_id }}/run" style="display:inline">
-            <button type="submit" class="btn btn-sm btn-run" style="margin-left:4px;">▶ Run</button>
-          </form>
+          <button type="submit" formaction="/uploads/{{ u.upload_id }}/run" formnovalidate class="btn btn-sm btn-run" style="margin-left:4px;">▶ Run</button>
           {% elif u.status == "mapping_pending" %}
           <a href="/dashboard/uploads/{{ u.upload_id }}/map-columns" class="btn btn-sm btn-primary" style="margin-left:4px;">Map →</a>
           {% endif %}
-          <form method="POST" action="/dashboard/uploads/{{ u.upload_id }}/delete" style="display:inline"
-                onsubmit="return confirm('Delete {{ u.filename }}? This cannot be undone.');">
-            <button type="submit" class="btn btn-sm btn-ghost" style="margin-left:4px; color:var(--err-text);">Delete</button>
-          </form>
+          <button type="submit" formaction="/dashboard/uploads/{{ u.upload_id }}/delete" formnovalidate
+                  class="btn btn-sm btn-ghost" style="margin-left:4px; color:var(--err-text);"
+                  onclick="return confirm('Delete {{ u.filename }}? This cannot be undone.');">Delete</button>
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
 </div>
+</form>
+
+<script>
+  const selectAll = document.getElementById('select-all-uploads');
+  const rowCheckboxes = document.querySelectorAll('.upload-row-checkbox');
+  const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+
+  function updateBulkDeleteBtn() {
+    const anyChecked = Array.from(rowCheckboxes).some(cb => cb.checked);
+    bulkDeleteBtn.disabled = !anyChecked;
+  }
+
+  selectAll.addEventListener('change', function() {
+    rowCheckboxes.forEach(cb => cb.checked = selectAll.checked);
+    updateBulkDeleteBtn();
+  });
+
+  rowCheckboxes.forEach(cb => cb.addEventListener('change', function() {
+    if (!cb.checked) selectAll.checked = false;
+    updateBulkDeleteBtn();
+  }));
+
+  function confirmBulkDelete() {
+    const n = Array.from(rowCheckboxes).filter(cb => cb.checked).length;
+    return confirm('Delete ' + n + ' selected upload(s)? This cannot be undone.');
+  }
+</script>
 
 {% else %}
 <div class="card empty-state">

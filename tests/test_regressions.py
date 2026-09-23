@@ -2137,6 +2137,78 @@ def test_map_columns_apply_to_matching_ingests_same_layout_files_only():
                 del sys.modules[mod]
 
 
+# ── loan_app/api/uploads.py: bulk delete uploads ────────────────────────────
+def test_bulk_delete_removes_selected_uploads_and_ignores_bad_ids():
+    """
+    Regression guard for a real cleanup problem: a batch upload that
+    appeared stuck got retried several times before the user realized each
+    attempt had actually succeeded (see the checkpoint-logging fix), piling
+    up many duplicate mapping_pending uploads that would be painful to
+    remove one Delete click at a time. Verifies the real bulk-delete route,
+    through the real app: removes exactly the selected uploads (DB row +
+    on-disk CSV, same as the single-delete path), leaves an unselected
+    upload untouched, and doesn't error on a bogus/already-gone id mixed
+    into the same request.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from pathlib import Path
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[
+                    ("files", ("delete_me_1.csv", b"loan_id\nLN1\n", "text/csv")),
+                    ("files", ("delete_me_2.csv", b"loan_id\nLN2\n", "text/csv")),
+                    ("files", ("keep_me.csv", b"loan_id\nLN3\n", "text/csv")),
+                ],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            uploads = {u["filename"]: u for u in catalog_store.list_uploads()}
+            id_1 = uploads["delete_me_1.csv"]["upload_id"]
+            id_2 = uploads["delete_me_2.csv"]["upload_id"]
+            keep_id = uploads["keep_me.csv"]["upload_id"]
+            csv_path_1 = Path(uploads["delete_me_1.csv"]["csv_path"])
+            assert csv_path_1.exists()
+
+            resp = client.post(
+                "/dashboard/uploads/bulk-delete",
+                data={"upload_ids": [id_1, id_2, "not-a-real-upload-id"]},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/dashboard"
+
+            assert catalog_store.get_upload(id_1) is None
+            assert catalog_store.get_upload(id_2) is None
+            assert not csv_path_1.exists()
+            # The upload that wasn't selected is untouched.
+            assert catalog_store.get_upload(keep_id) is not None
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── loan_app: Confirm/Run buttons give feedback for slow synchronous work ──
 def test_slow_form_buttons_disable_and_relabel_on_submit():
     """
