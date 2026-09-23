@@ -1933,3 +1933,81 @@ def test_upload_checkpoint_logging_pinpoints_progress():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── loan_app/api/uploads.py: map once, apply to all matching files ─────────
+def test_map_columns_apply_to_matching_ingests_same_layout_files_only():
+    """
+    Regression guard for the real complaint: uploading many files with the
+    identical column layout meant clicking through the same column-mapping
+    confirmation once per file. Verifies the real "apply to matching" flow
+    end to end through the real routes: three files with identical headers
+    plus one with different headers, all pending. Mapping the first file
+    with apply_to_matching=1 must ingest all three identical-layout files
+    (status -> ready) and leave the differently-shaped fourth one alone
+    (still mapping_pending) -- matching must be based on actual header
+    content, not just report_type. Also checks the GET page reports the
+    correct matching_count (2, not counting itself or the mismatched file).
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        same_layout_csv = b"loan_id,DrsPOS\nLN0001,1000\n"
+        different_layout_csv = b"loan_id,DrsPOS,ExtraColumn\nLN0001,1000,x\n"
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[
+                    ("files", ("match_a.csv", same_layout_csv, "text/csv")),
+                    ("files", ("match_b.csv", same_layout_csv, "text/csv")),
+                    ("files", ("match_c.csv", same_layout_csv, "text/csv")),
+                    ("files", ("no_match.csv", different_layout_csv, "text/csv")),
+                ],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            uploads = {u["filename"]: u for u in catalog_store.list_uploads()}
+            first_id = uploads["match_a.csv"]["upload_id"]
+
+            # The GET page reports exactly 2 other matching files (b and c),
+            # not the mismatched file and not itself.
+            resp = client.get(f"/dashboard/uploads/{first_id}/map-columns")
+            assert resp.status_code == 200
+            assert "Apply this mapping to <strong>2</strong> other pending file" in resp.text
+
+            resp = client.post(
+                f"/dashboard/uploads/{first_id}/map-columns",
+                data={"map_loan_id": "loan_id", "map_outstanding_principal": "DrsPOS", "apply_to_matching": "1"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/dashboard"
+
+            uploads = {u["filename"]: u for u in catalog_store.list_uploads()}
+            assert uploads["match_a.csv"]["status"] == "ready"
+            assert uploads["match_b.csv"]["status"] == "ready"
+            assert uploads["match_c.csv"]["status"] == "ready"
+            # The differently-shaped file was never touched by the batch apply.
+            assert uploads["no_match.csv"]["status"] == "mapping_pending"
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
