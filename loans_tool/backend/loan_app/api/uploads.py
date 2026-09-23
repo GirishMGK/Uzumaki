@@ -422,3 +422,19 @@ async def delete_upload(upload_id: str):
         raise HTTPException(status_code=404, detail="Upload not found")
     store.delete_upload(upload_id)
     return RedirectResponse(url="/dashboard", status_code=303)
+
+
+@router.post("/uploads/bulk-delete")
+async def bulk_delete_uploads(request: Request):
+    """Delete many uploads in one action -- the real scenario this exists
+    for: a batch upload that looked stuck (see the checkpoint-logging
+    fix) got retried several times before the user realized each attempt
+    had actually succeeded, leaving many duplicate mapping_pending rows
+    that would be painful to remove one Delete click at a time.
+    """
+    form = await request.form()
+    upload_ids = [str(v) for v in form.getlist("upload_ids")]
+    for upload_id in upload_ids:
+        if store.get_upload(upload_id):
+            store.delete_upload(upload_id)
+    return RedirectResponse(url="/dashboard", status_code=303)
