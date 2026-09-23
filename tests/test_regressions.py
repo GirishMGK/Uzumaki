@@ -1804,3 +1804,65 @@ def test_sql_analytics_runs_real_query_across_report_types():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── loan_app/main.py: unhandled exceptions must be visible, not silent ─────
+def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
+    """
+    Regression guard for a real bug report: a user's file upload failed
+    with "Upload failed (status 500). Please try again." and nothing else
+    -- no detail in the browser, and (before this fix) nothing in any log
+    file either, since this runs as a packaged desktop app with no visible
+    console for uvicorn's own stderr traceback to land on. Verifies the new
+    global exception handler in main.py actually does both things: writes
+    the real traceback to error.log, and returns the exception type/message
+    in the JSON body instead of a bare status code. Also checks the existing
+    intentional HTTPException path (e.g. "No files provided.") still
+    behaves exactly as before -- the new catch-all must not swallow or
+    reshape FastAPI's own 4xx handling.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.config import settings as fcmr_settings
+
+        error_log = fcmr_settings.logs_dir / "error.log"
+        error_log.parent.mkdir(parents=True, exist_ok=True)
+        before_size = error_log.stat().st_size if error_log.exists() else 0
+
+        @loan_main.app.get("/__test_boom")
+        def _boom():
+            raise ValueError("synthetic failure for the regression test")
+
+        with TestClient(loan_main.app, raise_server_exceptions=False) as client:
+            resp = client.get("/__test_boom")
+            assert resp.status_code == 500
+            assert resp.json() == {"detail": "ValueError: synthetic failure for the regression test"}
+
+            # The existing intentional-error path is untouched by the new
+            # catch-all: still a real 400 with its own message, not 500.
+            resp = client.post("/dashboard/upload", data={"report_type": "ead_files"})
+            assert resp.status_code == 400
+            assert resp.json() == {"detail": "No files provided."}
+
+        assert error_log.exists()
+        new_content = error_log.read_text(encoding="utf-8")[before_size:]
+        assert "synthetic failure for the regression test" in new_content
+        assert "Traceback" in new_content
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]

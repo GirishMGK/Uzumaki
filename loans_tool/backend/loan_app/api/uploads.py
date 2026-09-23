@@ -116,6 +116,11 @@ async def do_upload(
         # Create upload row for each file
         created_uploads = []
         for filename, content in processed_files:
+            # Guard against a filename carrying path separators (e.g. a
+            # crafted multipart request, or a zip entry with a "../" style
+            # name) turning into a write outside dest_dir below, or just
+            # crashing on a missing intermediate directory.
+            filename = os.path.basename(filename)
             if len(content) > settings.max_upload_bytes:
                 raise HTTPException(status_code=413, detail=f"File {filename} exceeds 2 GB limit.")
 

@@ -162,11 +162,17 @@
       if (xhr.status >= 200 && xhr.status < 400) {
         progressLabel.textContent = "Done! Redirecting…";
         window.location.href = xhr.responseURL;
-      } else if (xhr.status === 413) {
-        setError("File exceeds the 2 GB upload limit.");
-      } else {
-        setError("Upload failed (status " + xhr.status + "). Please try again.");
+        return;
       }
+      // The server returns {"detail": "..."} on both the intentional 4xx
+      // raises (e.g. 413 over the 2GB limit) and any unhandled exception
+      // (main.py's global handler) -- show that instead of a bare status
+      // code, which was a dead end for diagnosing anything.
+      let detail = "";
+      try {
+        detail = JSON.parse(xhr.responseText).detail || "";
+      } catch (e) { /* non-JSON response body */ }
+      setError(detail || ("Upload failed (status " + xhr.status + "). Please try again."));
     });
 
     xhr.addEventListener("error", function() {

@@ -1,6 +1,7 @@
 """Loan Analytics — FastAPI application entry point."""
 
 import os
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
-from starlette.responses import RedirectResponse, Response
+from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from loan_app.api import (
     auth,
@@ -27,6 +28,7 @@ from fcmr_core.config import settings
 from fcmr_core.logging_setup import get_logger
 
 logger = get_logger("loan_app")
+error_logger = get_logger("loan_app.error")
 
 
 @asynccontextmanager
@@ -49,6 +51,31 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+@app.exception_handler(Exception)
+async def _log_unhandled_exception(request: Request, exc: Exception) -> Response:
+    """Without this, an unhandled exception in any route just becomes a bare
+    500 with no detail anywhere -- not in the browser, not in a log file,
+    since this runs as a packaged desktop app with no visible console for
+    uvicorn's own stderr traceback to land on. Logs the full traceback to
+    error.log (findable under the app's data dir -- see
+    fcmr_core/config.py's data_dir) and returns the exception message in the
+    response body so the UI can show something more useful than "status
+    500" too. Single-user local desktop app, so there's no other-tenant
+    audience a stack trace detail could leak to.
+    """
+    error_logger.error(
+        "Unhandled exception on %s %s: %s\n%s",
+        request.method,
+        request.url.path,
+        exc,
+        traceback.format_exc(),
+    )
+    return JSONResponse(
+        {"detail": f"{type(exc).__name__}: {exc}"},
+        status_code=500,
+    )
+
 
 # Ensure catalog + admin user exist — idempotent, safe to call on every cold start
 _initialized = False
