@@ -19,6 +19,20 @@ def _conn() -> duckdb.DuckDBPyConnection:
     return con
 
 
+def open_connection() -> duckdb.DuckDBPyConnection:
+    """Public entry point for a caller that needs to reuse one connection
+    across several store calls in a loop (e.g. do_upload() processing a
+    batch of files) instead of paying duckdb.connect()'s real per-call
+    overhead once per call per file. Use as a context manager and pass the
+    connection through to any store function that accepts a `con` kwarg:
+
+        with store.open_connection() as con:
+            for f in files:
+                store.create_upload(..., con=con)
+    """
+    return _conn()
+
+
 def init_catalog() -> None:
     with _conn() as con:
         # Users table
@@ -154,14 +168,24 @@ def create_upload(
     filename: str,
     batch_id: str | None = None,
     engagement_id: str | None = None,
+    *,
+    con: duckdb.DuckDBPyConnection | None = None,
 ) -> str:
     uid = str(uuid.uuid4())
-    with _conn() as con:
-        con.execute(
-            "INSERT INTO uploads (upload_id, report_type, filename, status, created_at, batch_id, engagement_id) "
-            "VALUES (?, ?, ?, 'mapping_pending', ?, ?, ?)",
-            [uid, report_type, filename, _now(), batch_id, engagement_id],
-        )
+    sql = (
+        "INSERT INTO uploads (upload_id, report_type, filename, status, created_at, batch_id, engagement_id) "
+        "VALUES (?, ?, ?, 'mapping_pending', ?, ?, ?)"
+    )
+    params = [uid, report_type, filename, _now(), batch_id, engagement_id]
+    # Reuse a caller-supplied connection when given (e.g. do_upload() batching
+    # many files into one request) instead of opening a fresh one -- each
+    # duckdb.connect() has real per-call overhead, and a large batch (tens of
+    # files) opening/closing a connection per file per call visibly adds up.
+    if con is not None:
+        con.execute(sql, params)
+    else:
+        with _conn() as con:
+            con.execute(sql, params)
     return uid
 
 
@@ -170,12 +194,15 @@ def set_mapping_pending(
     *,
     csv_path: Path,
     sniffed_headers: list[str],
+    con: duckdb.DuckDBPyConnection | None = None,
 ) -> None:
-    with _conn() as con:
-        con.execute(
-            "UPDATE uploads SET csv_path=?, sniffed_headers=?, status='mapping_pending' WHERE upload_id=?",
-            [str(csv_path), json.dumps(sniffed_headers), upload_id],
-        )
+    sql = "UPDATE uploads SET csv_path=?, sniffed_headers=?, status='mapping_pending' WHERE upload_id=?"
+    params = [str(csv_path), json.dumps(sniffed_headers), upload_id]
+    if con is not None:
+        con.execute(sql, params)
+    else:
+        with _conn() as con:
+            con.execute(sql, params)
 
 
 def set_upload_ready(
@@ -248,6 +275,34 @@ def get_upload(upload_id: str) -> dict | None:
             return None
         cols = [d[0] for d in con.description]
     return dict(zip(cols, rows[0]))
+
+
+def delete_upload(upload_id: str) -> None:
+    """Remove an upload entirely: its ingested DuckDB data table (if any),
+    its raw CSV on disk (mapping_pending uploads still have one; ready/
+    failed uploads already deleted theirs after ingestion), its run
+    records (FK-referenced by upload_id, so must go first), and the
+    upload row itself. No-op if the upload doesn't exist.
+    """
+    upload = get_upload(upload_id)
+    if not upload:
+        return
+
+    drop_upload_data(upload_id)
+
+    csv_path = upload.get("csv_path")
+    if csv_path:
+        p = Path(csv_path)
+        if p.exists():
+            p.unlink(missing_ok=True)
+            try:
+                p.parent.rmdir()
+            except Exception:
+                pass
+
+    with _conn() as con:
+        con.execute("DELETE FROM runs WHERE upload_id=?", [upload_id])
+        con.execute("DELETE FROM uploads WHERE upload_id=?", [upload_id])
 
 
 # ---------------------------------------------------------------------------
