@@ -17,7 +17,10 @@ from fastapi.templating import Jinja2Templates
 from fcmr_core.catalog import store
 from fcmr_core.config import settings
 from fcmr_core.ingestion.pipeline import ingest_csv, sniff_headers
+from fcmr_core.logging_setup import get_logger
 from fcmr_core.schemas.loader import available_report_types, get_canonical_fields, get_schema
+
+logger = get_logger("loan_app.processing")
 
 
 def _now() -> str:
@@ -87,6 +90,17 @@ async def do_upload(
     # Generate one batch_id for this upload request
     batch_id = str(uuid.uuid4())
 
+    # Checkpoint logging: this is the whole point of a real bug report where
+    # the upload hung after the browser finished sending, with no error and
+    # nothing in any log -- the *next* time that happens, whatever line
+    # logged last here is where it actually got stuck (slow/blocked disk
+    # I/O from AV scanning a freshly-written large file being the leading
+    # suspect, but this pins it down instead of guessing).
+    logger.info(
+        "Upload request received: %d file(s), report_type=%s, batch_id=%s",
+        len(upload_files), report_type, batch_id,
+    )
+
     # Process files from .zip if present
     temp_dir = None
     try:
@@ -95,7 +109,9 @@ async def do_upload(
         for file in upload_files:
             if file.filename and file.filename.lower().endswith(".zip"):
                 # Unzip and extract CSVs
+                logger.info("Reading uploaded zip: %s", file.filename)
                 content = await file.read()
+                logger.info("Read %s (%d bytes); extracting", file.filename, len(content))
                 temp_dir = tempfile.TemporaryDirectory()
                 with zipfile.ZipFile(io.BytesIO(content)) as zf:
                     zf.extractall(temp_dir.name)
@@ -107,7 +123,9 @@ async def do_upload(
                             processed_files.append((fname, full_path.read_bytes()))
             elif file.filename and file.filename.lower().endswith(".csv"):
                 # Regular CSV file
+                logger.info("Reading uploaded file: %s", file.filename)
                 content = await file.read()
+                logger.info("Read %s (%d bytes)", file.filename, len(content))
                 processed_files.append((file.filename, content))
 
         if not processed_files:
@@ -125,6 +143,7 @@ async def do_upload(
                 raise HTTPException(status_code=413, detail=f"File {filename} exceeds 2 GB limit.")
 
             # Create upload row with batch_id and engagement_id
+            logger.info("Creating upload record for %s", filename)
             upload_id = store.create_upload(
                 report_type,
                 filename,
@@ -136,17 +155,21 @@ async def do_upload(
             dest_dir = settings.uploads_dir / upload_id
             dest_dir.mkdir(parents=True, exist_ok=True)
             csv_path = dest_dir / filename
+            logger.info("Writing %s to disk (%d bytes) at %s", filename, len(content), csv_path)
             chunk_size = 256 * 1024
             with csv_path.open("wb") as out:
                 for i in range(0, len(content), chunk_size):
                     out.write(content[i : i + chunk_size])
+            logger.info("Finished writing %s to disk", filename)
 
             # Sniff headers and set mapping_pending
             headers = sniff_headers(csv_path)
             store.set_mapping_pending(upload_id, csv_path=csv_path, sniffed_headers=headers)
+            logger.info("Upload %s (%s) ready for column mapping", upload_id, filename)
 
             created_uploads.append((upload_id, filename))
 
+        logger.info("Upload request complete: %d file(s) processed", len(created_uploads))
         # Redirect to dashboard (or could show a batch summary page)
         return RedirectResponse(url="/dashboard", status_code=303)
 
