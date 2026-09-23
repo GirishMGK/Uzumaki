@@ -131,43 +131,50 @@ async def do_upload(
         if not processed_files:
             raise HTTPException(status_code=400, detail="No CSV files found.")
 
-        # Create upload row for each file
+        # Create upload row for each file. One shared DuckDB connection for
+        # the whole batch -- each duckdb.connect() has real per-call
+        # overhead, and a large batch (tens of files, each needing 2 store
+        # calls) opening/closing a fresh connection per call visibly adds
+        # up, easily enough to make a big batch feel stuck even though it's
+        # still making progress.
         created_uploads = []
-        for filename, content in processed_files:
-            # Guard against a filename carrying path separators (e.g. a
-            # crafted multipart request, or a zip entry with a "../" style
-            # name) turning into a write outside dest_dir below, or just
-            # crashing on a missing intermediate directory.
-            filename = os.path.basename(filename)
-            if len(content) > settings.max_upload_bytes:
-                raise HTTPException(status_code=413, detail=f"File {filename} exceeds 2 GB limit.")
+        with store.open_connection() as con:
+            for filename, content in processed_files:
+                # Guard against a filename carrying path separators (e.g. a
+                # crafted multipart request, or a zip entry with a "../"
+                # style name) turning into a write outside dest_dir below,
+                # or just crashing on a missing intermediate directory.
+                filename = os.path.basename(filename)
+                if len(content) > settings.max_upload_bytes:
+                    raise HTTPException(status_code=413, detail=f"File {filename} exceeds 2 GB limit.")
 
-            # Create upload row with batch_id and engagement_id
-            logger.info("Creating upload record for %s", filename)
-            upload_id = store.create_upload(
-                report_type,
-                filename,
-                batch_id=batch_id,
-                engagement_id=engagement_id,
-            )
+                # Create upload row with batch_id and engagement_id
+                logger.info("Creating upload record for %s", filename)
+                upload_id = store.create_upload(
+                    report_type,
+                    filename,
+                    batch_id=batch_id,
+                    engagement_id=engagement_id,
+                    con=con,
+                )
 
-            # Stream write in 256 KB chunks — avoids holding full file in RAM
-            dest_dir = settings.uploads_dir / upload_id
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            csv_path = dest_dir / filename
-            logger.info("Writing %s to disk (%d bytes) at %s", filename, len(content), csv_path)
-            chunk_size = 256 * 1024
-            with csv_path.open("wb") as out:
-                for i in range(0, len(content), chunk_size):
-                    out.write(content[i : i + chunk_size])
-            logger.info("Finished writing %s to disk", filename)
+                # Stream write in 256 KB chunks — avoids holding full file in RAM
+                dest_dir = settings.uploads_dir / upload_id
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                csv_path = dest_dir / filename
+                logger.info("Writing %s to disk (%d bytes) at %s", filename, len(content), csv_path)
+                chunk_size = 256 * 1024
+                with csv_path.open("wb") as out:
+                    for i in range(0, len(content), chunk_size):
+                        out.write(content[i : i + chunk_size])
+                logger.info("Finished writing %s to disk", filename)
 
-            # Sniff headers and set mapping_pending
-            headers = sniff_headers(csv_path)
-            store.set_mapping_pending(upload_id, csv_path=csv_path, sniffed_headers=headers)
-            logger.info("Upload %s (%s) ready for column mapping", upload_id, filename)
+                # Sniff headers and set mapping_pending
+                headers = sniff_headers(csv_path)
+                store.set_mapping_pending(upload_id, csv_path=csv_path, sniffed_headers=headers, con=con)
+                logger.info("Upload %s (%s) ready for column mapping", upload_id, filename)
 
-            created_uploads.append((upload_id, filename))
+                created_uploads.append((upload_id, filename))
 
         logger.info("Upload request complete: %d file(s) processed", len(created_uploads))
         # Redirect to dashboard (or could show a batch summary page)
@@ -332,3 +339,12 @@ async def upload_detail(request: Request, upload_id: str):
             "categories": categories,
         },
     )
+
+
+@router.post("/uploads/{upload_id}/delete")
+async def delete_upload(upload_id: str):
+    upload = store.get_upload(upload_id)
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    store.delete_upload(upload_id)
+    return RedirectResponse(url="/dashboard", status_code=303)
