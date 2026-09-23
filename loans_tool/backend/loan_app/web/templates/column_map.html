@@ -29,6 +29,15 @@
 </div>
 {% endif %}
 
+{% if matching_count > 0 %}
+<div class="notice" style="margin-bottom:16px; background:var(--blue-bg);">
+  <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500;">
+    <input type="checkbox" name="apply_to_matching" value="1" form="map-columns-form" checked>
+    Apply this mapping to <strong>{{ matching_count }}</strong> other pending file{{ "s" if matching_count != 1 else "" }} with the same columns
+  </label>
+</div>
+{% endif %}
+
 {% set required_fields = canonical_fields | selectattr("required") | list %}
 {% if required_fields %}
 <div class="notice notice-warn" style="margin-bottom:16px;">
@@ -38,7 +47,7 @@
 </div>
 {% endif %}
 
-<form method="POST" action="/dashboard/uploads/{{ upload.upload_id }}/map-columns">
+<form method="POST" action="/dashboard/uploads/{{ upload.upload_id }}/map-columns" id="map-columns-form">
   <div class="card" style="padding:0; overflow:hidden;">
     <table class="data-table">
       <thead>

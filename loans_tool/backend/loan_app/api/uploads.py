@@ -27,6 +27,76 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _header_signature(headers: list[str]) -> str:
+    return hashlib.sha256(json.dumps(sorted(headers), sort_keys=True).encode()).hexdigest()
+
+
+def _find_matching_pending_uploads(upload: dict, header_signature: str) -> list[dict]:
+    """Other mapping_pending uploads in the same engagement with the same
+    report_type whose raw headers hash to the same signature -- i.e. the
+    identical column layout, so the same mapping applies to them too.
+    header_signature hashes the *sorted* header list, so a match here
+    guarantees the exact same header strings (order doesn't matter, but
+    a differing column would change the hash) -- safe to reuse the same
+    {raw_header: canonical} mapping dict on each match's own file.
+    """
+    candidates = store.list_uploads(engagement_id=upload.get("engagement_id"))
+    matches = []
+    for u in candidates:
+        if u["upload_id"] == upload["upload_id"]:
+            continue
+        if u["status"] != "mapping_pending" or u["report_type"] != upload["report_type"]:
+            continue
+        u_headers = json.loads(u["sniffed_headers"] or "[]")
+        if _header_signature(u_headers) == header_signature:
+            matches.append(u)
+    return matches
+
+
+def _ingest_and_mark_ready(
+    upload: dict,
+    user_mapping: dict[str, str],
+    *,
+    save_profile: bool,
+    username: str,
+) -> None:
+    """The actual ingest-one-file work shared by mapping a single upload and
+    batch-applying the same mapping to every other file with an identical
+    header layout (see _find_matching_pending_uploads)."""
+    upload_id = upload["upload_id"]
+    csv_path = Path(upload["csv_path"] or "")
+    if not csv_path.exists():
+        raise HTTPException(
+            status_code=500, detail=f"Uploaded CSV file not found on disk for {upload['filename']}."
+        )
+
+    result = ingest_csv(csv_path, upload["report_type"], upload_id, user_mapping=user_mapping)
+
+    store.store_upload_data(upload_id, result.parquet_path)
+    csv_path.unlink(missing_ok=True)
+    try:
+        csv_path.parent.rmdir()
+    except Exception:
+        pass
+
+    store.set_upload_ready(
+        upload_id,
+        parquet_path=result.parquet_path,
+        row_count=result.total_rows,
+        column_mapping=user_mapping,
+    )
+
+    if save_profile:
+        raw_headers = json.loads(upload["sniffed_headers"] or "[]")
+        store.save_mapping_profile(
+            upload["report_type"],
+            _header_signature(raw_headers),
+            json.dumps(user_mapping),
+            engagement_id=upload.get("engagement_id"),
+            created_by=username,
+        )
+
+
 router = APIRouter()
 _templates_dir = Path(__file__).parent.parent / "web" / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
@@ -202,9 +272,7 @@ async def map_columns_form(request: Request, upload_id: str):
     schema = get_schema(upload["report_type"])
 
     # Compute header signature for profile lookup
-    header_signature = hashlib.sha256(
-        json.dumps(sorted(raw_headers), sort_keys=True).encode()
-    ).hexdigest()
+    header_signature = _header_signature(raw_headers)
 
     # Check for saved profile
     engagement_id = upload.get("engagement_id")
@@ -213,6 +281,12 @@ async def map_columns_form(request: Request, upload_id: str):
         header_signature,
         engagement_id=engagement_id,
     )
+
+    # Other pending uploads with this exact same column layout -- offered
+    # as a "map once, apply to all" option instead of repeating this same
+    # screen once per file (the real complaint: uploading a folder of many
+    # same-format files, then having to click through mapping for each).
+    matching_uploads = _find_matching_pending_uploads(upload, header_signature)
 
     # If profile found, use it; otherwise compute suggestions with scores
     profile_applied = False
@@ -247,6 +321,7 @@ async def map_columns_form(request: Request, upload_id: str):
             "canonical_fields": canonical_fields,
             "profile_applied": profile_applied,
             "profile_id": saved_profile.get("profile_id") if saved_profile else None,
+            "matching_count": len(matching_uploads),
         },
     )
 
@@ -268,46 +343,45 @@ async def do_map_columns(request: Request, upload_id: str):
         if raw_header and raw_header != "__skip__":
             user_mapping[raw_header] = spec.canonical
 
-    csv_path = Path(upload["csv_path"] or "")
-    if not csv_path.exists():
-        raise HTTPException(status_code=500, detail="Uploaded CSV file not found on disk.")
+    username = request.session.get("username", "admin")
+
+    # "Apply to all matching files" -- resolve the other pending uploads
+    # with this exact same header layout *before* ingesting the current
+    # one, since ingest_csv() deletes the raw CSV (which set_mapping_pending
+    # never touches for the others, but the header_signature match itself
+    # depends on the current upload's own sniffed_headers still being intact).
+    apply_to_matching = form.get("apply_to_matching") == "1"
+    matching_uploads = (
+        _find_matching_pending_uploads(upload, _header_signature(raw_headers))
+        if apply_to_matching
+        else []
+    )
 
     try:
-        result = ingest_csv(csv_path, upload["report_type"], upload_id, user_mapping=user_mapping)
-
-        # Import Parquet into DuckDB, then delete both Parquet and raw CSV from disk
-        store.store_upload_data(upload_id, result.parquet_path)
-        csv_path.unlink(missing_ok=True)
-        try:
-            csv_path.parent.rmdir()
-        except Exception:
-            pass
-
-        store.set_upload_ready(
-            upload_id,
-            parquet_path=result.parquet_path,  # kept in DB record for reference
-            row_count=result.total_rows,
-            column_mapping=user_mapping,
-        )
-
-        # After successful ingestion, save the mapping as a profile
-        header_signature = hashlib.sha256(
-            json.dumps(sorted(raw_headers), sort_keys=True).encode()
-        ).hexdigest()
-        engagement_id = upload.get("engagement_id")
-        username = request.session.get("username", "admin")
-        store.save_mapping_profile(
-            upload["report_type"],
-            header_signature,
-            json.dumps(user_mapping),
-            engagement_id=engagement_id,
-            created_by=username,
-        )
+        _ingest_and_mark_ready(upload, user_mapping, save_profile=True, username=username)
     except Exception as exc:
         store.set_upload_failed(upload_id, error=str(exc))
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
 
-    return RedirectResponse(url=f"/dashboard/uploads/{upload_id}", status_code=303)
+    if not matching_uploads:
+        return RedirectResponse(url=f"/dashboard/uploads/{upload_id}", status_code=303)
+
+    # Batch-apply: ingest every matching file the same way. One file
+    # failing (e.g. a subtly different row layout despite identical
+    # headers) marks that upload failed and moves on -- it shouldn't block
+    # the rest of an otherwise-successful batch.
+    for m in matching_uploads:
+        try:
+            _ingest_and_mark_ready(m, user_mapping, save_profile=False, username=username)
+        except Exception as exc:
+            store.set_upload_failed(m["upload_id"], error=str(exc))
+            logger.error("Batch mapping failed for %s: %s", m["filename"], exc)
+
+    logger.info(
+        "Batch-applied mapping from %s to %d matching file(s)",
+        upload["filename"], len(matching_uploads),
+    )
+    return RedirectResponse(url="/dashboard", status_code=303)
 
 
 # ---------------------------------------------------------------------------
