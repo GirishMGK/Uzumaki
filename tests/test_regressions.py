@@ -1866,3 +1866,70 @@ def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── loan_app/api/uploads.py: checkpoint logging for a real bug report ──────
+def test_upload_checkpoint_logging_pinpoints_progress():
+    """
+    Regression guard for a real bug report: an upload's progress bar hit
+    100% and then just sat there -- no error, no response, ever (unlike
+    the sibling unhandled-exception test above, this isn't something the
+    global exception handler can help with, since nothing ever fails or
+    returns). With no way to reproduce the hang itself, the actionable fix
+    is to log a checkpoint at each real step of do_upload() (file read
+    started/finished, disk write started/finished, DB record created) so
+    that whichever line is LAST in processing.log the next time this
+    happens tells us exactly where it got stuck, instead of guessing.
+    Verifies a real upload through the real route produces all of those
+    checkpoint lines, in order, for a real (if small) file.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.config import settings as fcmr_settings
+
+        processing_log = fcmr_settings.logs_dir / "processing.log"
+        processing_log.parent.mkdir(parents=True, exist_ok=True)
+        before_size = processing_log.stat().st_size if processing_log.exists() else 0
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files={"files": ("checkpoint_test.csv", b"PAN,DrsPOS\nABCDE1234F,1000\n", "text/csv")},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+        assert processing_log.exists()
+        new_content = processing_log.read_text(encoding="utf-8")[before_size:]
+        expected_in_order = [
+            "Upload request received: 1 file(s)",
+            "Reading uploaded file: checkpoint_test.csv",
+            "Read checkpoint_test.csv",
+            "Creating upload record for checkpoint_test.csv",
+            "Writing checkpoint_test.csv to disk",
+            "Finished writing checkpoint_test.csv to disk",
+            "ready for column mapping",
+            "Upload request complete: 1 file(s) processed",
+        ]
+        positions = [new_content.find(line) for line in expected_in_order]
+        assert all(p != -1 for p in positions), (expected_in_order, new_content)
+        assert positions == sorted(positions), "checkpoint lines out of order"
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
