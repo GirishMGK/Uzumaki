@@ -2207,3 +2207,74 @@ def test_bulk_delete_removes_selected_uploads_and_ignores_bad_ids():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── loan_app: Confirm/Run buttons give feedback for slow synchronous work ──
+def test_slow_form_buttons_disable_and_relabel_on_submit():
+    """
+    Regression guard for "the button isn't working": Confirm Mapping &
+    Ingest, Run Analytics, and Run Selected Rules all POST a plain HTML
+    form and do real synchronous work server-side (CSV ingestion / rule
+    execution) with no other progress indicator. Without a submit handler
+    that visibly disables and relabels the button, a slow response looks
+    identical to a click that was never registered. This checks the
+    rendered pages actually wire each button up.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+
+        csv_bytes = b"loan_id,DrsPOS\nLN0001,1000\n"
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("feedback.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            from fcmr_core.catalog import store as catalog_store
+
+            upload_id = next(
+                u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "feedback.csv"
+            )
+
+            # Column-mapping page: Confirm button disables + relabels on submit.
+            resp = client.get(f"/dashboard/uploads/{upload_id}/map-columns")
+            assert resp.status_code == 200
+            assert 'id="confirm-mapping-btn"' in resp.text
+            assert "getElementById('map-columns-form')" in resp.text
+            assert "btn.textContent = 'Ingesting" in resp.text
+
+            resp = client.post(
+                f"/dashboard/uploads/{upload_id}/map-columns",
+                data={"map_loan_id": "loan_id", "map_outstanding_principal": "DrsPOS"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            # Upload-detail page: Run Analytics button disables + relabels on submit.
+            resp = client.get(f"/dashboard/uploads/{upload_id}")
+            assert resp.status_code == 200
+            assert 'id="run-all-btn"' in resp.text
+            assert "getElementById('run_form')" in resp.text
+            assert "btn.textContent = 'Running" in resp.text
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]

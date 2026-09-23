@@ -97,7 +97,7 @@
 
   <div class="form-actions" style="margin-top:4px;">
     <a href="/" class="btn btn-ghost">Cancel</a>
-    <button type="submit" class="btn btn-primary">Confirm Mapping &amp; Ingest →</button>
+    <button type="submit" class="btn btn-primary" id="confirm-mapping-btn">Confirm Mapping &amp; Ingest →</button>
   </div>
 </form>
 
@@ -147,5 +147,17 @@ document.querySelectorAll('.col-select').forEach(function(sel) {
 });
 
 updateAllDropdowns();
+
+// Ingestion runs synchronously server-side and can take a while for a large
+// file (or a whole "apply to matching" batch) -- with a plain form submit
+// the page just sits there until the response comes back, no different in
+// appearance from the button not having registered the click at all. Give
+// immediate feedback so it's clear the click worked and it's just busy.
+document.getElementById('map-columns-form').addEventListener('submit', function() {
+  var btn = document.getElementById('confirm-mapping-btn');
+  btn.disabled = true;
+  btn.textContent = 'Ingesting…';
+  btn.style.opacity = '0.7';
+});
 </script>
 {% endblock %}
