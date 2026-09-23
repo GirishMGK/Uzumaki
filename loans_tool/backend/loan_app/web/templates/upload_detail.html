@@ -4,6 +4,10 @@
 
 {% block topbar_actions %}
   <a href="/dashboard" class="btn btn-ghost" style="margin-left:auto;">← Dashboard</a>
+  <form method="POST" action="/dashboard/uploads/{{ upload.upload_id }}/delete" style="display:inline; margin-left:8px;"
+        onsubmit="return confirm('Delete {{ upload.filename }}? This cannot be undone.');">
+    <button type="submit" class="btn btn-ghost" style="color:var(--err-text);">Delete</button>
+  </form>
 {% endblock %}
 
 {% block content %}

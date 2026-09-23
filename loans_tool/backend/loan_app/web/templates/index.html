@@ -93,6 +93,10 @@
           {% elif u.status == "mapping_pending" %}
           <a href="/dashboard/uploads/{{ u.upload_id }}/map-columns" class="btn btn-sm btn-primary" style="margin-left:4px;">Map →</a>
           {% endif %}
+          <form method="POST" action="/dashboard/uploads/{{ u.upload_id }}/delete" style="display:inline"
+                onsubmit="return confirm('Delete {{ u.filename }}? This cannot be undone.');">
+            <button type="submit" class="btn btn-sm btn-ghost" style="margin-left:4px; color:var(--err-text);">Delete</button>
+          </form>
         </td>
       </tr>
       {% endfor %}

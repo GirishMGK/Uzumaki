@@ -1935,6 +1935,130 @@ def test_upload_checkpoint_logging_pinpoints_progress():
                 del sys.modules[mod]
 
 
+# ── loan_app/api/uploads.py + fcmr_core/catalog/store.py: delete upload ────
+def test_delete_upload_removes_db_row_and_file_from_disk():
+    """
+    Regression guard for a real feature gap: there was no way to remove an
+    upload once created -- a user who uploaded the wrong file (or 49 of
+    them at once) had no cleanup option. Verifies the real DELETE route,
+    through the real app, actually removes both the DB row (so it
+    disappears from the dashboard) and the raw CSV file still on disk
+    (mapping_pending uploads keep theirs until ingested), not just one or
+    the other. Also checks deleting a nonexistent upload_id 404s instead
+    of silently succeeding or crashing.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from pathlib import Path
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files={"files": ("to_delete.csv", b"PAN,DrsPOS\nABCDE1234F,1000\n", "text/csv")},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            uploads = catalog_store.list_uploads()
+            match = [u for u in uploads if u["filename"] == "to_delete.csv"]
+            assert len(match) == 1
+            upload_id = match[0]["upload_id"]
+            csv_path = Path(match[0]["csv_path"])
+            assert csv_path.exists()
+
+            resp = client.post(f"/dashboard/uploads/{upload_id}/delete", follow_redirects=False)
+            assert resp.status_code == 303
+            assert resp.headers["location"] == "/dashboard"
+
+            assert catalog_store.get_upload(upload_id) is None
+            assert not csv_path.exists()
+
+            # Deleting again (already gone) is a clean 404, not a crash.
+            resp = client.post(f"/dashboard/uploads/{upload_id}/delete")
+            assert resp.status_code == 404
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+# ── fcmr_core/catalog/store.py: batch upload reuses one connection ─────────
+def test_batch_upload_reuses_one_connection_not_one_per_call():
+    """
+    Regression guard for the perceived-hang-on-large-batch report: a
+    49-file upload took long enough (49 files x 2 store calls each x a
+    fresh duckdb.connect() per call = 98 connection cycles) that the user
+    assumed it had frozen, even though it eventually completed. Verifies
+    do_upload() now passes one shared connection through to
+    create_upload()/set_mapping_pending() for every file in a batch, by
+    counting real store.open_connection() calls during a 5-file upload --
+    should be exactly 1, not 5 or 10.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        call_count = 0
+        real_open_connection = catalog_store.open_connection
+
+        def counting_open_connection():
+            nonlocal call_count
+            call_count += 1
+            return real_open_connection()
+
+        catalog_store.open_connection = counting_open_connection
+
+        with TestClient(loan_main.app) as client:
+            files = [
+                ("files", (f"batch_{i}.csv", b"PAN,DrsPOS\nABCDE1234F,1000\n", "text/csv"))
+                for i in range(5)
+            ]
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=files,
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+        assert call_count == 1, f"expected 1 shared connection for a 5-file batch, got {call_count}"
+    finally:
+        catalog_store.open_connection = real_open_connection
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── loan_app/api/uploads.py: map once, apply to all matching files ─────────
 def test_map_columns_apply_to_matching_ingests_same_layout_files_only():
     """
