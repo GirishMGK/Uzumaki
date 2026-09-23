@@ -1,0 +1,5 @@
+# Applies to every `st.file_uploader` in the hub (this is a global Streamlit
+# server setting, not scoped to a single tool) — raised from the 200MB
+# default to 5GB per the Parquet Tool's large-file conversion use case.
+[server]
+maxUploadSize = 5120

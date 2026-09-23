@@ -107,6 +107,7 @@ def run_app(port: int | None = None) -> None:
         "--server.headless=true",
         f"--server.port={port}",
         "--server.fileWatcherType=none",
+        "--server.maxUploadSize=5120",
         "--browser.gatherUsageStats=false",
         "--global.developmentMode=false",
     ]
