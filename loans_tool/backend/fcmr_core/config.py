@@ -27,10 +27,16 @@ def _detect_tier() -> str:
 
 # DuckDB limits per tier — keeps DuckDB from consuming all system RAM.
 # memory_limit caps in-process usage; spill to temp_dir when over limit.
+# Note: spilling only covers intermediate operators (sorts, joins,
+# aggregates) -- materializing a plain `SELECT *` result to Arrow/Polars
+# (what EAD consolidation and SQL Analytics do per uploaded file) can't
+# spill, so it hits this ceiling directly. Real-world EAD batches run to
+# several hundred thousand rows per file across a dozen-plus files, so the
+# original 3/6/12 GB caps were tight enough to OOM on that in practice.
 _DUCK_LIMITS = {
-    "low": {"memory_gb": 3, "threads": 2},
-    "mid": {"memory_gb": 6, "threads": 4},
-    "high": {"memory_gb": 12, "threads": 6},
+    "low": {"memory_gb": 5, "threads": 2},
+    "mid": {"memory_gb": 9, "threads": 4},
+    "high": {"memory_gb": 16, "threads": 6},
 }
 
 # On Vercel the filesystem is read-only except /tmp
@@ -159,5 +165,10 @@ def apply_duckdb_limits(con) -> None:
         con.execute(f"SET memory_limit='{settings.duckdb_memory_limit}'")
         con.execute(f"SET threads={settings.duckdb_threads}")
         con.execute(f"SET temp_directory='{spill_dir}'")
+        # Row order from a plain SELECT * is never relied on downstream
+        # (consolidation re-tags every row with _source_file anyway), and
+        # this measurably cuts the memory a large scan needs to buffer
+        # before it can hand rows back to Arrow/Polars.
+        con.execute("SET preserve_insertion_order=false")
     except Exception:
         pass  # Older DuckDB version or in-memory DB — limits are advisory

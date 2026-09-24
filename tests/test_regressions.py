@@ -2278,3 +2278,44 @@ def test_slow_form_buttons_disable_and_relabel_on_submit():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── fcmr_core/config.py: DuckDB OOM during EAD consolidation ───────────────
+def test_apply_duckdb_limits_sets_higher_memory_ceiling_and_disables_order():
+    """
+    Regression guard for a real "OutOfMemoryException: ArrowBuffer: failed
+    to allocate ... bytes" crash surfaced (via the global exception
+    handler) while consolidating/downloading a batch of real-world EAD
+    files -- several hundred thousand rows each, a dozen-plus files.
+    Materializing a plain `SELECT *` result to Arrow/Polars can't spill to
+    the configured temp_directory the way an intermediate sort or join
+    can, so the original 3/6/12 GB per-tier caps were tight enough to OOM
+    on that in practice. Verifies the raised per-tier ceilings and that
+    preserve_insertion_order (one of DuckDB's own suggested remedies in
+    that error message, and safe here since nothing relies on row order
+    out of a plain scan) is actually applied to a real connection.
+    """
+    pytest.importorskip("duckdb")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import duckdb
+
+        from fcmr_core.config import _DUCK_LIMITS, apply_duckdb_limits
+
+        # Every tier keeps some headroom above the old 3/6/12 GB caps.
+        assert _DUCK_LIMITS["low"]["memory_gb"] > 3
+        assert _DUCK_LIMITS["mid"]["memory_gb"] > 6
+        assert _DUCK_LIMITS["high"]["memory_gb"] > 12
+
+        con = duckdb.connect(":memory:")
+        try:
+            apply_duckdb_limits(con)
+            assert con.execute(
+                "SELECT current_setting('preserve_insertion_order')"
+            ).fetchone() == (False,)
+        finally:
+            con.close()
+    finally:
+        sys.path.remove(backend_dir)
