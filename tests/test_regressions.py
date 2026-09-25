@@ -1818,6 +1818,7 @@ def test_sql_analytics_runs_real_query_across_report_types():
                 return ead_df
             return pl.DataFrame()
 
+        real_build_consolidated_df = catalog_store.build_consolidated_df
         catalog_store.build_consolidated_df = fake_build
 
         with TestClient(loan_main.app) as client:
@@ -1858,6 +1859,7 @@ def test_sql_analytics_runs_real_query_across_report_types():
             resp = client.post("/dashboard/analytics/sql/run", data={"sql": "SELECT 1"})
             assert resp.status_code == 400
     finally:
+        catalog_store.build_consolidated_df = real_build_consolidated_df
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
         for mod in list(sys.modules):
@@ -3011,6 +3013,92 @@ def test_map_columns_page_suggests_exact_match_not_near_duplicate():
             row_start = resp.text.index('data-canonical="zero_90_days_interest"')
             row_html = resp.text[row_start : row_start + 800]
             assert '<option value="zero_90_days_interest" data-header="zero_90_days_interest" selected>' in row_html
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_build_consolidated_df_reuses_one_connection_not_one_per_file():
+    """
+    Regression guard for a real report: EAD Consolidation's "Download
+    Parquet" button showed "Generating Parquet…" for a long time on a
+    batch of a dozen-plus large files, then flipped back to "ready"
+    (the button's own 15s safety-net timeout firing) well before the
+    actual download had happened -- looking like a silent failure. Root
+    cause: build_consolidated_df() called get_upload_df() once per ready
+    upload, each opening its own fresh duckdb.connect() (real per-call
+    overhead, including apply_duckdb_limits' several SET statements),
+    instead of sharing one connection across the whole batch. Verifies by
+    counting real store.open_connection() calls while consolidating 3
+    ready uploads -- should be exactly 1, not 3 -- and that the
+    consolidated result is still correct.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        with TestClient(loan_main.app) as client:
+            # A dedicated engagement, not the shared "default" every other
+            # test also uploads into -- build_consolidated_df pulls in
+            # *every* ready ead_files upload for the engagement it's given,
+            # so reusing "default" would count other tests' leftover
+            # uploads too. Created after entering the TestClient context so
+            # the app's startup has already run init_catalog().
+            engagement_id = catalog_store.create_engagement("conn-reuse-test")
+            client.post(f"/set-active/{engagement_id}")
+
+            for i in range(3):
+                csv_bytes = f"loan_id,DrsPOS\nLN000{i},{1000 * (i + 1)}\n".encode()
+                resp = client.post(
+                    "/dashboard/upload",
+                    data={"report_type": "ead_files"},
+                    files=[("files", (f"conn_reuse_{i}.csv", csv_bytes, "text/csv"))],
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 303
+                upload_id = next(
+                    u["upload_id"]
+                    for u in catalog_store.list_uploads()
+                    if u["filename"] == f"conn_reuse_{i}.csv"
+                )
+                resp = client.post(
+                    f"/dashboard/uploads/{upload_id}/map-columns",
+                    data={"map_loan_id": "loan_id", "map_outstanding_principal": "DrsPOS"},
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 303
+
+            call_count = 0
+            real_open_connection = catalog_store.open_connection
+
+            def counting_open_connection():
+                nonlocal call_count
+                call_count += 1
+                return real_open_connection()
+
+            catalog_store.open_connection = counting_open_connection
+            try:
+                df = catalog_store.build_consolidated_df(engagement_id, "ead_files")
+            finally:
+                catalog_store.open_connection = real_open_connection
+
+            assert call_count == 1, f"expected 1 shared connection, got {call_count}"
+            assert sorted(df["loan_id"].to_list()) == ["LN0000", "LN0001", "LN0002"]
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)

@@ -107,7 +107,14 @@ function showLoading(el, msg) {
     el.textContent = msg;
     el.style.opacity = "0.6";
     el.style.pointerEvents = "none";
-    // Re-enable after 15s in case download fails
+    // Re-enable after 5 minutes in case the request truly fails/hangs --
+    // this is a last-resort safety net, not a real completion signal
+    // (a plain <a href> download gives the page no way to know when the
+    // browser has actually finished receiving it). 15s used to be plenty
+    // for a small batch, but consolidating a dozen-plus large EAD files
+    // (some 900K+ rows) genuinely takes longer than that, so the old
+    // timeout made the button flip back to "ready" while the server was
+    // still working -- looking like it silently failed when it hadn't.
     setTimeout(function() {
       el.style.opacity = "1";
       el.style.pointerEvents = "";
@@ -115,7 +122,7 @@ function showLoading(el, msg) {
         'btn-excel': '⬇ Download Excel',
         'btn-parquet': '⬇ Download Parquet',
       }[el.id] || '⬇ Download CSV';
-    }, 15000);
+    }, 300000);
   }, 50);
 }
 </script>
