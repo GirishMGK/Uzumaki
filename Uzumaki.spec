@@ -92,7 +92,7 @@ datas = [
     (os.path.join(ROOT, "extract_soa.py"), "."),
     (os.path.join(ROOT, "extract_rps.py"), "."),
     (os.path.join(ROOT, "reconcile.py"), "."),
-    (os.path.join(ROOT, "parquet_tool.py"), "."),
+    (os.path.join(ROOT, "ead_consolidator.py"), "."),
     (os.path.join(ROOT, "pdf_tools.py"), "."),
     (os.path.join(ROOT, "PF.py"), "."),
     (os.path.join(ROOT, "statutory_extractor.py"), "."),

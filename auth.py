@@ -32,7 +32,8 @@ from pathlib import Path
 from passlib.context import CryptContext
 
 TOOL_KEYS: list[str] = [
-    "Parquet Tool",
+    "Loan Analytics",
+    "EAD Consolidator",
     "Statutory Extractor",
     "Form 26AS Extractor",
     "PDF Tools",
@@ -41,7 +42,6 @@ TOOL_KEYS: list[str] = [
     "JE Audit Analytics",
     "Tally",
     "HRM",
-    "Loan Analytics",
 ]
 
 DEFAULT_ADMIN_USERNAME = "admin"
