@@ -2319,3 +2319,113 @@ def test_apply_duckdb_limits_sets_higher_memory_ceiling_and_disables_order():
             con.close()
     finally:
         sys.path.remove(backend_dir)
+
+
+# ── loan_app: EAD "System" -> Product Type tagging (Product Helper) ────────
+def test_product_helper_blocks_on_unmapped_system_then_tags_after_settings_add():
+    """
+    Regression guard for the new "Product Helper" feature: EAD/Technical
+    Writeoff rows get tagged with a Product Type derived from their
+    `System` column, via a persisted System -> Type lookup (seeded with 22
+    known values, editable at Settings). Verifies the full real flow:
+    1. A file with one known System value and one unknown one blocks
+       ingestion at the mapping-confirm step with the unmapped value named.
+    2. Adding that mapping via the real Settings route, then re-confirming
+       the same mapping, ingests successfully.
+    3. The ingested data's `product_helper` column is correct for both the
+       pre-seeded value (OneLMS_TW -> TW) and the newly-added one.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        csv_bytes = (
+            b"loan_id,System\n"
+            b"LN0001,OneLMS_TW\n"
+            b"LN0002,MyBrandNewSystem\n"
+        )
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("product_helper.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            upload_id = next(
+                u["upload_id"]
+                for u in catalog_store.list_uploads()
+                if u["filename"] == "product_helper.csv"
+            )
+
+            # Confirming the mapping should block: "MyBrandNewSystem" isn't
+            # in the System -> Type lookup yet.
+            resp = client.post(
+                f"/dashboard/uploads/{upload_id}/map-columns",
+                data={"map_loan_id": "loan_id", "map_system": "System"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 200
+            assert "MyBrandNewSystem" in resp.text
+            assert "OneLMS_TW" not in resp.text  # only the *unmapped* value is listed
+
+            upload = catalog_store.get_upload(upload_id)
+            assert upload["status"] == "mapping_pending"  # never touched, not marked failed
+
+            # Add the missing mapping via the real Settings route.
+            resp = client.post(
+                "/settings/system-types",
+                data={"system_value": "MyBrandNewSystem", "type_value": "CUSTOM"},
+            )
+            assert resp.status_code == 200
+            assert catalog_store.get_system_type_map()["MyBrandNewSystem"] == "CUSTOM"
+
+            # Re-confirming the same mapping now succeeds.
+            resp = client.post(
+                f"/dashboard/uploads/{upload_id}/map-columns",
+                data={"map_loan_id": "loan_id", "map_system": "System"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            df = catalog_store.get_upload_df(upload_id).sort("loan_id")
+            assert df["product_helper"].to_list() == ["TW", "CUSTOM"]
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_system_type_map_seeded_with_known_defaults():
+    """The 22-entry System -> Type lookup ships pre-seeded (from
+    fcmr_core.catalog.store._DEFAULT_SYSTEM_TYPE_MAP) so a fresh install
+    doesn't need every known system mapped by hand."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        from fcmr_core.catalog import store as catalog_store
+
+        catalog_store.init_catalog()
+        mapping = catalog_store.get_system_type_map()
+        assert mapping["OneLMS_TW"] == "TW"
+        assert mapping["SCF"] == "BL"
+        assert mapping["FEDERAL_BANK"] == "FEDERAL_BANK"
+        assert len(mapping) >= 22
+    finally:
+        sys.path.remove(backend_dir)

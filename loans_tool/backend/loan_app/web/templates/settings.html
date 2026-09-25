@@ -143,6 +143,39 @@
   </div>
 
   <div class="card">
+    <div class="card-title">System → Product Type Mapping</div>
+    <div class="card-sub">Used to tag EAD/Technical Writeoff rows with a Product Helper column at ingest time</div>
+
+    <table class="data-table" style="margin-top:12px; margin-bottom:16px;">
+      <thead>
+        <tr><th>System</th><th>Type</th></tr>
+      </thead>
+      <tbody>
+        {% for row in system_type_map %}
+        <tr>
+          <td class="mono">{{ row.system_value }}</td>
+          <td class="mono">{{ row.type_value }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <form method="POST" action="/settings/system-types">
+      <div class="form-group">
+        <label for="system_value">System value (exact, as it appears in the file)</label>
+        <input type="text" id="system_value" name="system_value" required style="width:100%;">
+      </div>
+      <div class="form-group">
+        <label for="type_value">Product Type</label>
+        <input type="text" id="type_value" name="type_value" required style="width:100%;">
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Add / Update Mapping</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
     <div class="card-title">Data Backup</div>
     <div class="card-sub">Download a backup of your catalog and generated reports</div>
 

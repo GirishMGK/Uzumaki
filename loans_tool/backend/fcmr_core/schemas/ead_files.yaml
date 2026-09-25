@@ -190,3 +190,61 @@ columns:
     aliases: [onan_flag, is_onan, once_npa_always_npa, onan]
     required: false
     dtype: str
+
+  # ── Added for the Loan Analytics exception checks (quick mortality,
+  # sanction-to-disbursal delay, product tagging, tenure/maturity checks,
+  # NPA/writeoff cross-checks) ──────────────────────────────────────────
+  npa_flag_date:
+    aliases: [NPAFlagDate, npa_flag_date, npaflagdate]
+    required: false
+    dtype: str
+
+  sanction_date:
+    aliases: [SANCTIONED_DATE, sanction_date, sanctioned_date]
+    required: false
+    dtype: str
+
+  system:
+    aliases: [System, system]
+    required: false
+    dtype: str
+
+  business_date:
+    aliases: [BusinessDate, business_date, businessdate]
+    required: false
+    dtype: str
+
+  zero_90_days_interest:
+    aliases: [zero_90_days_interest]
+    required: false
+    dtype: float
+
+  zero_90_int_final:
+    aliases: [zero_90_int_Final, zero_90_int_final]
+    required: false
+    dtype: float
+
+  financial_irr:
+    aliases: [FinancialIRR, financial_irr]
+    required: false
+    dtype: float
+
+  original_tenure:
+    aliases: [ORIGINAL_TENURE, original_tenure]
+    required: false
+    dtype: int
+
+  maturity_date:
+    aliases: [MATURITY_DATE, maturity_date]
+    required: false
+    dtype: str
+
+  ucid:
+    aliases: [UCID, ucid]
+    required: false
+    dtype: str
+
+  customer_id:
+    aliases: [CustomerID, customer_id, customerid]
+    required: false
+    dtype: str

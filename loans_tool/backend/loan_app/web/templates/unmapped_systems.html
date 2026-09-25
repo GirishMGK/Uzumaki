@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Unmapped Systems — {{ upload.filename }} — Loan Analytics{% endblock %}
+{% block page_title %}Unmapped System Values{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard" class="btn btn-ghost" style="margin-left:auto;">← Dashboard</a>
+{% endblock %}
+
+{% block content %}
+
+<div class="card">
+  <div class="card-title">{{ upload.filename }}</div>
+  <div class="notice notice-warn" style="margin-top:12px;">
+    This file has <strong>{{ unmapped_systems | length }}</strong> "System" value{{ "s" if unmapped_systems | length != 1 else "" }}
+    not yet mapped to a Product Type:
+  </div>
+  <ul style="margin:12px 0; padding-left:20px;">
+    {% for value in unmapped_systems %}
+    <li class="mono">{{ value }}</li>
+    {% endfor %}
+  </ul>
+  <p class="help-text">
+    Add a Product Type for each one at <a href="/settings">Settings → System → Product Type Mapping</a>,
+    then come back here and confirm the column mapping again.
+  </p>
+  <div class="form-actions" style="margin-top:16px;">
+    <a href="/settings" class="btn btn-primary">Go to Settings</a>
+    <a href="/dashboard/uploads/{{ upload.upload_id }}/map-columns" class="btn btn-ghost">Back to Mapping</a>
+  </div>
+</div>
+
+{% endblock %}
