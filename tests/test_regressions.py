@@ -2748,6 +2748,122 @@ def test_best_raw_for_canonical_prefers_exact_match_over_near_duplicate():
         sys.path.remove(backend_dir)
 
 
+def test_resolve_column_renames_never_drops_a_correct_explicit_mapping():
+    """
+    Regression guard for a real bug caught in code review: an earlier
+    version of the DuplicateError fix dropped *any* rename whose target
+    already existed as a different raw column -- which silently discarded
+    a genuinely correct, deliberate mapping whenever a file happened to
+    also carry an unrelated column that coincidentally shared the target's
+    exact name. Concretely: a file has a decoy `loan_id` column *and* the
+    real agreement number under `AgreementNo`; the user explicitly maps
+    AgreementNo -> loan_id (the correct choice). The old guard kept the
+    decoy's "JUNK1" as loan_id and threw the real "REAL-AGMT-001" away
+    with no warning. resolve_column_renames() must give the explicit
+    mapping its requested name and push the decoy aside under a
+    disambiguated name instead, so both survive and the correct data
+    actually lands on the canonical field.
+    """
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        from fcmr_core.schemas.loader import resolve_column_renames
+
+        raw_columns = ["loan_id", "AgreementNo"]
+        rename_map = {"AgreementNo": "loan_id"}
+
+        final_names = resolve_column_renames(raw_columns, rename_map)
+        assert final_names["AgreementNo"] == "loan_id"  # explicit mapping wins the clean name
+        assert final_names["loan_id"] == "loan_id_2"  # decoy survives, disambiguated
+
+        # Two different raw headers both explicitly targeting the same
+        # canonical: first-registered wins the clean name, the second
+        # still survives under a suffix rather than being lost.
+        final_names_2 = resolve_column_renames(
+            ["loanid", "account_no"], {"loanid": "loan_id", "account_no": "loan_id"}
+        )
+        assert final_names_2["loanid"] == "loan_id"
+        assert final_names_2["account_no"] == "loan_id_2"
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_map_columns_form_computes_fuzzy_scores_only_once():
+    """
+    Regression guard for a real perf issue caught in code review:
+    map_columns_form() (the GET /map-columns route) computed
+    schema.map_headers_with_scores() once directly to build `suggested`,
+    then called schema.best_raw_for_canonical(raw_headers) to build
+    `suggested_inverse` -- which internally called
+    map_headers_with_scores() *again* on the same raw_headers, doubling
+    the fuzzy-match scoring pass (an O(headers x schema_columns)
+    difflib.SequenceMatcher loop) and the DB round trip for the
+    fuzzy_match_threshold setting, on every single page load. Verifies
+    the route reuses its own already-computed scores via
+    best_raw_for_canonical_from_scores() instead, by counting real calls
+    to map_headers_with_scores.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+        from fcmr_core.schemas.loader import SchemaMap
+
+        # A header combo distinctive enough that no other test in this
+        # suite could have already saved a mapping profile for it -- a
+        # saved profile short-circuits map_columns_form before it ever
+        # calls map_headers_with_scores, which would make this test pass
+        # (0 calls) for the wrong reason instead of exercising the fix.
+        csv_bytes = b"loan_id,DrsPOS,PerfCountCheckUniqueColumn\nLN0001,1000,1\n"
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("perf.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+            upload_id = next(
+                u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "perf.csv"
+            )
+
+            call_count = 0
+            original = SchemaMap.map_headers_with_scores
+
+            def counting_wrapper(self, raw_headers):
+                nonlocal call_count
+                call_count += 1
+                return original(self, raw_headers)
+
+            SchemaMap.map_headers_with_scores = counting_wrapper
+            try:
+                resp = client.get(f"/dashboard/uploads/{upload_id}/map-columns")
+                assert resp.status_code == 200
+            finally:
+                SchemaMap.map_headers_with_scores = original
+
+            assert call_count == 1, f"expected 1 fuzzy-scoring pass, got {call_count}"
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── ead_consolidator.py: colliding rename no longer crashes ─────────────────
 def test_ead_consolidator_rejects_a_rename_that_would_duplicate_a_column():
     """
@@ -2756,9 +2872,14 @@ def test_ead_consolidator_rejects_a_rename_that_would_duplicate_a_column():
     ("_Hist") column must not raise polars' DuplicateError, whichever
     mapping ends up selected. Covers both directions:
     1. The (now fixed) auto-suggested mapping never picks the wrong one.
-    2. Even if a mapping were hand-picked into the colliding shape,
-       _consolidate()'s own guard drops the conflicting rename instead of
-       crashing, keeping the native column's data intact.
+    2. Even a mapping hand-picked into the colliding shape doesn't crash
+       or silently lose data: resolve_column_renames() gives the explicit
+       rename its requested name (it's the one actual intent, however
+       mistaken) and pushes the untouched native column's data aside
+       under a numeric suffix rather than overwriting or dropping it --
+       an earlier version of this fix got this backwards, silently
+       keeping the untouched column and discarding the deliberate
+       mapping, which is why this direction is asserted explicitly.
     """
     sys.path.insert(0, REPO_ROOT)
     backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
@@ -2788,12 +2909,14 @@ def test_ead_consolidator_rejects_a_rename_that_would_duplicate_a_column():
         consolidated = ec._consolidate([df], ["f.csv"], user_mapping)
         assert consolidated["zero_90_days_interest"].to_list() == [111.0]
 
-        # Direction 2: force the exact collision shape and confirm the
-        # guard (not a crash) is what handles it.
-        bad_mapping = {"zero_90_days_interest_Hist": "zero_90_days_interest"}
-        consolidated_bad = ec._consolidate([df], ["f.csv"], bad_mapping)
-        assert consolidated_bad["zero_90_days_interest"].to_list() == [111.0]
-        assert "zero_90_days_interest_Hist" in consolidated_bad.columns
+        # Direction 2: force the exact collision shape by hand. The
+        # explicit rename wins the clean name; the untouched native
+        # column's data survives under a disambiguated name instead of
+        # being silently discarded.
+        explicit_mapping = {"zero_90_days_interest_Hist": "zero_90_days_interest"}
+        consolidated_explicit = ec._consolidate([df], ["f.csv"], explicit_mapping)
+        assert consolidated_explicit["zero_90_days_interest"].to_list() == [999.0]
+        assert consolidated_explicit["zero_90_days_interest_2"].to_list() == [111.0]
     finally:
         sys.path.remove(backend_dir)
         sys.path.remove(REPO_ROOT)
@@ -2805,10 +2928,12 @@ def test_ead_consolidator_rejects_a_rename_that_would_duplicate_a_column():
 # ── fcmr_core/ingestion/pipeline.py: same guard in the real ingest path ─────
 def test_ingest_csv_rejects_a_rename_that_would_duplicate_a_column():
     """Same collision, through the real ingest_csv() path the main Loan
-    Analytics app uses -- confirms the resulting Parquet has the native
-    column's real data under its own name, not DuckDB's silent "_1"-suffix
-    disambiguation (which would make the fuzzy-matched column's data
-    disappear from every canonical-field lookup with no error at all)."""
+    Analytics app uses -- confirms the explicit mapping's data lands under
+    the canonical name (not DuckDB's silent "_1"-suffix disambiguation,
+    which would put the *native* column there instead and make the
+    explicitly-mapped column's data disappear from every canonical-field
+    lookup with no error at all), and that the untouched native column's
+    data still survives, just under a distinguishable name."""
     backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
     sys.path.insert(0, backend_dir)
     os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
@@ -2827,15 +2952,15 @@ def test_ingest_csv_rejects_a_rename_that_would_duplicate_a_column():
                 encoding="utf-8",
             )
 
-            # The colliding mapping a bad auto-suggest (or a manual pick)
-            # could produce: renames the _Hist column onto the name the
-            # native column already has.
-            bad_mapping = {"zero_90_days_interest_Hist": "zero_90_days_interest"}
-            result = ingest_csv(csv_path, "ead_files", user_mapping=bad_mapping)
+            # An explicit mapping into the colliding shape: renames the
+            # _Hist column onto the name the native column already has.
+            explicit_mapping = {"zero_90_days_interest_Hist": "zero_90_days_interest"}
+            result = ingest_csv(csv_path, "ead_files", user_mapping=explicit_mapping)
 
             df = pl.read_parquet(result.parquet_path)
             assert df.columns.count("zero_90_days_interest") == 1
-            assert df["zero_90_days_interest"].to_list() == [111]
+            assert df["zero_90_days_interest"].to_list() == [999]
+            assert df["zero_90_days_interest_2"].to_list() == [111]
     finally:
         sys.path.remove(backend_dir)
 

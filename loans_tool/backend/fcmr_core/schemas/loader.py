@@ -88,29 +88,15 @@ class SchemaMap:
         return result
 
     def best_raw_for_canonical(self, raw_headers: list[str]) -> dict[str, str]:
-        """Invert map_headers_with_scores() correctly: {canonical: raw},
-        keeping only the highest-scoring raw header when several headers
-        all fuzzy-match the same canonical.
-
-        A plain {canonical: raw for raw, (canonical, _) in scored.items()}
-        inversion keeps whichever raw header happens to be seen *last*,
-        not the best match -- so a near-duplicate column (e.g. a real
-        file's own "_Hist"/"_Old" variant of an exact-match column) can
-        silently steal a canonical's suggested-mapping slot from the
-        correct exact match. The exact match then gets left unmapped
-        (defaults to "Skip"), while the fuzzy variant gets renamed *into*
-        that canonical's name -- and since the exact-match column is still
-        sitting there under that same name, the two collide the moment
-        anything tries to rename into it, e.g. polars.DataFrame.rename's
-        "column ... is duplicate".
+        """Invert map_headers_with_scores() correctly -- see
+        best_raw_for_canonical_from_scores() for why a plain inversion is
+        wrong. Callers that already have a `scored` dict in hand (e.g. to
+        show per-header confidence) should call
+        best_raw_for_canonical_from_scores(scored) directly instead of this,
+        to avoid running the fuzzy-match scoring pass (and its DB round
+        trip for the threshold setting) a second time.
         """
-        scored = self.map_headers_with_scores(raw_headers)
-        best: dict[str, tuple[str, float]] = {}
-        for raw, (canonical, score) in scored.items():
-            current = best.get(canonical)
-            if current is None or score > current[1]:
-                best[canonical] = (raw, score)
-        return {canonical: raw for canonical, (raw, _score) in best.items()}
+        return best_raw_for_canonical_from_scores(self.map_headers_with_scores(raw_headers))
 
     def missing_required(self, mapped: dict[str, str]) -> list[str]:
         found_canonicals = set(mapped.values())
@@ -123,6 +109,85 @@ class SchemaMap:
             if col.canonical == canonical:
                 return col.dtype
         return "str"
+
+
+def best_raw_for_canonical_from_scores(
+    scored: dict[str, tuple[str, float]],
+) -> dict[str, str]:
+    """Invert a {raw: (canonical, score)} map into {canonical: raw},
+    keeping only the highest-scoring raw header when several headers all
+    fuzzy-match the same canonical.
+
+    A plain {canonical: raw for raw, (canonical, _) in scored.items()}
+    inversion keeps whichever raw header happens to be seen *last*, not
+    the best match -- so a near-duplicate column (e.g. a real file's own
+    "_Hist"/"_Old" variant of an exact-match column) can silently steal a
+    canonical's suggested-mapping slot from the correct exact match. The
+    exact match then gets left unmapped (defaults to "Skip"), while the
+    fuzzy variant gets suggested for renaming *into* that canonical's
+    name -- and since the exact-match column is still sitting there under
+    that same name, confirming that suggestion collides the two columns.
+    """
+    best: dict[str, tuple[str, float]] = {}
+    for raw, (canonical, score) in scored.items():
+        current = best.get(canonical)
+        if current is None or score > current[1]:
+            best[canonical] = (raw, score)
+    return {canonical: raw for canonical, (raw, _score) in best.items()}
+
+
+def resolve_column_renames(
+    raw_columns: list[str], rename_map: dict[str, str]
+) -> dict[str, str]:
+    """Given a file's raw column names and an intended {raw: canonical}
+    rename (however it was produced -- auto-suggested or hand-picked in
+    the mapping UI), return a collision-free {raw: final_name} mapping
+    covering *every* raw column, including ones rename_map doesn't touch.
+
+    Naively applying rename_map as-is can silently collide two source
+    columns onto the same output name -- e.g. a raw column that's
+    already, coincidentally, named exactly like some *other* column's
+    rename target. Renaming straight into that (polars' DataFrame.rename,
+    or a duplicate SQL SELECT alias in the ingestion pipeline) either
+    crashes outright or -- worse -- silently keeps only one side's data
+    with no error at all.
+
+    Resolution policy, chosen so nothing is ever silently dropped or
+    overwritten:
+    - An explicit entry in rename_map always gets the exact target name
+      it asked for (first-registered wins if two different raw columns
+      both target the same canonical -- itself an upstream data-quality
+      issue, not something to silently resolve one specific way).
+    - Every other raw column keeps its own name if that's still free,
+      otherwise gets a numeric suffix ("name_2", "name_3", ...) so its
+      data survives under a distinguishable, inspectable name instead of
+      vanishing.
+    """
+    final_names: dict[str, str] = {}
+    used: set[str] = set()
+
+    def unique(base: str) -> str:
+        if base not in used:
+            return base
+        i = 2
+        while f"{base}_{i}" in used:
+            i += 1
+        return f"{base}_{i}"
+
+    for raw in raw_columns:
+        if raw in rename_map:
+            target = unique(rename_map[raw])
+            final_names[raw] = target
+            used.add(target)
+
+    for raw in raw_columns:
+        if raw in final_names:
+            continue
+        name = unique(raw)
+        final_names[raw] = name
+        used.add(name)
+
+    return final_names
 
 
 def _load_yaml(path: Path) -> SchemaMap:

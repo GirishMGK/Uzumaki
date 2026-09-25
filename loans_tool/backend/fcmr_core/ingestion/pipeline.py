@@ -18,7 +18,7 @@ import duckdb
 import polars as pl
 
 from fcmr_core.config import settings
-from fcmr_core.schemas.loader import SchemaMap, get_schema
+from fcmr_core.schemas.loader import SchemaMap, get_schema, resolve_column_renames
 
 
 @dataclass
@@ -141,26 +141,22 @@ def _stream_to_parquet(
         raw_cols = [row[0] for row in con.execute("DESCRIBE raw_csv").fetchall()]
         total_rows: int = con.execute("SELECT COUNT(*) FROM raw_csv").fetchone()[0]  # type: ignore[index]
 
-        # If a rename's target already exists as a *different*, untouched
-        # raw column, drop that rename entry and keep the native column
-        # under its own name instead. DuckDB itself tolerates two columns
-        # sharing a SELECT alias (first one wins the name, second gets
-        # silently suffixed "_1" on read-back) rather than erroring, which
-        # is worse than a crash here: the mis-renamed column's data goes
-        # missing from every downstream canonical-field lookup with no
-        # error at all. A mis-suggested mapping (see
-        # SchemaMap.best_raw_for_canonical) is the usual cause; this also
-        # guards a mapping picked by hand.
-        raw_col_set = set(raw_cols)
-        rename_map = {
-            raw: canonical
-            for raw, canonical in rename_map.items()
-            if canonical not in raw_col_set or canonical == raw
-        }
+        # Resolve to a collision-free {raw: final_name} covering every raw
+        # column, not just the ones rename_map touches -- a rename target
+        # that happens to already be a *different*, untouched column's own
+        # name would otherwise produce two columns sharing one SELECT
+        # alias. DuckDB itself tolerates that (first one wins the name,
+        # second gets silently suffixed "_1" on read-back) rather than
+        # erroring, which is worse than a crash: the losing column's data
+        # goes missing from every downstream canonical-field lookup with
+        # no error at all. See resolve_column_renames for the resolution
+        # policy (explicit renames win; the loser gets a numeric suffix,
+        # never dropped).
+        final_names = resolve_column_renames(raw_cols, rename_map)
 
         select_parts = []
         for raw_col in raw_cols:
-            canonical = rename_map.get(raw_col, raw_col)
+            canonical = final_names[raw_col]
             safe_raw = raw_col.replace('"', '""')
             safe_canonical = canonical.replace('"', '""')
             if canonical != raw_col:
