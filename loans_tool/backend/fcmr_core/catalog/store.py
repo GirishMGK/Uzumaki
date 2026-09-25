@@ -294,10 +294,16 @@ def store_upload_data(upload_id: str, parquet_path: Path) -> None:
         pass
 
 
-def get_upload_df(upload_id: str):
-    """Return a Polars DataFrame for the upload's data from DuckDB."""
-
+def get_upload_df(upload_id: str, *, con: duckdb.DuckDBPyConnection | None = None):
+    """Return a Polars DataFrame for the upload's data from DuckDB. Reuses
+    a caller-supplied connection when given (e.g. build_consolidated_df()
+    reading many uploads in a row) instead of opening a fresh one --
+    each duckdb.connect() has real per-call overhead (including
+    apply_duckdb_limits' several SET statements), which visibly adds up
+    across a dozen-plus large files."""
     table = f"data_{upload_id.replace('-', '_')}"
+    if con is not None:
+        return con.execute(f"SELECT * FROM {table}").pl()
     with _conn() as con:
         return con.execute(f"SELECT * FROM {table}").pl()
 
@@ -504,14 +510,15 @@ def build_consolidated_df(engagement_id: str | None, report_type: str) -> pl.Dat
         return pl.DataFrame()
 
     frames: list[pl.DataFrame] = []
-    for upload in ready:
-        df = get_upload_df(upload["upload_id"])
-        mapping: dict[str, str] = json.loads(upload.get("column_mapping") or "{}")
-        rename = {raw: canonical for raw, canonical in mapping.items() if raw in df.columns}
-        if rename:
-            df = df.rename(rename)
-        df = df.with_columns(pl.lit(upload["filename"]).alias("_source_file"))
-        frames.append(df)
+    with open_connection() as con:
+        for upload in ready:
+            df = get_upload_df(upload["upload_id"], con=con)
+            mapping: dict[str, str] = json.loads(upload.get("column_mapping") or "{}")
+            rename = {raw: canonical for raw, canonical in mapping.items() if raw in df.columns}
+            if rename:
+                df = df.rename(rename)
+            df = df.with_columns(pl.lit(upload["filename"]).alias("_source_file"))
+            frames.append(df)
 
     return pl.concat(frames, how="diagonal_relaxed")
 
