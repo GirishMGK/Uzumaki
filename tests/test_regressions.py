@@ -2429,3 +2429,83 @@ def test_system_type_map_seeded_with_known_defaults():
         assert len(mapping) >= 22
     finally:
         sys.path.remove(backend_dir)
+
+
+# ── ead_consolidator.py: standalone EAD upload/map/consolidate tool ────────
+def test_ead_consolidator_maps_consolidates_and_tags_product_helper():
+    """
+    Regression guard for the new standalone EAD Consolidator tool
+    (replaces Parquet Tool in the hub sidebar): upload -> map columns ->
+    consolidate -> download, with no login/engagement, reusing the same
+    canonical EAD schema and System -> Product Type lookup as Loan
+    Analytics. Verifies the real functions end to end: auto-suggested
+    mapping picks up known aliases, an unmapped System value is detected
+    (not silently tagged null), and once mapped, consolidating multiple
+    files stacks them and tags product_helper correctly for both a
+    pre-seeded and a newly-added System value.
+    """
+    pytest.importorskip("polars")
+
+    sys.path.insert(0, REPO_ROOT)
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        import polars as pl
+
+        from fcmr_core.catalog import store as loan_store
+
+        loan_store.init_catalog()
+
+        import ead_consolidator as ec
+
+        df1 = pl.DataFrame(
+            {"AgreementNo": ["L1", "L2"], "System": ["OneLMS_TW", "BrandNewTestSys"], "EAD": [100.0, 200.0]}
+        )
+        df2 = pl.DataFrame({"AgreementNo": ["L3"], "System": ["SCF"], "EAD": [50.0]})
+
+        suggested = ec._suggested_mapping(df1.columns)
+        assert suggested == {"loan_id": "AgreementNo", "system": "System", "ead": "EAD"}
+        user_mapping = {raw: canonical for canonical, raw in suggested.items()}
+
+        unmapped = ec._unmapped_system_values([df1, df2], "System")
+        assert unmapped == ["BrandNewTestSys"]
+
+        loan_store.set_system_type("BrandNewTestSys", "CUSTOM_TYPE")
+        assert ec._unmapped_system_values([df1, df2], "System") == []
+
+        consolidated = ec._consolidate([df1, df2], ["f1.csv", "f2.csv"], user_mapping)
+        assert consolidated["loan_id"].to_list() == ["L1", "L2", "L3"]
+        assert consolidated["product_helper"].to_list() == ["TW", "CUSTOM_TYPE", "BL"]
+        assert consolidated["_source_file"].to_list() == ["f1.csv", "f1.csv", "f2.csv"]
+    finally:
+        os.environ.pop("FCMR_AADHAAR_HASH_SALT", None)
+        sys.path.remove(backend_dir)
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "ead_consolidator":
+                del sys.modules[mod]
+
+
+def test_parquet_tool_removed_and_ead_consolidator_registered():
+    """Parquet Tool was retired in favor of EAD Consolidator; guards
+    against either the old files coming back or the new tool being
+    dropped from the hub's nav/permissions wiring."""
+    assert not os.path.exists(os.path.join(REPO_ROOT, "parquet_tool.py"))
+    assert not os.path.exists(os.path.join(REPO_ROOT, "_pages", "parquet.py"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "ead_consolidator.py"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "_pages", "ead_consolidator.py"))
+
+    with open(os.path.join(REPO_ROOT, "auth.py"), encoding="utf-8") as f:
+        auth_src = f.read()
+    assert '"Parquet Tool"' not in auth_src
+    assert '"EAD Consolidator"' in auth_src
+
+    with open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8") as f:
+        home_src = f.read()
+    assert '"Parquet Tool"' not in home_src
+    assert '"EAD Consolidator"' in home_src
+    # Loan Analytics moved to the top of both the card catalogue and the
+    # sidebar nav dict -- it's the first title to appear in each.
+    assert home_src.index('"title": "Loan Analytics"') < home_src.index('"title": "EAD Consolidator"')
+    assert home_src.index('"Loan Analytics": st.Page') < home_src.index('"EAD Consolidator": st.Page')

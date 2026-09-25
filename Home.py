@@ -17,7 +17,7 @@ import sys
 
 import streamlit as st
 
-# make repo root importable for the page scripts (parquet_tool, tools.*, etc.)
+# make repo root importable for the page scripts (ead_consolidator, tools.*, etc.)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _pages.theme import inject_css, footer  # noqa: E402
@@ -189,9 +189,17 @@ def _render_account_sidebar() -> None:
 # ── tool catalogue ──────────────────────────────────────────────────────────────
 _TOOLS = [
     {
-        "group": "Data Engineering",
-        "icon": "🗄️", "title": "Parquet Tool", "tag": "Streamlit",
-        "desc": "CSV/Excel ↔ Parquet conversion, schema viewer, CSV utilities, DuckDB SQL analytics.",
+        "group": "Finance & Loan Audit",
+        "icon": "🏦", "title": "Loan Analytics", "tag": "FastAPI (in-process)",
+        "desc": "NBFC loan-portfolio audit analytics — KYC/data-quality checks, duplicate/UCID "
+                "detection, PIN/address validation, ICAI-sampled Excel workpapers, EAD/ECL file "
+                "consolidation. Deterministic — no AI/LLM. Uses your Uzumaki login.",
+    },
+    {
+        "group": "Finance & Loan Audit",
+        "icon": "📥", "title": "EAD Consolidator", "tag": "Streamlit",
+        "desc": "Standalone upload → map columns → consolidate → download (CSV/Excel/Parquet) "
+                "for EAD Files, no login or engagement required.",
     },
     {
         "group": "Documents & PDFs",
@@ -231,20 +239,13 @@ _TOOLS = [
                 "closing stock without reconnecting for each one.",
     },
     {
-        "group": "Finance & Loan Audit",
-        "icon": "🏦", "title": "Loan Analytics", "tag": "FastAPI (in-process)",
-        "desc": "NBFC loan-portfolio audit analytics — KYC/data-quality checks, duplicate/UCID "
-                "detection, PIN/address validation, ICAI-sampled Excel workpapers, EAD/ECL file "
-                "consolidation. Deterministic — no AI/LLM. Uses your Uzumaki login.",
-    },
-    {
         "group": "Workforce & Scheduling",
         "icon": "🧑‍💼", "title": "HRM", "tag": "FastAPI (in-process)",
         "desc": "Manpower/resource tracking — scheduler board, capacity dashboards, timesheets, forecasting. Has its own login and local database.",
     },
 ]
 
-_GROUP_ORDER = ["Finance & Loan Audit", "Statutory & Payroll", "Documents & PDFs", "Data Engineering", "Workforce & Scheduling"]
+_GROUP_ORDER = ["Finance & Loan Audit", "Statutory & Payroll", "Documents & PDFs", "Workforce & Scheduling"]
 
 _DEP_CHECKS = [
     ("pandas", "pandas"), ("pyarrow", "PyArrow"), ("duckdb", "DuckDB"),
@@ -339,7 +340,8 @@ def home():
 # isn't just hidden from the sidebar, it's never registered with
 # st.navigation() at all, so it can't be reached by a direct URL either.
 _ALL_TOOL_PAGES = {
-    "Parquet Tool": st.Page("_pages/parquet.py", title="Parquet Tool", icon="🗄️"),
+    "Loan Analytics": st.Page("_pages/loans.py", title="Loan Analytics", icon="🏦"),
+    "EAD Consolidator": st.Page("_pages/ead_consolidator.py", title="EAD Consolidator", icon="📥"),
     "Statutory Extractor": st.Page("_pages/pf_statutory.py", title="Statutory Extractor", icon="🧾"),
     "Form 26AS Extractor": st.Page("_pages/form26as_page.py", title="Form 26AS Extractor", icon="🧮"),
     "PDF Tools": st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),
@@ -348,7 +350,6 @@ _ALL_TOOL_PAGES = {
     "JE Audit Analytics": st.Page("_pages/je_audit.py", title="JE Audit Analytics", icon="🔍"),
     "Tally": st.Page("_pages/tally_hub.py", title="Tally", icon="📒"),
     "HRM": st.Page("_pages/hrm.py", title="HRM", icon="🧑‍💼"),
-    "Loan Analytics": st.Page("_pages/loans.py", title="Loan Analytics", icon="🏦"),
 }
 _allowed_tools = set(st.session_state.auth_user["allowed_tools"])
 _nav_dict = {
