@@ -112,6 +112,36 @@
     </div>
   </div>
 
+  {# ── Cross-Dataset Checks ── #}
+  <div class="card">
+    <div class="card-title">Cross-Dataset Checks</div>
+    <div class="card-sub">Match EAD against a second, separately-uploaded dataset for this engagement.</div>
+
+    <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
+      <form method="post" action="/dashboard/analytics/ead/summary/ucid-cross-check" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">UCID Cross-Check vs Customer Master</div>
+          <div style="font-size:12px; color:var(--muted);">
+            EAD's UCID should match Customer Master's UCID for the same loan.
+            {% if not customer_master_ready %}<span style="color:var(--warn-text, #7c5c00);">No Customer Master file mapped and ready yet.</span>{% endif %}
+          </div>
+        </div>
+        <button type="submit" class="btn btn-ghost btn-sm" {% if not customer_master_ready %}disabled{% endif %}>Run</button>
+      </form>
+
+      <form method="post" action="/dashboard/analytics/ead/summary/written-off-fresh-disbursal" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">Fresh Disbursal to Written-Off Customer</div>
+          <div style="font-size:12px; color:var(--muted);">
+            Matches EAD disbursals against the Written-Off Accounts list by AgreementID and/or UCID.
+            {% if not technical_writeoff_ready %}<span style="color:var(--warn-text, #7c5c00);">No Technical Writeoff file mapped and ready yet.</span>{% endif %}
+          </div>
+        </div>
+        <button type="submit" class="btn btn-ghost btn-sm" {% if not technical_writeoff_ready %}disabled{% endif %}>Run</button>
+      </form>
+    </div>
+  </div>
+
   {% endif %}
 </div>
 {% endblock %}

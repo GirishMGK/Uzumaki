@@ -3687,3 +3687,209 @@ def test_ead_analytics_detects_npa_flag_change_across_two_separate_uploads():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── EAD Analytics rules 16 & 17: cross-dataset checks ───────────────────────
+def test_ucid_cross_check_report_flags_only_real_mismatches():
+    """Unit-level guard for rule 16: EAD's UCID should match Customer
+    Master's UCID for the same loan (EAD loan_id <-> Customer Master lan).
+    Flags only loans present in both datasets with populated, disagreeing
+    UCIDs -- a matching UCID or a loan Customer Master hasn't got yet must
+    not be flagged."""
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import polars as pl
+
+        from fcmr_core.rules.ead_cross_dataset import ucid_cross_check_report
+
+        ead = pl.DataFrame(
+            {
+                "loan_id": ["L1", "L2", "L3"],
+                "ucid": ["U1", "U2", "U3"],
+                "customer_id": ["C1", "C2", "C3"],
+            }
+        )
+        customer_master = pl.DataFrame(
+            {
+                "lan": ["L1", "L2"],  # L3 not present in Customer Master at all
+                "ucid": ["U1", "UX_WRONG"],
+                "customer_id": ["C1", "C2"],
+            }
+        )
+        result = ucid_cross_check_report(ead, customer_master).to_dicts()
+        assert len(result) == 1
+        assert result[0]["loan_id"] == "L2"
+        assert result[0]["ead_ucid"] == "U2"
+        assert result[0]["customer_master_ucid"] == "UX_WRONG"
+
+        # No Customer Master data at all -- no crash, empty result.
+        assert ucid_cross_check_report(ead, pl.DataFrame()).height == 0
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_written_off_customer_fresh_disbursal_report_flags_same_and_different_loan():
+    """Unit-level guard for rule 17: matches EAD against the Written-Off
+    Accounts list by AgreementID (loan_id) and/or UCID/customer_id, as the
+    user specified. Flags both cases: the exact same loan_id written off
+    yet still showing EAD activity (same_loan_id=True), and a fresh loan to
+    a customer whose OTHER loan was written off (same_loan_id=False). A
+    customer with no write-off history is not flagged."""
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import polars as pl
+
+        from fcmr_core.rules.ead_cross_dataset import written_off_customer_fresh_disbursal_report
+
+        ead = pl.DataFrame(
+            {
+                "loan_id": ["L1", "L2", "L3"],
+                "ucid": ["U1", "U2", "U3"],
+                "customer_id": ["C1", "C2", "C3"],
+                "disbursement_date": ["01-01-2024", "01-02-2024", "01-03-2024"],
+            }
+        )
+        writeoff = pl.DataFrame(
+            {
+                "loan_id": ["L1", "OLD_LOAN"],
+                "ucid": ["U1", "U3"],
+                "customer_id": ["C1", "C3"],
+                "business_date": ["31-12-2023", "30-11-2023"],
+            }
+        )
+        result = {row["loan_id"]: row for row in written_off_customer_fresh_disbursal_report(ead, writeoff).to_dicts()}
+
+        assert result["L1"]["same_loan_id"] is True
+        assert result["L1"]["written_off_loan_id"] == "L1"
+        assert result["L3"]["same_loan_id"] is False
+        assert result["L3"]["written_off_loan_id"] == "OLD_LOAN"
+        assert "L2" not in result  # customer C2/U2 has no write-off history
+
+        # No write-off data at all -- no crash, empty result.
+        assert written_off_customer_fresh_disbursal_report(ead, pl.DataFrame()).height == 0
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_ead_analytics_cross_dataset_checks_end_to_end():
+    """Functional test of rules 16 and 17 through the real app: upload EAD,
+    Customer Master, and Technical Writeoff files (each going through real
+    DuckDB-backed ingestion), then run both cross-dataset checks from the
+    EAD Analytics screen and verify the real join results. Also checks the
+    screen correctly reports each auxiliary dataset as ready/not-ready and
+    that requesting a check before its data is uploaded fails cleanly."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        with TestClient(loan_main.app) as client:
+            ead_csv = (
+                b"loan_id,ucid,customer_id,disbursement_date\n"
+                b"L1,U1,C1,01-01-2024\n"
+                b"L2,U2,C2,01-02-2024\n"
+                b"L3,U3,C3,01-03-2024\n"
+            )
+            client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("ead.csv", ead_csv, "text/csv"))],
+                follow_redirects=False,
+            )
+            ead_id = next(u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "ead.csv")
+            resp = client.post(
+                f"/dashboard/uploads/{ead_id}/map-columns",
+                data={
+                    "map_loan_id": "loan_id",
+                    "map_ucid": "ucid",
+                    "map_customer_id": "customer_id",
+                    "map_disbursement_date": "disbursement_date",
+                },
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            # Before Customer Master / Technical Writeoff exist, the screen
+            # says so and the checks fail cleanly rather than crashing.
+            resp = client.get("/dashboard/analytics/ead")
+            assert "No Customer Master file mapped and ready yet." in resp.text
+            assert "No Technical Writeoff file mapped and ready yet." in resp.text
+            resp = client.post("/dashboard/analytics/ead/summary/ucid-cross-check", data={})
+            assert resp.status_code == 400
+
+            cm_csv = b"customer_id,full_name,lan,ucid\nC1,Alice,L1,U1\nC2,Bob,L2,UX_WRONG\n"
+            client.post(
+                "/dashboard/upload",
+                data={"report_type": "customer_master"},
+                files=[("files", ("cm.csv", cm_csv, "text/csv"))],
+                follow_redirects=False,
+            )
+            cm_id = next(u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "cm.csv")
+            resp = client.post(
+                f"/dashboard/uploads/{cm_id}/map-columns",
+                data={"map_customer_id": "customer_id", "map_full_name": "full_name", "map_lan": "lan", "map_ucid": "ucid"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            wo_csv = b"loan_id,ucid,customer_id,business_date\nL1,U1,C1,31-12-2023\nOLD_LOAN_X,U3,C3,30-11-2023\n"
+            client.post(
+                "/dashboard/upload",
+                data={"report_type": "technical_writeoff"},
+                files=[("files", ("wo.csv", wo_csv, "text/csv"))],
+                follow_redirects=False,
+            )
+            wo_id = next(u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "wo.csv")
+            resp = client.post(
+                f"/dashboard/uploads/{wo_id}/map-columns",
+                data={
+                    "map_loan_id": "loan_id",
+                    "map_ucid": "ucid",
+                    "map_customer_id": "customer_id",
+                    "map_business_date": "business_date",
+                },
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            resp = client.get("/dashboard/analytics/ead")
+            assert "No Customer Master file mapped and ready yet." not in resp.text
+            assert "No Technical Writeoff file mapped and ready yet." not in resp.text
+
+            resp = client.post("/dashboard/analytics/ead/summary/ucid-cross-check", data={})
+            assert resp.status_code == 200 and "UCID Cross-Check vs Customer Master" in resp.text
+            dl = client.get("/dashboard/analytics/ead/summary/ucid-cross-check/download")
+            lines = dl.text.strip().splitlines()
+            assert len(lines) == 2  # header + L2's mismatch only
+            assert lines[1].startswith("L2,U2,UX_WRONG,C2,C2")
+
+            resp = client.post("/dashboard/analytics/ead/summary/written-off-fresh-disbursal", data={})
+            assert resp.status_code == 200
+            dl = client.get("/dashboard/analytics/ead/summary/written-off-fresh-disbursal/download")
+            lines = dl.text.strip().splitlines()
+            assert len(lines) == 3  # header + L1 (same loan) + L3 (fresh loan to written-off customer)
+            body = "\n".join(lines[1:])
+            assert "L1" in body and "true" in body
+            assert "L3" in body and "OLD_LOAN_X" in body
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]

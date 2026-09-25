@@ -104,6 +104,13 @@ columns:
     required: true
     dtype: str
 
+  # Added for the EAD Analytics UCID cross-check (rule 16): EAD's own UCID
+  # column for the same loan (via `lan`/loan_id) should match this one.
+  ucid:
+    aliases: [UCID, ucid]
+    required: false
+    dtype: str
+
   coapplicant_mobile:
     aliases: [co_applicant_mobile, coapplicant_phone, coapp_mobile, guarantor_mobile, coapplicant_contact]
     required: false
