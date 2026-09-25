@@ -25,6 +25,10 @@ from fcmr_core.config import settings
 from fcmr_core.reporting.aggregation import aggregate_exception_codes, aggregate_status_counts
 from fcmr_core.reporting.builder import build_exception_csvs
 from fcmr_core.reporting.charts import build_bar_chart, build_donut_svg
+from fcmr_core.rules.ead_cross_dataset import (
+    ucid_cross_check_report,
+    written_off_customer_fresh_disbursal_report,
+)
 from fcmr_core.rules.ead_reports import (
     month_wise_disbursal_summary,
     npa_flag_date_change_report,
@@ -51,6 +55,10 @@ async def ead_analytics_page(request: Request):
     engagement_id = request.session.get("engagement_id")
     uploads = store.list_uploads(engagement_id=engagement_id)
     ead_ready = [u for u in uploads if u["report_type"] == "ead_files" and u["status"] == "ready"]
+    customer_master_ready = any(u["report_type"] == "customer_master" and u["status"] == "ready" for u in uploads)
+    technical_writeoff_ready = any(
+        u["report_type"] == "technical_writeoff" and u["status"] == "ready" for u in uploads
+    )
 
     overrides, default_days = store.get_ead_sanction_disbursal_thresholds()
     product_types = sorted(set(store.get_system_type_map().values()))
@@ -60,6 +68,8 @@ async def ead_analytics_page(request: Request):
         name="ead_analytics.html",
         context={
             "ready_count": len(ead_ready),
+            "customer_master_ready": customer_master_ready,
+            "technical_writeoff_ready": technical_writeoff_ready,
             "row_rules": list_ead_row_rules(),
             "default_days": default_days,
             "type_thresholds": [{"type": t, "days": overrides.get(t, default_days)} for t in product_types],
@@ -150,25 +160,45 @@ async def ead_analytics_run_download(run_id: str, kind: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Summary reports (7, 9, 10, 18) — cheap aggregations, recomputed each time
+# Summary reports (7, 9, 10, 18) and cross-dataset checks (16, 17) — all
+# cheap aggregations/joins, recomputed on every request/download rather
+# than persisted, same as EAD Consolidation and SQL Analytics.
 # ══════════════════════════════════════════════════════════════════════════════
 _SUMMARY_TITLES = {
     "product-recon": "Product-wise EAD Reconciliation",
     "system-product-minmax": "System x Product Name Min/Max Summary",
     "month-wise-disbursal": "Month-wise Disbursal Summary",
     "npa-flag-changes": "Multi-Month NPA Flag Date Changes",
+    "ucid-cross-check": "UCID Cross-Check vs Customer Master",
+    "written-off-fresh-disbursal": "Fresh Disbursal to Written-Off Customer",
+}
+
+# key -> (report_type of the second dataset needed, human label for the error)
+_CROSS_DATASET_KEYS = {
+    "ucid-cross-check": ("customer_master", "Customer Master"),
+    "written-off-fresh-disbursal": ("technical_writeoff", "Technical Writeoff"),
 }
 
 
-def _build_summary_df(key: str, df: pl.DataFrame, fy_start_year: int, include_state: bool) -> pl.DataFrame:
+def _build_summary_df(
+    key: str, engagement_id: str | None, ead_df: pl.DataFrame, fy_start_year: int, include_state: bool
+) -> pl.DataFrame:
     if key == "product-recon":
-        return product_ead_reconciliation_summary(df)
+        return product_ead_reconciliation_summary(ead_df)
     if key == "system-product-minmax":
-        return system_product_minmax_summary(df)
+        return system_product_minmax_summary(ead_df)
     if key == "month-wise-disbursal":
-        return month_wise_disbursal_summary(df, fy_start_year, include_state)
+        return month_wise_disbursal_summary(ead_df, fy_start_year, include_state)
     if key == "npa-flag-changes":
-        return npa_flag_date_change_report(df)
+        return npa_flag_date_change_report(ead_df)
+    if key in _CROSS_DATASET_KEYS:
+        aux_report_type, aux_label = _CROSS_DATASET_KEYS[key]
+        aux_df = store.build_consolidated_df(engagement_id, aux_report_type)
+        if aux_df.is_empty():
+            raise HTTPException(status_code=400, detail=f"No ready {aux_label} files found for this engagement.")
+        if key == "ucid-cross-check":
+            return ucid_cross_check_report(ead_df, aux_df)
+        return written_off_customer_fresh_disbursal_report(ead_df, aux_df)
     raise HTTPException(status_code=404, detail="Unknown summary report")
 
 
@@ -187,7 +217,7 @@ async def ead_summary_run(
         raise HTTPException(status_code=400, detail="No ready EAD files found for this engagement.")
 
     fy_start_year = fy_start_year or _current_fy_start_year()
-    result = _build_summary_df(key, df, fy_start_year, include_state)
+    result = _build_summary_df(key, engagement_id, df, fy_start_year, include_state)
 
     return templates.TemplateResponse(
         request=request,
@@ -217,7 +247,7 @@ async def ead_summary_download(
         raise HTTPException(status_code=400, detail="No ready EAD files found for this engagement.")
 
     fy_start_year = fy_start_year or _current_fy_start_year()
-    result = _build_summary_df(key, df, fy_start_year, include_state)
+    result = _build_summary_df(key, engagement_id, df, fy_start_year, include_state)
 
     csv_bytes = result.write_csv().encode("utf-8")
     filename = f"EAD_{key.replace('-', '_')}.csv"
