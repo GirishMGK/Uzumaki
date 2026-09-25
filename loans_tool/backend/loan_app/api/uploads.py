@@ -21,7 +21,12 @@ from fcmr_core.catalog import store
 from fcmr_core.config import settings
 from fcmr_core.ingestion.pipeline import ingest_csv, sniff_headers
 from fcmr_core.logging_setup import get_logger
-from fcmr_core.schemas.loader import available_report_types, get_canonical_fields, get_schema
+from fcmr_core.schemas.loader import (
+    available_report_types,
+    best_raw_for_canonical_from_scores,
+    get_canonical_fields,
+    get_schema,
+)
 
 logger = get_logger("loan_app.processing")
 
@@ -399,15 +404,19 @@ async def map_columns_form(request: Request, upload_id: str):
     # canonical -> raw_header, for the UI's per-canonical dropdown default.
     # Not a naive inversion of `suggested`: when two raw headers both
     # fuzzy-match the same canonical (e.g. a real file's own "_Hist"/"_Old"
-    # variant of an exact-match column), best_raw_for_canonical() keeps the
-    # higher-scoring one rather than whichever was seen last -- otherwise
-    # the exact match gets left unmapped while the fuzzy variant is
-    # suggested in its place, and confirming that mapping later crashes
-    # ingestion (two columns renamed into the same name).
+    # variant of an exact-match column), best_raw_for_canonical_from_scores()
+    # keeps the higher-scoring one rather than whichever was seen last --
+    # otherwise the exact match gets left unmapped while the fuzzy variant
+    # is suggested in its place, and confirming that mapping later corrupts
+    # ingestion (two columns colliding on the same name). Built from the
+    # `suggested_with_scores` already computed above rather than calling
+    # schema.best_raw_for_canonical(raw_headers) (which would re-run the
+    # same fuzzy-match scoring pass, and its DB round trip for the
+    # threshold setting, a second time for no reason).
     if saved_profile:
         suggested_inverse = {canonical: raw_h for raw_h, canonical in suggested.items()}
     elif schema:
-        suggested_inverse = schema.best_raw_for_canonical(raw_headers)
+        suggested_inverse = best_raw_for_canonical_from_scores(suggested_with_scores)
     else:
         suggested_inverse = {}
 

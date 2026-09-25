@@ -33,7 +33,11 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from fcmr_core.catalog import store as loan_store  # noqa: E402
-from fcmr_core.schemas.loader import get_canonical_fields, get_schema  # noqa: E402
+from fcmr_core.schemas.loader import (  # noqa: E402
+    get_canonical_fields,
+    get_schema,
+    resolve_column_renames,
+)
 
 REPORT_TYPE = "ead_files"
 SYSTEM_CANONICAL = "system"
@@ -90,20 +94,17 @@ def _consolidate(frames: list[pl.DataFrame], filenames: list[str], mapping: dict
     tagged = []
     for df, filename in zip(frames, filenames):
         rename = {raw: canonical for raw, canonical in mapping.items() if raw in df.columns}
-        # Drop any rename whose target name is already a *different*,
-        # untouched column in this same file -- renaming into it would
-        # crash (DataFrame.rename's "column ... is duplicate"). Keeps the
-        # file's own native column and skips the conflicting mapping
-        # entry for this file only; a mis-suggested mapping is the usual
-        # cause (see SchemaMap.best_raw_for_canonical's docstring), which
-        # this also guards against even if a mapping was picked by hand.
-        rename = {
-            raw: canonical
-            for raw, canonical in rename.items()
-            if canonical not in df.columns or canonical == raw
-        }
-        if rename:
-            df = df.rename(rename)
+        # Resolve to a collision-free rename covering every column in this
+        # file, not just the ones `mapping` touches -- a rename target
+        # that happens to already be a *different*, untouched column's own
+        # name would otherwise crash DataFrame.rename ("column ... is
+        # duplicate"). See resolve_column_renames for the resolution
+        # policy (explicit renames win; the loser gets a numeric suffix,
+        # never silently dropped or overwritten).
+        final_names = resolve_column_renames(df.columns, rename)
+        effective_rename = {raw: final for raw, final in final_names.items() if final != raw}
+        if effective_rename:
+            df = df.rename(effective_rename)
         df = df.with_columns(pl.lit(filename).alias("_source_file"))
         tagged.append(df)
 
