@@ -1716,6 +1716,65 @@ def test_ead_consolidate_parquet_download_round_trips():
                 del sys.modules[mod]
 
 
+def test_ead_download_routes_send_full_body_not_chunked():
+    """
+    Regression guard for a real reported bug: EAD downloads (Parquet
+    especially) were painfully slow -- ~500 KB/s for a same-machine
+    localhost transfer of an already-fully-buffered response. Root cause:
+    StreamingResponse(io.BytesIO(data), ...) iterates the BytesIO object,
+    and Python's file-iterator protocol splits it on newline bytes
+    (0x0A) -- for binary data like Parquet/Excel, that's roughly one
+    "chunk" every 256 bytes by pure chance, so a 150MB file became
+    ~580,000 tiny ASGI send() calls. There's no actual streaming benefit
+    to lose here since the full content is always built in memory first
+    anyway, so the fix is a plain Response with the complete bytes.
+
+    A chunked/streaming response never sets Content-Length (it can't know
+    the total size upfront); a plain Response always does. That header's
+    presence is the black-box signal this test checks, on data specifically
+    engineered to contain many embedded newline bytes -- the exact
+    pathological case that made this slow.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import polars as pl
+        from fastapi.testclient import TestClient
+        from loan_app.api import ead_consolidate
+
+        # A string containing lots of "\n" bytes, so any accidental
+        # BytesIO-line-iteration would fragment this into many chunks.
+        newline_heavy = "\n".join(f"row{i}" for i in range(5000))
+        expected = pl.DataFrame({"loan_id": ["L1"], "notes": [newline_heavy]})
+        ead_consolidate._build_consolidated_df = lambda engagement_id: expected
+
+        with TestClient(loan_main.app) as client:
+            for path in ("csv", "parquet", "excel"):
+                resp = client.get(f"/dashboard/ead/download/{path}")
+                assert resp.status_code == 200
+                assert "content-length" in resp.headers, (
+                    f"/{path} download has no Content-Length -- looks chunked/streamed again"
+                )
+                assert int(resp.headers["content-length"]) == len(resp.content)
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── loan_app/api/sql_analytics.py: ad-hoc SQL over ingested reports ────────
 def test_sql_analytics_runs_real_query_across_report_types():
     """
