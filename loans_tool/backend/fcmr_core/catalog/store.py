@@ -12,6 +12,35 @@ import polars as pl
 
 from fcmr_core.config import apply_duckdb_limits, settings
 
+# Seed data for system_type_map: the known System -> Product Type mapping
+# used to tag every EAD/Technical Writeoff row with a "product_helper"
+# column at ingest time. Exact-match only (no case/separator
+# normalization) -- these are literal values from the source extractor.
+_DEFAULT_SYSTEM_TYPE_MAP: dict[str, str] = {
+    "OneLMS_TW": "TW",
+    "OneLMS_TA": "TW_TA",
+    "OneLMS_HL": "HL",
+    "ONELMS_HDA": "HL",
+    "ONELMS-BL": "BL",
+    "SCF": "BL",
+    "OneLMS_CL": "CL",
+    "ONELMS_CL_LP": "LP",
+    "PHPE_LP": "LP",
+    "SUPR_LP": "LP",
+    "AMZN_LP": "LP",
+    "CRED_LP": "LP",
+    "GPAY_LP": "LP",
+    "ONELMS MFI": "ML",
+    "MEL": "MEL",
+    "ONELMS-FARM": "FARM",
+    "OneLMS_FARM_TA": "FARM_TA",
+    "Rural LAP": "Rural LAP",
+    "WRF_Trader": "WRF_Trader",
+    "GOLD_LOAN": "GOLD_LOAN",
+    "DFOCUS": "DFOCUS",
+    "FEDERAL_BANK": "FEDERAL_BANK",
+}
+
 
 def _conn() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(str(settings.catalog_path))
@@ -136,6 +165,26 @@ def init_catalog() -> None:
                 updated_at      TEXT NOT NULL
             )
         """)
+
+        # System -> Product Type lookup (EAD Files / Technical Writeoff
+        # "system" column -> the Product Helper tag). Global, not
+        # engagement-scoped: these are fixed loan-management-system names
+        # used the same way across engagements, not client-specific.
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS system_type_map (
+                system_value    TEXT PRIMARY KEY,
+                type_value      TEXT NOT NULL,
+                created_at      TEXT NOT NULL
+            )
+        """)
+        for system_value, type_value in _DEFAULT_SYSTEM_TYPE_MAP.items():
+            try:
+                con.execute(
+                    "INSERT INTO system_type_map (system_value, type_value, created_at) VALUES (?, ?, ?)",
+                    [system_value, type_value, _now()],
+                )
+            except Exception:
+                pass  # Already seeded
 
         # Create a default engagement for existing uploads
         try:
@@ -579,6 +628,35 @@ def list_settings() -> dict[str, str]:
     with _conn() as con:
         rows = con.execute("SELECT key, value FROM settings ORDER BY key").fetchall()
     return {row[0]: row[1] for row in rows}
+
+
+def get_system_type_map() -> dict[str, str]:
+    """The full System -> Product Type lookup (seeded defaults plus any
+    manually-added mappings), used to tag EAD/Technical Writeoff rows with
+    a product_helper column at ingest time."""
+    with _conn() as con:
+        rows = con.execute("SELECT system_value, type_value FROM system_type_map").fetchall()
+    return dict(rows)
+
+
+def list_system_type_map() -> list[dict]:
+    """Same data as get_system_type_map(), ordered for display on the
+    Settings page."""
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT system_value, type_value FROM system_type_map ORDER BY system_value"
+        ).fetchall()
+    return [{"system_value": r[0], "type_value": r[1]} for r in rows]
+
+
+def set_system_type(system_value: str, type_value: str) -> None:
+    """Add or update one System -> Product Type mapping."""
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO system_type_map (system_value, type_value, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(system_value) DO UPDATE SET type_value=?, created_at=?",
+            [system_value, type_value, _now(), type_value, _now()],
+        )
 
 
 def init_settings() -> None:

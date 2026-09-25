@@ -14,6 +14,9 @@ from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+import duckdb
+import polars as pl
+
 from fcmr_core.catalog import store
 from fcmr_core.config import settings
 from fcmr_core.ingestion.pipeline import ingest_csv, sniff_headers
@@ -21,6 +24,11 @@ from fcmr_core.logging_setup import get_logger
 from fcmr_core.schemas.loader import available_report_types, get_canonical_fields, get_schema
 
 logger = get_logger("loan_app.processing")
+
+# Canonical field that feeds the Product Helper tag (see _tag_product_helper
+# and Settings -> System -> Product Type Mapping). Any report type whose
+# schema maps a raw header to this canonical gets checked/tagged.
+_SYSTEM_CANONICAL = "system"
 
 
 def _now() -> str:
@@ -53,6 +61,59 @@ def _find_matching_pending_uploads(upload: dict, header_signature: str) -> list[
     return matches
 
 
+def _distinct_raw_values(csv_path: Path, raw_header: str) -> list[str]:
+    """Distinct non-null values of one raw CSV column, read directly (the
+    file is still just mapping_pending at this point, no need to wait for
+    the full ingest to inspect it)."""
+    safe_header = raw_header.replace('"', '""')
+    with duckdb.connect() as con:
+        rows = con.execute(
+            f"""
+            SELECT DISTINCT "{safe_header}" FROM read_csv(
+                ?, auto_detect=true, ignore_errors=true, sample_size=10000, strict_mode=false
+            ) WHERE "{safe_header}" IS NOT NULL
+            """,
+            [str(csv_path)],
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _unmapped_system_values(upload: dict, user_mapping: dict[str, str]) -> list[str]:
+    """If this upload's mapping includes the `system` canonical field,
+    return whichever of its distinct raw values aren't in the persisted
+    System -> Product Type lookup yet (see Settings). Empty list if
+    `system` isn't mapped, or everything already resolves."""
+    raw_header = next((h for h, c in user_mapping.items() if c == _SYSTEM_CANONICAL), None)
+    if not raw_header:
+        return []
+    csv_path = Path(upload["csv_path"] or "")
+    if not csv_path.exists():
+        return []
+    known = store.get_system_type_map()
+    values = _distinct_raw_values(csv_path, raw_header)
+    return sorted({v for v in values if v not in known})
+
+
+def _tag_product_helper(parquet_path: Path) -> None:
+    """If this dataset has a `system` column (from the canonical mapping
+    above), add a `product_helper` column tagging each row with its
+    Product Type via the persisted System -> Type lookup. A value with no
+    match is left null rather than failing the file -- for a single
+    upload that's already impossible (do_map_columns blocks on any
+    unmapped value first), but a secondary file batch-applied via "apply
+    to matching" isn't re-checked individually, so it can still happen
+    there.
+    """
+    df = pl.read_parquet(parquet_path)
+    if _SYSTEM_CANONICAL not in df.columns:
+        return
+    mapping = store.get_system_type_map()
+    df = df.with_columns(
+        pl.col(_SYSTEM_CANONICAL).replace_strict(mapping, default=None).alias("product_helper")
+    )
+    df.write_parquet(parquet_path)
+
+
 def _ingest_and_mark_ready(
     upload: dict,
     user_mapping: dict[str, str],
@@ -71,6 +132,7 @@ def _ingest_and_mark_ready(
         )
 
     result = ingest_csv(csv_path, upload["report_type"], upload_id, user_mapping=user_mapping)
+    _tag_product_helper(result.parquet_path)
 
     store.store_upload_data(upload_id, result.parquet_path)
     csv_path.unlink(missing_ok=True)
@@ -356,6 +418,18 @@ async def do_map_columns(request: Request, upload_id: str):
         if apply_to_matching
         else []
     )
+
+    # Block on any System value this file has that isn't in the persisted
+    # System -> Product Type lookup yet, rather than silently tagging those
+    # rows with a null Product Helper -- add the mapping at Settings, then
+    # re-open this same mapping screen and confirm again.
+    unmapped_systems = _unmapped_system_values(upload, user_mapping)
+    if unmapped_systems:
+        return templates.TemplateResponse(
+            request=request,
+            name="unmapped_systems.html",
+            context={"upload": upload, "unmapped_systems": unmapped_systems},
+        )
 
     try:
         _ingest_and_mark_ready(upload, user_mapping, save_profile=True, username=username)
