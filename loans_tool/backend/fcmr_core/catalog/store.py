@@ -666,6 +666,40 @@ def set_system_type(system_value: str, type_value: str) -> None:
         )
 
 
+_EAD_DELAY_DEFAULT_KEY = "ead_sanction_disbursal_default_days"
+_EAD_DELAY_OVERRIDE_PREFIX = "ead_sanction_disbursal_days:"
+
+
+def get_ead_sanction_disbursal_thresholds() -> tuple[dict[str, int], int]:
+    """Per-Product-Helper day thresholds (plus the global default) for the
+    EAD "Sanction-to-Disbursal Delay" rule, stored in the generic settings
+    table rather than a dedicated one -- this is the same key/value store
+    Settings already uses, just with a key-prefix convention."""
+    all_settings = list_settings()
+    default_days = 30
+    if raw := all_settings.get(_EAD_DELAY_DEFAULT_KEY):
+        try:
+            default_days = int(raw)
+        except ValueError:
+            pass
+
+    overrides: dict[str, int] = {}
+    for key, value in all_settings.items():
+        if not key.startswith(_EAD_DELAY_OVERRIDE_PREFIX):
+            continue
+        try:
+            overrides[key[len(_EAD_DELAY_OVERRIDE_PREFIX) :]] = int(value)
+        except ValueError:
+            continue
+    return overrides, default_days
+
+
+def set_ead_sanction_disbursal_threshold(type_value: str | None, days: int) -> None:
+    """type_value=None sets the global default; otherwise a per-Product-Helper override."""
+    key = _EAD_DELAY_DEFAULT_KEY if type_value is None else f"{_EAD_DELAY_OVERRIDE_PREFIX}{type_value}"
+    set_setting(key, str(days))
+
+
 def init_settings() -> None:
     """Initialize default settings if they don't exist."""
     from fcmr_core.config import settings as config_settings

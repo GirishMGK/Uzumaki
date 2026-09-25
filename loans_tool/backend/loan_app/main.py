@@ -14,6 +14,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from loan_app.api import (
     auth,
     downloads,
+    ead_analytics,
     ead_consolidate,
     engagements,
     runs,
@@ -157,6 +158,9 @@ app.include_router(system.router, prefix="/api", tags=["system"])
 
 # EAD consolidation routes — require login
 app.include_router(ead_consolidate.router, prefix="", tags=["ead"])
+
+# EAD Analytics routes (EAD-only exception rules + summary reports) — require login
+app.include_router(ead_analytics.router, prefix="", tags=["ead-analytics"])
 
 # SQL Analytics routes — require login
 app.include_router(sql_analytics.router, prefix="", tags=["sql-analytics"])

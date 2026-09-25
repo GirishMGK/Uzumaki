@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}EAD Analytics — Loan Analytics{% endblock %}
+{% block page_title %}EAD Analytics{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard/ead/consolidate" class="btn btn-ghost" style="margin-left:auto;">← EAD Consolidation</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:920px; margin:0 auto;">
+
+  {% if ready_count == 0 %}
+  <div class="card empty-state">
+    <div class="empty-icon">📊</div>
+    <h2>No EAD Files Ready</h2>
+    <p>Upload and map at least one EAD file before running EAD analytics.</p>
+    <a href="/dashboard/upload" class="btn btn-primary" style="margin-top:12px;">Upload EAD File</a>
+  </div>
+  {% else %}
+
+  <div class="card" style="margin-bottom:8px;">
+    <div class="card-sub">{{ ready_count }} EAD file(s) mapped and ready — these checks run against all of them consolidated together, the same dataset EAD File Consolidation downloads.</div>
+  </div>
+
+  {# ── Exception Checks ── #}
+  <form method="post" action="/dashboard/analytics/ead/run">
+    <div class="card">
+      <div class="card-title">Exception Checks</div>
+      <div class="card-sub">Pick which checks to run. Each flags rows as an exception with a short reason.</div>
+
+      <div style="margin-top:14px; display:flex; flex-direction:column; gap:10px;">
+        {% for rule in row_rules %}
+        <label style="display:flex; align-items:center; gap:8px; font-size:13.5px;">
+          <input type="checkbox" name="rules" value="{{ rule.rule_id }}" checked>
+          {{ rule.label }}
+        </label>
+        {% endfor %}
+      </div>
+
+      <div style="margin-top:18px; padding-top:14px; border-top:1px solid var(--border);">
+        <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Sanction-to-Disbursal Delay threshold (days)</div>
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+          <span style="font-size:13px; width:160px;">Default (any Type not listed below)</span>
+          <input type="number" name="default_days" value="{{ default_days }}" min="0" class="input" style="width:100px;">
+        </div>
+        {% if type_thresholds %}
+        <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">Per-Product-Helper overrides:</div>
+        <div style="display:flex; flex-direction:column; gap:6px;">
+          {% for t in type_thresholds %}
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="hidden" name="type_names" value="{{ t.type }}">
+            <span style="font-size:13px; width:160px;">{{ t.type }}</span>
+            <input type="number" name="type_days" value="{{ t.days }}" min="0" class="input" style="width:100px;">
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="form-actions" style="margin-top:18px;">
+        <button type="submit" class="btn btn-primary">▶ Run Selected Checks</button>
+      </div>
+    </div>
+  </form>
+
+  {# ── Summary Reports ── #}
+  <div class="card">
+    <div class="card-title">Summary Reports</div>
+    <div class="card-sub">Aggregate views — not exception lists.</div>
+
+    <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
+      <form method="post" action="/dashboard/analytics/ead/summary/product-recon" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">Product-wise EAD Reconciliation</div>
+          <div style="font-size:12px; color:var(--muted);">Stage 1+2+3 vs EAD, and GBV + Interest components vs EAD, per product.</div>
+        </div>
+        <button type="submit" class="btn btn-ghost btn-sm">Run</button>
+      </form>
+
+      <form method="post" action="/dashboard/analytics/ead/summary/system-product-minmax" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">System x Product Name Min/Max</div>
+          <div style="font-size:12px; color:var(--muted);">Min/max Sanctioned Amount, Financial IRR, Original Tenure per (System, Product) pair.</div>
+        </div>
+        <button type="submit" class="btn btn-ghost btn-sm">Run</button>
+      </form>
+
+      <form method="post" action="/dashboard/analytics/ead/summary/month-wise-disbursal" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">Month-wise Disbursal Summary</div>
+          <div style="font-size:12px; color:var(--muted);">Amount &amp; count by month (Apr-Mar), by System + Product Helper.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <label style="font-size:12.5px; display:flex; align-items:center; gap:5px;">
+            FY starting
+            <input type="number" name="fy_start_year" value="{{ current_year }}" class="input" style="width:80px;">
+          </label>
+          <label style="font-size:12.5px; display:flex; align-items:center; gap:5px;">
+            <input type="checkbox" name="include_state" value="true"> Include State
+          </label>
+          <button type="submit" class="btn btn-ghost btn-sm">Run</button>
+        </div>
+      </form>
+
+      <form method="post" action="/dashboard/analytics/ead/summary/npa-flag-changes" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">Multi-Month NPA Flag Date Changes</div>
+          <div style="font-size:12px; color:var(--muted);">Flags a loan whose NPA Flag Date changed between two separately-uploaded EAD files (by Business Date).</div>
+        </div>
+        <button type="submit" class="btn btn-ghost btn-sm">Run</button>
+      </form>
+    </div>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}

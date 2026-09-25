@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}EAD Analytics Result — Loan Analytics{% endblock %}
+{% block page_title %}EAD Analytics{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard/analytics/ead" class="btn btn-ghost" style="margin-left:auto;">← Back</a>
+{% endblock %}
+
+{% block content %}
+
+{% set pass_count  = summary.status_counts.get("OK", 0) %}
+{% set warn_count  = summary.status_counts.get("WARN", 0) %}
+{% set err_count   = summary.status_counts.get("ERROR", 0) %}
+{% set pass_rate   = ((pass_count / summary.total) * 100) | round(1) if summary.total > 0 else 0 %}
+
+<div class="stat-row">
+  <div class="stat-card">
+    <div class="stat-label">Total Records</div>
+    <div class="stat-value">{{ "{:,}".format(summary.total) }}</div>
+    <div class="stat-meta">processed</div>
+  </div>
+  <div class="stat-card stat-ok">
+    <div class="stat-label">Pass Rate</div>
+    <div class="stat-value">{{ pass_rate }}%</div>
+    <div class="stat-meta">{{ "{:,}".format(pass_count) }} records OK</div>
+  </div>
+  <div class="stat-card stat-warn">
+    <div class="stat-label">Warnings</div>
+    <div class="stat-value">{{ "{:,}".format(warn_count) }}</div>
+    <div class="stat-meta">records with exceptions</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Errors</div>
+    <div class="stat-value">{{ "{:,}".format(err_count) }}</div>
+    <div class="stat-meta">records with critical issues</div>
+  </div>
+</div>
+
+{% if donut_svg and bar_svg %}
+<div class="card" style="padding:20px; margin-bottom:16px;">
+  <div class="card-title" style="margin-bottom:16px;">Exception Summary Charts</div>
+  <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:flex-start;">
+    <div style="flex-shrink:0;">{{ donut_svg | safe }}</div>
+    <div style="flex-grow:1; min-width:350px; overflow-x:auto;">{{ bar_svg | safe }}</div>
+  </div>
+</div>
+{% endif %}
+
+{% if summary.all_codes %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:16px 20px 14px; border-bottom:1px solid var(--border);">
+    <div class="card-title" style="margin-bottom:0;">Exception Codes ({{ summary.all_codes | length }})</div>
+  </div>
+  <div style="max-height:600px; overflow-y:auto;">
+    <table class="data-table" style="margin-bottom:0;">
+      <thead style="position:sticky; top:0; background:var(--bg); z-index:1;">
+        <tr>
+          <th>Exception Code</th>
+          <th style="text-align:right;">Count</th>
+          <th style="text-align:right; width:120px;">% of Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in summary.all_codes %}
+        {% set pct = (item["count"] / summary.total * 100) if summary.total > 0 else 0 %}
+        <tr>
+          <td class="mono">{{ item["exception_code"] }}</td>
+          <td class="mono right">{{ "{:,}".format(item["count"]) }}</td>
+          <td class="mono right">{{ "%.1f"|format(pct) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Download Results</div>
+  <div class="form-actions" style="margin-top:8px; gap:12px;">
+    <a href="/dashboard/analytics/ead/run/{{ run_id }}/download/wide" class="btn btn-primary">⬇ Download Wide CSV</a>
+    <a href="/dashboard/analytics/ead/run/{{ run_id }}/download/long" class="btn btn-ghost">⬇ Download Long CSV</a>
+  </div>
+</div>
+
+{% endblock %}

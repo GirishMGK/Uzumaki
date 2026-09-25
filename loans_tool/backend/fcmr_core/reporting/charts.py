@@ -157,7 +157,26 @@ def build_bar_chart(
     sorted_items = sorted(exception_counts.items(), key=lambda x: x[1], reverse=True)[:top_n]
     max_count = sorted_items[0][1] if sorted_items else 1
 
-    margin_left = 200
+    # Labels are right-aligned (text-anchor: end) ending at margin_left, so a
+    # label wider than a fixed margin overflows past x=0 and gets clipped by
+    # the SVG viewBox -- invisible, not just visually truncated. A fixed
+    # 200px margin was fine for Customer Master's short codes ("PAN_INVALID")
+    # but EAD's longer, more descriptive codes ("MATURITY_BEFORE_DISBURSAL_
+    # OR_SANCTION") silently disappeared entirely. Size the margin to the
+    # longest label actually being rendered (~6.3px/char at this 11px font),
+    # capped so a pathological label can't eat the whole chart, and truncate
+    # anything still too long for that cap.
+    # Pixel-per-char is an estimate, and with no font-family set the SVG
+    # falls back to the browser's default serif font (wider than a typical
+    # sans-serif guess) -- pin a sans-serif font explicitly below so this
+    # estimate stays accurate, and pad generously since it's still a guess.
+    char_px = 7.2
+    max_label_len = max(len(code) for code, _ in sorted_items)
+    margin_left = min(360, max(140, 30 + max_label_len * char_px))
+    max_chars = int((margin_left - 20) / char_px)
+    sorted_items = [
+        (code if len(code) <= max_chars else code[: max_chars - 1] + "…", count) for code, count in sorted_items
+    ]
     margin_right = 20
     margin_top = 30
     margin_bottom = 30
@@ -168,6 +187,7 @@ def build_bar_chart(
     svg_lines = [
         f'<svg viewBox="0 0 {width} {height}" xmlns="http://www.w3.org/2000/svg">',
         "<style>",
+        "text { font-family: Arial, Helvetica, sans-serif; }",
         ".bar-label { font-size: 11px; fill: #374151; text-anchor: end; }",
         ".bar-value { font-size: 11px; fill: #1f2937; font-weight: bold; }",
         ".chart-title { font-size: 14px; font-weight: bold; fill: #1f2937; }",
