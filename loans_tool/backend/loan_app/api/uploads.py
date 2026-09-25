@@ -396,8 +396,20 @@ async def map_columns_form(request: Request, upload_id: str):
 
     canonical_fields = get_canonical_fields(upload["report_type"])
 
-    # Invert suggested map: canonical -> raw_header (for the new UI direction)
-    suggested_inverse = {canonical: raw_h for raw_h, canonical in suggested.items()}
+    # canonical -> raw_header, for the UI's per-canonical dropdown default.
+    # Not a naive inversion of `suggested`: when two raw headers both
+    # fuzzy-match the same canonical (e.g. a real file's own "_Hist"/"_Old"
+    # variant of an exact-match column), best_raw_for_canonical() keeps the
+    # higher-scoring one rather than whichever was seen last -- otherwise
+    # the exact match gets left unmapped while the fuzzy variant is
+    # suggested in its place, and confirming that mapping later crashes
+    # ingestion (two columns renamed into the same name).
+    if saved_profile:
+        suggested_inverse = {canonical: raw_h for raw_h, canonical in suggested.items()}
+    elif schema:
+        suggested_inverse = schema.best_raw_for_canonical(raw_headers)
+    else:
+        suggested_inverse = {}
 
     return templates.TemplateResponse(
         request=request,

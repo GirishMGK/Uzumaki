@@ -2649,3 +2649,187 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── fcmr_core/schemas/loader.py: best_raw_for_canonical dedup ───────────────
+def test_best_raw_for_canonical_prefers_exact_match_over_near_duplicate():
+    """
+    Regression guard for a real crash: a file with both
+    `zero_90_days_interest` (an exact alias match) and
+    `zero_90_days_interest_Hist` (a "_Hist" variant that also fuzzy-matches
+    the same canonical, score 0.89) caused the naive
+    {canonical: raw for raw, (canonical, _) in scored.items()} inversion
+    to keep whichever header was seen *last* -- in the real file, that was
+    the fuzzy "_Hist" variant, so the exact match was suggested as "Skip"
+    while "_Hist" got suggested for that canonical instead. Confirming
+    that mapping later crashed ingestion with polars'
+    "column ... is duplicate", since the untouched exact-match column was
+    still sitting under that exact name.
+    """
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        from fcmr_core.catalog import store as catalog_store
+        from fcmr_core.schemas.loader import get_schema
+
+        catalog_store.init_catalog()
+        schema = get_schema("ead_files")
+        raw_headers = ["zero_90_days_interest", "zero_90_days_interest_Hist", "zero_90_int_Final"]
+
+        scored = schema.map_headers_with_scores(raw_headers)
+        # Confirm the real-world scoring collision still reproduces as expected.
+        assert scored["zero_90_days_interest"][0] == "zero_90_days_interest"
+        assert scored["zero_90_days_interest_Hist"][0] == "zero_90_days_interest"
+
+        best = schema.best_raw_for_canonical(raw_headers)
+        assert best["zero_90_days_interest"] == "zero_90_days_interest"  # the exact match wins
+        assert best["zero_90_int_final"] == "zero_90_int_Final"
+    finally:
+        sys.path.remove(backend_dir)
+
+
+# ── ead_consolidator.py: colliding rename no longer crashes ─────────────────
+def test_ead_consolidator_rejects_a_rename_that_would_duplicate_a_column():
+    """
+    End-to-end regression guard for the reported crash: consolidating a
+    file that has both an exact-match column and a near-duplicate
+    ("_Hist") column must not raise polars' DuplicateError, whichever
+    mapping ends up selected. Covers both directions:
+    1. The (now fixed) auto-suggested mapping never picks the wrong one.
+    2. Even if a mapping were hand-picked into the colliding shape,
+       _consolidate()'s own guard drops the conflicting rename instead of
+       crashing, keeping the native column's data intact.
+    """
+    sys.path.insert(0, REPO_ROOT)
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        import polars as pl
+
+        from fcmr_core.catalog import store as catalog_store
+
+        catalog_store.init_catalog()
+
+        import ead_consolidator as ec
+
+        df = pl.DataFrame(
+            {
+                "loan_id": ["L1"],
+                "zero_90_days_interest": [111.0],
+                "zero_90_days_interest_Hist": [999.0],
+            }
+        )
+
+        suggested = ec._suggested_mapping(df.columns)
+        user_mapping = {raw: canonical for canonical, raw in suggested.items()}
+        assert user_mapping["zero_90_days_interest"] == "zero_90_days_interest"
+
+        consolidated = ec._consolidate([df], ["f.csv"], user_mapping)
+        assert consolidated["zero_90_days_interest"].to_list() == [111.0]
+
+        # Direction 2: force the exact collision shape and confirm the
+        # guard (not a crash) is what handles it.
+        bad_mapping = {"zero_90_days_interest_Hist": "zero_90_days_interest"}
+        consolidated_bad = ec._consolidate([df], ["f.csv"], bad_mapping)
+        assert consolidated_bad["zero_90_days_interest"].to_list() == [111.0]
+        assert "zero_90_days_interest_Hist" in consolidated_bad.columns
+    finally:
+        sys.path.remove(backend_dir)
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "ead_consolidator":
+                del sys.modules[mod]
+
+
+# ── fcmr_core/ingestion/pipeline.py: same guard in the real ingest path ─────
+def test_ingest_csv_rejects_a_rename_that_would_duplicate_a_column():
+    """Same collision, through the real ingest_csv() path the main Loan
+    Analytics app uses -- confirms the resulting Parquet has the native
+    column's real data under its own name, not DuckDB's silent "_1"-suffix
+    disambiguation (which would make the fuzzy-matched column's data
+    disappear from every canonical-field lookup with no error at all)."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        import tempfile
+        from pathlib import Path
+
+        import polars as pl
+
+        from fcmr_core.ingestion.pipeline import ingest_csv
+
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = Path(tmp) / "f.csv"
+            csv_path.write_text(
+                "loan_id,zero_90_days_interest,zero_90_days_interest_Hist\nL1,111,999\n",
+                encoding="utf-8",
+            )
+
+            # The colliding mapping a bad auto-suggest (or a manual pick)
+            # could produce: renames the _Hist column onto the name the
+            # native column already has.
+            bad_mapping = {"zero_90_days_interest_Hist": "zero_90_days_interest"}
+            result = ingest_csv(csv_path, "ead_files", user_mapping=bad_mapping)
+
+            df = pl.read_parquet(result.parquet_path)
+            assert df.columns.count("zero_90_days_interest") == 1
+            assert df["zero_90_days_interest"].to_list() == [111]
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_map_columns_page_suggests_exact_match_not_near_duplicate():
+    """
+    Real functional check of the GET /map-columns screen for a file with
+    the colliding-headers shape: the rendered <select> for canonical field
+    `zero_90_days_interest` must default to the exact-match raw header
+    (`selected` on its own <option>), not the "_Hist" near-duplicate --
+    confirming the fix reaches the actual UI a user would confirm, not
+    just the underlying schema helper.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        csv_bytes = b"loan_id,zero_90_days_interest,zero_90_days_interest_Hist\nL1,111,999\n"
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("collision.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            upload_id = next(
+                u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "collision.csv"
+            )
+            resp = client.get(f"/dashboard/uploads/{upload_id}/map-columns")
+            assert resp.status_code == 200
+            # The exact-match option for the zero_90_days_interest row is
+            # the one marked selected -- not the "_Hist" variant.
+            row_start = resp.text.index('data-canonical="zero_90_days_interest"')
+            row_html = resp.text[row_start : row_start + 800]
+            assert '<option value="zero_90_days_interest" data-header="zero_90_days_interest" selected>' in row_html
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
