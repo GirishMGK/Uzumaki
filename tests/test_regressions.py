@@ -2509,3 +2509,143 @@ def test_parquet_tool_removed_and_ead_consolidator_registered():
     # sidebar nav dict -- it's the first title to appear in each.
     assert home_src.index('"title": "Loan Analytics"') < home_src.index('"title": "EAD Consolidator"')
     assert home_src.index('"Loan Analytics": st.Page') < home_src.index('"EAD Consolidator": st.Page')
+
+
+def test_ead_consolidator_expands_zip_and_bare_csv_uploads():
+    """Regression guard for "select a folder or zip files, 2GB per file":
+    a .zip in the upload list is extracted in place (every .csv inside it
+    becomes its own entry, non-.csv entries ignored) and a bare .csv passes
+    through unchanged -- both end up as flat (filename, csv_bytes) pairs
+    ready for _consolidate(), regardless of which form they arrived in.
+    """
+    import io
+    import zipfile
+    from dataclasses import dataclass
+
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import ead_consolidator as ec
+
+        @dataclass
+        class _FakeUpload:
+            name: str
+            _data: bytes
+
+            def getvalue(self) -> bytes:
+                return self._data
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("folder/a.csv", "loan_id\nL1\n")
+            zf.writestr("folder/b.csv", "loan_id\nL2\n")
+            zf.writestr("folder/readme.txt", "not a csv")
+
+        uploads = [
+            _FakeUpload("batch.zip", zip_buf.getvalue()),
+            _FakeUpload("standalone.csv", b"loan_id\nL3\n"),
+        ]
+
+        expanded = ec._expand_uploads(uploads)
+        names = sorted(name for name, _ in expanded)
+        assert names == ["a.csv", "b.csv", "standalone.csv"]
+        assert dict(expanded)["a.csv"] == b"loan_id\nL1\n"
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "ead_consolidator":
+                del sys.modules[mod]
+
+
+def test_launcher_and_streamlit_config_allow_2gb_uploads():
+    """Regression guard: EAD exports can be up to 2 GB each, so both the
+    packaged app's launch flags and the dev-mode .streamlit/config.toml
+    need to actually raise Streamlit's default 200MB upload cap, not just
+    the ead_consolidator.py UI copy claiming they do."""
+    with open(os.path.join(REPO_ROOT, "launcher.py"), encoding="utf-8") as f:
+        launcher_src = f.read()
+    assert "--server.maxUploadSize=2048" in launcher_src
+
+    config_path = os.path.join(REPO_ROOT, ".streamlit", "config.toml")
+    assert os.path.exists(config_path)
+    with open(config_path, encoding="utf-8") as f:
+        config_src = f.read()
+    assert "maxUploadSize" in config_src and "2048" in config_src
+
+
+# ── loan_app/api/uploads.py: accept Excel/Parquet, not just CSV, up to 5GB ──
+def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
+    """
+    Regression guard: the main Loan Analytics upload screen only accepted
+    .csv/.zip before -- real EAD exports sometimes arrive as .xlsx or
+    .parquet directly. Both get converted to CSV internally (so the rest
+    of the pipeline -- column mapping, ingestion, Product Helper tagging
+    -- is unchanged) and end up ingestible exactly like a native CSV
+    upload of the same data would. Also checks the 5 GB limit (up from
+    2 GB) is what's actually configured, not just claimed in the UI copy.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("openpyxl")
+    pytest.importorskip("polars")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import io
+        import json as json_mod
+
+        import openpyxl
+        import polars as pl
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+        from fcmr_core.config import settings as fcmr_settings
+
+        assert fcmr_settings.max_upload_bytes == 5 * 1024**3
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["loan_id", "DrsPOS"])
+        ws.append(["LN0001", 1000])
+        xlsx_buf = io.BytesIO()
+        wb.save(xlsx_buf)
+
+        parquet_buf = io.BytesIO()
+        pl.DataFrame({"loan_id": ["LN0002"], "DrsPOS": [2000]}).write_parquet(parquet_buf)
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[
+                    (
+                        "files",
+                        (
+                            "batch_a.xlsx",
+                            xlsx_buf.getvalue(),
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        ),
+                    ),
+                    ("files", ("batch_b.parquet", parquet_buf.getvalue(), "application/octet-stream")),
+                ],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            uploads = {u["filename"]: u for u in catalog_store.list_uploads()}
+            # Converted to CSV filenames, and both landed as real, mappable uploads.
+            assert uploads["batch_a.csv"]["status"] == "mapping_pending"
+            assert uploads["batch_b.csv"]["status"] == "mapping_pending"
+            assert json_mod.loads(uploads["batch_a.csv"]["sniffed_headers"]) == ["loan_id", "DrsPOS"]
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]

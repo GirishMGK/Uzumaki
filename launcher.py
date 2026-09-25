@@ -107,6 +107,7 @@ def run_app(port: int | None = None) -> None:
         "--server.headless=true",
         f"--server.port={port}",
         "--server.fileWatcherType=none",
+        "--server.maxUploadSize=2048",  # 2 GB per file (EAD exports can be that large)
         "--browser.gatherUsageStats=false",
         "--global.developmentMode=false",
     ]
