@@ -18,13 +18,12 @@ persist or corrupt even if it tries a DDL/DML statement.
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import duckdb
 import polars as pl
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from fcmr_core.catalog import store
@@ -121,8 +120,8 @@ async def sql_analytics_export(request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     csv_bytes = result.write_csv().encode("utf-8")
-    return StreamingResponse(
-        io.BytesIO(csv_bytes),
+    return Response(
+        content=csv_bytes,
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="query_result.csv"'},
     )

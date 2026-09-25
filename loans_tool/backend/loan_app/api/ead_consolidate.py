@@ -8,7 +8,7 @@ from pathlib import Path
 
 import polars as pl
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from fcmr_core.catalog import store
@@ -57,8 +57,8 @@ async def ead_download_csv(request: Request):
     csv_bytes = df.write_csv().encode("utf-8")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"EAD_Consolidated_{timestamp}.csv"
-    return StreamingResponse(
-        io.BytesIO(csv_bytes),
+    return Response(
+        content=csv_bytes,
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -73,12 +73,11 @@ async def ead_download_parquet(request: Request):
 
     buf = io.BytesIO()
     df.write_parquet(buf)
-    buf.seek(0)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"EAD_Consolidated_{timestamp}.parquet"
-    return StreamingResponse(
-        buf,
+    return Response(
+        content=buf.getvalue(),
         media_type="application/octet-stream",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -149,12 +148,11 @@ async def ead_download_excel(request: Request):
 
     buf = io.BytesIO()
     wb.save(buf)
-    buf.seek(0)
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     filename = f"EAD_Consolidated_{timestamp}.xlsx"
-    return StreamingResponse(
-        buf,
+    return Response(
+        content=buf.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
