@@ -2548,6 +2548,90 @@ def test_ead_consolidator_maps_consolidates_and_tags_product_helper():
                 del sys.modules[mod]
 
 
+def test_ead_consolidator_retires_uploader_widget_to_avoid_memory_error():
+    """Regression guard for a real production crash: MemoryError raised
+    inside Streamlit's own st.file_uploader registration (copy.deepcopy of
+    the widget's buffered value), reported after consolidating a large
+    multi-file batch. Streamlit deep-copies a widget's current value on
+    every script rerun for its own change-detection bookkeeping; for a
+    many-GB batch of EAD files sitting in one long-lived file_uploader,
+    every later rerun (Confirm Mapping, saving a System Type mapping,
+    Start Over, ...) re-duplicated the whole payload and eventually
+    exhausted memory. The fix: capture the uploaded bytes into a plain
+    session_state key (never deep-copied by that mechanism) exactly once,
+    then rotate the uploader's `key` so later reruns register an empty
+    widget instead of the huge one. This checks the source for that
+    pattern rather than driving a full Streamlit rerun cycle, since
+    AppTest cannot simulate a real multi-rerun file_uploader session.
+    """
+    with open(os.path.join(REPO_ROOT, "ead_consolidator.py"), encoding="utf-8") as f:
+        src = f.read()
+    assert 'st.session_state.get("ec_uploader_gen"' in src
+    assert 'key=f"ec_uploader_{uploader_gen}"' in src
+    assert 'st.session_state["ec_raw_uploads"] = [(f.name, f.getvalue()) for f in new_uploads]' in src
+    assert 'st.session_state["ec_uploader_gen"] = uploader_gen + 1' in src
+    # The uploader widget's own return value must not be read again for
+    # downstream processing -- only the plain session_state copy should be.
+    assert 'raw_uploads = st.session_state.get("ec_raw_uploads")' in src
+
+
+def test_ead_consolidator_download_buttons_survive_excel_row_limit():
+    """Regression guard: consolidating enough rows to exceed Excel's
+    1,048,576-rows-per-sheet limit used to make to_excel() raise inside a
+    single build pass shared with CSV/Parquet, killing the whole script
+    before any of the three download buttons rendered -- so a real
+    23-file/8.8M-row consolidation showed *no* download option at all,
+    even though CSV/Parquet would have been fine. _build_downloads()
+    builds each format independently: Excel is skipped with a clear
+    reason instead of raising, and CSV/Parquet are still produced.
+    """
+    pytest.importorskip("polars")
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import polars as pl
+
+        import ead_consolidator as ec
+
+        small = pl.DataFrame({"loan_id": ["L1", "L2"], "ead": [10.0, 20.0]})
+        small_downloads = ec._build_downloads(small)
+        assert small_downloads["csv"]["error"] is None
+        assert small_downloads["csv"]["data"]
+        assert small_downloads["excel"]["skipped_reason"] is None
+        assert small_downloads["excel"]["error"] is None
+        assert small_downloads["excel"]["data"]
+        assert small_downloads["parquet"]["error"] is None
+        assert small_downloads["parquet"]["data"]
+
+        big = pl.DataFrame({"loan_id": ["L1"] * (ec.EXCEL_ROW_LIMIT + 1)})
+        big_downloads = ec._build_downloads(big)
+        assert big_downloads["excel"]["skipped_reason"] is not None
+        assert big_downloads["excel"]["data"] is None
+        assert big_downloads["excel"]["error"] is None
+        # CSV and Parquet must still succeed even though Excel was skipped.
+        assert big_downloads["csv"]["error"] is None
+        assert big_downloads["csv"]["data"]
+        assert big_downloads["parquet"]["error"] is None
+        assert big_downloads["parquet"]["data"]
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "ead_consolidator":
+                del sys.modules[mod]
+
+
+def test_ead_consolidator_mapping_form_places_label_beside_dropdown():
+    """Regression guard: the ~45-field mapping form used to stack each
+    field's label above its dropdown (st.selectbox(label, ...) with the
+    default visible label), making the form very tall to scroll through.
+    It should instead put the label and the dropdown side by side via
+    st.columns, with the widget's own label collapsed so it isn't shown
+    twice."""
+    with open(os.path.join(REPO_ROOT, "ead_consolidator.py"), encoding="utf-8") as f:
+        src = f.read()
+    assert 'label_col, field_col = st.columns([1, 2])' in src
+    assert 'label_visibility="collapsed"' in src
+
+
 def test_parquet_tool_removed_and_ead_consolidator_registered():
     """Parquet Tool was retired in favor of EAD Consolidator; guards
     against either the old files coming back or the new tool being

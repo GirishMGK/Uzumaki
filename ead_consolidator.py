@@ -50,23 +50,31 @@ def _read_csv(csv_bytes: bytes) -> pl.DataFrame:
     return pl.read_csv(csv_bytes, infer_schema_length=10000, ignore_errors=True)
 
 
+def _expand_named_bytes(named_bytes: list[tuple[str, bytes]]) -> list[tuple[str, bytes]]:
+    """Same expansion as _expand_uploads, but operating on plain
+    (filename, bytes) pairs instead of Streamlit UploadedFile objects --
+    used once the raw bytes have already been pulled out of the
+    file_uploader widget and into our own session_state (see render())."""
+    expanded: list[tuple[str, bytes]] = []
+    for name, data in named_bytes:
+        if name.lower().endswith(".zip"):
+            with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                for info in zf.infolist():
+                    if info.is_dir() or not info.filename.lower().endswith(".csv"):
+                        continue
+                    expanded.append((os.path.basename(info.filename), zf.read(info)))
+        else:
+            expanded.append((name, data))
+    return expanded
+
+
 def _expand_uploads(uploaded_files) -> list[tuple[str, bytes]]:
     """Flatten the raw file_uploader result into (filename, csv_bytes)
     pairs -- a .zip is extracted in place (every .csv inside it, at any
     depth, becomes one entry) so a whole folder can be uploaded at once by
     zipping it first. Streamlit's file_uploader has no native folder/
     directory picker, so this is the practical equivalent."""
-    expanded: list[tuple[str, bytes]] = []
-    for uploaded in uploaded_files:
-        if uploaded.name.lower().endswith(".zip"):
-            with zipfile.ZipFile(io.BytesIO(uploaded.getvalue())) as zf:
-                for info in zf.infolist():
-                    if info.is_dir() or not info.filename.lower().endswith(".csv"):
-                        continue
-                    expanded.append((os.path.basename(info.filename), zf.read(info)))
-        else:
-            expanded.append((uploaded.name, uploaded.getvalue()))
-    return expanded
+    return _expand_named_bytes([(u.name, u.getvalue()) for u in uploaded_files])
 
 
 def _suggested_mapping(raw_headers: list[str]) -> dict[str, str]:
@@ -121,11 +129,62 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
+# Excel hard-caps at 1,048,576 rows per sheet (1 header + 1,048,575 data rows).
+EXCEL_ROW_LIMIT = 1_048_575
+
+
+def _build_downloads(consolidated: pl.DataFrame) -> dict[str, dict]:
+    """Builds the bytes for each download format independently, isolating
+    failures so one format can never hide the others -- previously CSV,
+    Excel, and Parquet were built back-to-back in one pass, so a
+    consolidation past Excel's 1,048,576-row-per-sheet limit made
+    to_excel() raise and killed the whole script before it ever reached
+    the CSV/Parquet buttons, leaving *no* download option visible at all
+    even though CSV/Parquet were perfectly fine.
+
+    Returns {"csv": {...}, "excel": {...}, "parquet": {...}}, each a dict
+    with "data" (bytes or None), "error" (str or None), and, for excel
+    only, "skipped_reason" (str or None) when the row limit was hit.
+    """
+    results: dict[str, dict] = {
+        "csv": {"data": None, "error": None},
+        "excel": {"data": None, "error": None, "skipped_reason": None},
+        "parquet": {"data": None, "error": None},
+    }
+
+    try:
+        results["csv"]["data"] = consolidated.write_csv().encode("utf-8")
+    except Exception as exc:
+        results["csv"]["error"] = str(exc)
+
+    if len(consolidated) > EXCEL_ROW_LIMIT:
+        results["excel"]["skipped_reason"] = (
+            f"Too many rows for Excel ({len(consolidated):,} > {EXCEL_ROW_LIMIT:,} row limit "
+            "per sheet) — use CSV or Parquet instead."
+        )
+    else:
+        try:
+            excel_buf = io.BytesIO()
+            consolidated.to_pandas().to_excel(excel_buf, index=False, engine="openpyxl")
+            results["excel"]["data"] = excel_buf.getvalue()
+        except Exception as exc:
+            results["excel"]["error"] = str(exc)
+
+    try:
+        parquet_buf = io.BytesIO()
+        consolidated.write_parquet(parquet_buf)
+        results["parquet"]["data"] = parquet_buf.getvalue()
+    except Exception as exc:
+        results["parquet"]["error"] = str(exc)
+
+    return results
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # UI
 # ══════════════════════════════════════════════════════════════════════════════
 def _reset():
-    for key in ("ec_files", "ec_mapping_confirmed", "ec_user_mapping", "ec_consolidated"):
+    for key in ("ec_files", "ec_raw_uploads", "ec_mapping_confirmed", "ec_user_mapping", "ec_consolidated"):
         st.session_state.pop(key, None)
 
 
@@ -138,19 +197,42 @@ def render():
     # System -> Product Type lookup.
     loan_store.init_catalog()
 
-    uploaded_files = st.file_uploader(
+    # The uploader's key is rotated every time we capture a fresh batch
+    # (below) so its *previous* Python-side widget instance is retired
+    # rather than kept alive across further reruns. This matters because
+    # Streamlit deep-copies a widget's buffered value on every single
+    # script rerun (Confirm Mapping, saving a System Type mapping, Start
+    # Over, ...) purely for its own change-detection bookkeeping -- for a
+    # large multi-file batch (many GB of EAD exports) that duplicates the
+    # whole payload on every rerun and was crashing the packaged app with
+    # a real MemoryError, entirely inside Streamlit's file_uploader
+    # registration, before any of our own code ran. Pulling the bytes out
+    # once into a plain session_state key (not a widget, so never
+    # deep-copied by this mechanism) and swapping in a fresh, empty
+    # uploader avoids that repeated duplication.
+    uploader_gen = st.session_state.get("ec_uploader_gen", 0)
+    new_uploads = st.file_uploader(
         "Upload EAD Files (CSV, or a .zip of a whole folder of them)",
         type=["csv", "zip"],
         accept_multiple_files=True,
-        key="ec_uploader",
+        key=f"ec_uploader_{uploader_gen}",
     )
     st.caption("Up to 2 GB per file. No native folder picker in the browser -- zip the folder and upload that instead.")
-    if not uploaded_files:
+
+    if new_uploads:
+        st.session_state["ec_raw_uploads"] = [(f.name, f.getvalue()) for f in new_uploads]
+        st.session_state["ec_uploader_gen"] = uploader_gen + 1
+        for key in ("ec_mapping_confirmed", "ec_user_mapping", "ec_consolidated"):
+            st.session_state.pop(key, None)
+        st.rerun()
+
+    raw_uploads = st.session_state.get("ec_raw_uploads")
+    if not raw_uploads:
         st.info("Upload one or more EAD Files exports to get started.")
         render_footer()
         return
 
-    expanded = _expand_uploads(uploaded_files)
+    expanded = _expand_named_bytes(raw_uploads)
     if not expanded:
         st.error("No CSV files found (an uploaded .zip had none inside it).")
         render_footer()
@@ -173,7 +255,14 @@ def render():
             options = ["— Skip —"] + raw_headers
             index = options.index(default_raw) if default_raw in options else 0
             label = f"{spec.canonical}{' *' if spec.required else ''}"
-            choice = st.selectbox(label, options, index=index, key=f"ec_map_{spec.canonical}")
+            label_col, field_col = st.columns([1, 2])
+            with label_col:
+                st.markdown(f"<div style='padding-top:8px;'>{label}</div>", unsafe_allow_html=True)
+            with field_col:
+                choice = st.selectbox(
+                    label, options, index=index, key=f"ec_map_{spec.canonical}",
+                    label_visibility="collapsed",
+                )
             if choice != "— Skip —":
                 user_mapping[choice] = spec.canonical
         submitted = st.form_submit_button("Confirm Mapping")
@@ -214,39 +303,50 @@ def render():
             st.session_state["ec_consolidated"] = _consolidate(frames, filenames, user_mapping)
 
     consolidated = st.session_state["ec_consolidated"]
-    st.success(f"Consolidated {len(consolidated):,} rows from {len(uploaded_files)} file(s).")
+    st.success(f"Consolidated {len(consolidated):,} rows from {len(raw_uploads)} file(s).")
     st.dataframe(consolidated.head(50).to_pandas(), use_container_width=True)
 
     ts = _timestamp()
+    downloads = _build_downloads(consolidated)
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.download_button(
-            "⬇ Download CSV",
-            data=consolidated.write_csv().encode("utf-8"),
-            file_name=f"EAD_Consolidated_{ts}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
+        csv_result = downloads["csv"]
+        if csv_result["error"]:
+            st.error(f"CSV generation failed: {csv_result['error']}")
+        else:
+            st.download_button(
+                "⬇ Download CSV",
+                data=csv_result["data"],
+                file_name=f"EAD_Consolidated_{ts}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
     with col2:
-        excel_buf = io.BytesIO()
-        consolidated.to_pandas().to_excel(excel_buf, index=False, engine="openpyxl")
-        st.download_button(
-            "⬇ Download Excel",
-            data=excel_buf.getvalue(),
-            file_name=f"EAD_Consolidated_{ts}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+        excel_result = downloads["excel"]
+        if excel_result["skipped_reason"]:
+            st.warning(excel_result["skipped_reason"])
+        elif excel_result["error"]:
+            st.error(f"Excel generation failed: {excel_result['error']}")
+        else:
+            st.download_button(
+                "⬇ Download Excel",
+                data=excel_result["data"],
+                file_name=f"EAD_Consolidated_{ts}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
     with col3:
-        parquet_buf = io.BytesIO()
-        consolidated.write_parquet(parquet_buf)
-        st.download_button(
-            "⬇ Download Parquet",
-            data=parquet_buf.getvalue(),
-            file_name=f"EAD_Consolidated_{ts}.parquet",
-            mime="application/octet-stream",
-            use_container_width=True,
-        )
+        parquet_result = downloads["parquet"]
+        if parquet_result["error"]:
+            st.error(f"Parquet generation failed: {parquet_result['error']}")
+        else:
+            st.download_button(
+                "⬇ Download Parquet",
+                data=parquet_result["data"],
+                file_name=f"EAD_Consolidated_{ts}.parquet",
+                mime="application/octet-stream",
+                use_container_width=True,
+            )
 
     st.button("Start over", on_click=_reset)
     render_footer()
