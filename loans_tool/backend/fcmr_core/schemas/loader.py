@@ -87,6 +87,31 @@ class SchemaMap:
                 result[h] = (best_match, round(best_score, 2))
         return result
 
+    def best_raw_for_canonical(self, raw_headers: list[str]) -> dict[str, str]:
+        """Invert map_headers_with_scores() correctly: {canonical: raw},
+        keeping only the highest-scoring raw header when several headers
+        all fuzzy-match the same canonical.
+
+        A plain {canonical: raw for raw, (canonical, _) in scored.items()}
+        inversion keeps whichever raw header happens to be seen *last*,
+        not the best match -- so a near-duplicate column (e.g. a real
+        file's own "_Hist"/"_Old" variant of an exact-match column) can
+        silently steal a canonical's suggested-mapping slot from the
+        correct exact match. The exact match then gets left unmapped
+        (defaults to "Skip"), while the fuzzy variant gets renamed *into*
+        that canonical's name -- and since the exact-match column is still
+        sitting there under that same name, the two collide the moment
+        anything tries to rename into it, e.g. polars.DataFrame.rename's
+        "column ... is duplicate".
+        """
+        scored = self.map_headers_with_scores(raw_headers)
+        best: dict[str, tuple[str, float]] = {}
+        for raw, (canonical, score) in scored.items():
+            current = best.get(canonical)
+            if current is None or score > current[1]:
+                best[canonical] = (raw, score)
+        return {canonical: raw for canonical, (raw, _score) in best.items()}
+
     def missing_required(self, mapped: dict[str, str]) -> list[str]:
         found_canonicals = set(mapped.values())
         return [

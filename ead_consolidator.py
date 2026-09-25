@@ -70,8 +70,7 @@ def _suggested_mapping(raw_headers: list[str]) -> dict[str, str]:
     schema = get_schema(REPORT_TYPE)
     if not schema:
         return {}
-    scored = schema.map_headers_with_scores(raw_headers)
-    return {canonical: raw for raw, (canonical, _score) in scored.items()}
+    return schema.best_raw_for_canonical(raw_headers)
 
 
 def _unmapped_system_values(frames: list[pl.DataFrame], raw_system_header: str) -> list[str]:
@@ -91,6 +90,18 @@ def _consolidate(frames: list[pl.DataFrame], filenames: list[str], mapping: dict
     tagged = []
     for df, filename in zip(frames, filenames):
         rename = {raw: canonical for raw, canonical in mapping.items() if raw in df.columns}
+        # Drop any rename whose target name is already a *different*,
+        # untouched column in this same file -- renaming into it would
+        # crash (DataFrame.rename's "column ... is duplicate"). Keeps the
+        # file's own native column and skips the conflicting mapping
+        # entry for this file only; a mis-suggested mapping is the usual
+        # cause (see SchemaMap.best_raw_for_canonical's docstring), which
+        # this also guards against even if a mapping was picked by hand.
+        rename = {
+            raw: canonical
+            for raw, canonical in rename.items()
+            if canonical not in df.columns or canonical == raw
+        }
         if rename:
             df = df.rename(rename)
         df = df.with_columns(pl.lit(filename).alias("_source_file"))
