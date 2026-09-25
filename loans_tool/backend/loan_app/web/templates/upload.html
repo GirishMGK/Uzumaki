@@ -7,7 +7,7 @@
 
   <div class="card">
     <div class="card-title">Upload Report CSV</div>
-    <div class="card-sub">Select the report type and drop your CSV file. Files are streamed to Parquet — no full load into memory.</div>
+    <div class="card-sub">Select the report type and drop your file (CSV, Excel, or Parquet). Files are streamed to Parquet — no full load into memory.</div>
 
     <form method="POST" action="/dashboard/upload" enctype="multipart/form-data">
 
@@ -29,7 +29,7 @@
           <div class="file-drop-label">
             <span class="file-icon">📁</span>
             <span style="font-size:13.5px;">Drop folder here or <strong>click to browse</strong></span>
-            <span class="file-hint">All CSVs in folder will be uploaded as one batch</span>
+            <span class="file-hint">All CSV/Excel/Parquet files in folder will be uploaded as one batch</span>
           </div>
         </div>
         <p class="file-selected" id="folder-selected"></p>
@@ -39,11 +39,11 @@
       <div class="form-group">
         <label for="files">Or Select Files</label>
         <div class="file-drop" id="files-drop">
-          <input type="file" name="files" id="files" accept=".csv,.zip" multiple />
+          <input type="file" name="files" id="files" accept=".csv,.zip,.xlsx,.xls,.parquet" multiple />
           <div class="file-drop-label">
             <span class="file-icon">📄</span>
             <span style="font-size:13.5px;">Drop files here or <strong>click to browse</strong></span>
-            <span class="file-hint">Max 2 GB per file · CSV or ZIP format</span>
+            <span class="file-hint">Max 5 GB per file · CSV, Excel, Parquet, or ZIP format</span>
           </div>
         </div>
         <p class="file-selected" id="files-selected"></p>
@@ -165,7 +165,7 @@
         return;
       }
       // The server returns {"detail": "..."} on both the intentional 4xx
-      // raises (e.g. 413 over the 2GB limit) and any unhandled exception
+      // raises (e.g. 413 over the 5GB limit) and any unhandled exception
       // (main.py's global handler) -- show that instead of a bare status
       // code, which was a dead end for diagnosing anything.
       let detail = "";

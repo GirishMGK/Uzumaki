@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # Ingest tuning — keep chunk size low enough to stay inside 15 GB RAM when
     # processing 5M-row CSVs with many wide columns.
     ingest_chunk_rows: int = 100_000
-    max_upload_bytes: int = 2 * 1024**3  # 2 GB hard limit per upload
+    max_upload_bytes: int = 5 * 1024**3  # 5 GB hard limit per upload
 
     # Column mapping — fuzzy match threshold (0.0–1.0; suggest if >= this score)
     fuzzy_match_threshold: float = 0.6

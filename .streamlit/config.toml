@@ -1,0 +1,6 @@
+# Applies to any `streamlit run` invocation from this directory (Home.py,
+# ead_consolidator.py standalone, etc). The packaged .exe also passes
+# --server.maxUploadSize explicitly in launcher.py's run_app() as a second,
+# more robust guarantee -- see that file's comment for why.
+[server]
+maxUploadSize = 2048

@@ -94,6 +94,29 @@ def _unmapped_system_values(upload: dict, user_mapping: dict[str, str]) -> list[
     return sorted({v for v in values if v not in known})
 
 
+_SUPPORTED_UPLOAD_EXTENSIONS = (".csv", ".xlsx", ".xls", ".parquet")
+
+
+def _as_csv_bytes(filename: str, content: bytes) -> tuple[str, bytes] | None:
+    """Normalise one uploaded file to (csv_filename, csv_bytes) so the rest
+    of the pipeline (sniff_headers, ingest_csv, ...) only ever deals with
+    CSV -- Excel and Parquet are just alternate source formats for the
+    exact same EAD-style data, converted here rather than teaching every
+    downstream step three different formats. Returns None for anything
+    else (caller skips it)."""
+    lower = filename.lower()
+    if lower.endswith(".csv"):
+        return filename, content
+    if lower.endswith((".xlsx", ".xls")):
+        df = pl.read_excel(io.BytesIO(content), engine="openpyxl")
+    elif lower.endswith(".parquet"):
+        df = pl.read_parquet(io.BytesIO(content))
+    else:
+        return None
+    csv_name = str(Path(filename).with_suffix(".csv"))
+    return csv_name, df.write_csv().encode("utf-8")
+
+
 def _tag_product_helper(parquet_path: Path) -> None:
     """If this dataset has a `system` column (from the canonical mapping
     above), add a `product_helper` column tagging each row with its
@@ -240,28 +263,33 @@ async def do_upload(
 
         for file in upload_files:
             if file.filename and file.filename.lower().endswith(".zip"):
-                # Unzip and extract CSVs
+                # Unzip and extract CSV/Excel/Parquet files
                 logger.info("Reading uploaded zip: %s", file.filename)
                 content = await file.read()
                 logger.info("Read %s (%d bytes); extracting", file.filename, len(content))
                 temp_dir = tempfile.TemporaryDirectory()
                 with zipfile.ZipFile(io.BytesIO(content)) as zf:
                     zf.extractall(temp_dir.name)
-                # Collect all CSVs from unzipped directory
+                # Collect all supported files from the unzipped directory
                 for root, dirs, filenames in os.walk(temp_dir.name):
                     for fname in filenames:
-                        if fname.lower().endswith(".csv"):
+                        if fname.lower().endswith(_SUPPORTED_UPLOAD_EXTENSIONS):
                             full_path = Path(root) / fname
-                            processed_files.append((fname, full_path.read_bytes()))
-            elif file.filename and file.filename.lower().endswith(".csv"):
-                # Regular CSV file
+                            converted = _as_csv_bytes(fname, full_path.read_bytes())
+                            if converted:
+                                processed_files.append(converted)
+            elif file.filename and file.filename.lower().endswith(_SUPPORTED_UPLOAD_EXTENSIONS):
                 logger.info("Reading uploaded file: %s", file.filename)
                 content = await file.read()
                 logger.info("Read %s (%d bytes)", file.filename, len(content))
-                processed_files.append((file.filename, content))
+                converted = _as_csv_bytes(file.filename, content)
+                if converted:
+                    processed_files.append(converted)
 
         if not processed_files:
-            raise HTTPException(status_code=400, detail="No CSV files found.")
+            raise HTTPException(
+                status_code=400, detail="No CSV, Excel, or Parquet files found."
+            )
 
         # Create upload row for each file. One shared DuckDB connection for
         # the whole batch -- each duckdb.connect() has real per-call
@@ -278,7 +306,7 @@ async def do_upload(
                 # or just crashing on a missing intermediate directory.
                 filename = os.path.basename(filename)
                 if len(content) > settings.max_upload_bytes:
-                    raise HTTPException(status_code=413, detail=f"File {filename} exceeds 2 GB limit.")
+                    raise HTTPException(status_code=413, detail=f"File {filename} exceeds 5 GB limit.")
 
                 # Create upload row with batch_id and engagement_id
                 logger.info("Creating upload record for %s", filename)

@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import os
 import sys
+import zipfile
 from datetime import datetime, timezone
 
 import polars as pl
@@ -41,8 +42,27 @@ SYSTEM_CANONICAL = "system"
 # ══════════════════════════════════════════════════════════════════════════════
 # helpers
 # ══════════════════════════════════════════════════════════════════════════════
-def _read_csv(uploaded) -> pl.DataFrame:
-    return pl.read_csv(uploaded.getvalue(), infer_schema_length=10000, ignore_errors=True)
+def _read_csv(csv_bytes: bytes) -> pl.DataFrame:
+    return pl.read_csv(csv_bytes, infer_schema_length=10000, ignore_errors=True)
+
+
+def _expand_uploads(uploaded_files) -> list[tuple[str, bytes]]:
+    """Flatten the raw file_uploader result into (filename, csv_bytes)
+    pairs -- a .zip is extracted in place (every .csv inside it, at any
+    depth, becomes one entry) so a whole folder can be uploaded at once by
+    zipping it first. Streamlit's file_uploader has no native folder/
+    directory picker, so this is the practical equivalent."""
+    expanded: list[tuple[str, bytes]] = []
+    for uploaded in uploaded_files:
+        if uploaded.name.lower().endswith(".zip"):
+            with zipfile.ZipFile(io.BytesIO(uploaded.getvalue())) as zf:
+                for info in zf.infolist():
+                    if info.is_dir() or not info.filename.lower().endswith(".csv"):
+                        continue
+                    expanded.append((os.path.basename(info.filename), zf.read(info)))
+        else:
+            expanded.append((uploaded.name, uploaded.getvalue()))
+    return expanded
 
 
 def _suggested_mapping(raw_headers: list[str]) -> dict[str, str]:
@@ -107,17 +127,27 @@ def render():
     loan_store.init_catalog()
 
     uploaded_files = st.file_uploader(
-        "Upload EAD Files (CSV)", type=["csv"], accept_multiple_files=True, key="ec_uploader"
+        "Upload EAD Files (CSV, or a .zip of a whole folder of them)",
+        type=["csv", "zip"],
+        accept_multiple_files=True,
+        key="ec_uploader",
     )
+    st.caption("Up to 2 GB per file. No native folder picker in the browser -- zip the folder and upload that instead.")
     if not uploaded_files:
         st.info("Upload one or more EAD Files exports to get started.")
         render_footer()
         return
 
-    frames = [_read_csv(f) for f in uploaded_files]
-    filenames = [f.name for f in uploaded_files]
+    expanded = _expand_uploads(uploaded_files)
+    if not expanded:
+        st.error("No CSV files found (an uploaded .zip had none inside it).")
+        render_footer()
+        return
 
-    st.caption(f"{len(uploaded_files)} file(s) loaded — mapping is based on **{filenames[0]}** and applied to all.")
+    filenames = [name for name, _ in expanded]
+    frames = [_read_csv(csv_bytes) for _, csv_bytes in expanded]
+
+    st.caption(f"{len(frames)} file(s) loaded — mapping is based on **{filenames[0]}** and applied to all.")
 
     canonical_fields = get_canonical_fields(REPORT_TYPE)
     raw_headers = frames[0].columns
