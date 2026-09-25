@@ -5,7 +5,13 @@
 {% block topbar_actions %}
   {% set ead_ready_count = uploads | selectattr("report_type", "equalto", "ead_files") | selectattr("status", "equalto", "ready") | list | length %}
   {% if ead_ready_count > 0 %}
-  <a href="/dashboard/ead/consolidate" class="btn btn-ghost" style="margin-left:auto;">
+  <a href="/dashboard/analytics/ead" class="btn btn-ghost" style="margin-left:auto;">
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="margin-right:2px;">
+      <path d="M2 13.5V9M6 13.5V6M10 13.5V3M14 13.5V7.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+    </svg>
+    EAD Analytics
+  </a>
+  <a href="/dashboard/ead/consolidate" class="btn btn-ghost" style="margin-left:8px;">
     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="margin-right:2px;">
       <path d="M3 8h10M8 3v10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
     </svg>

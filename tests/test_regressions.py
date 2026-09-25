@@ -3189,3 +3189,501 @@ def test_build_consolidated_df_reuses_one_connection_not_one_per_file():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── fcmr_core/reporting: two bugs found while building EAD Analytics ───────
+def test_aggregate_status_counts_reads_real_counts_not_always_zero():
+    """Regression guard for a real bug found while building EAD Analytics'
+    result page: aggregate_status_counts() read polars'
+    `value_counts().to_dicts()` rows via row["counts"] (plural), but that
+    method actually names the column "count" (singular) in the installed
+    polars version -- the resulting KeyError was silently swallowed by a
+    bare `except Exception`, so this function ALWAYS returned
+    {"OK": 0, "WARN": 0, "ERROR": 0} regardless of the real data. This
+    affected every analytics run's stat cards and % columns, Customer
+    Master's included, not just the new EAD screen -- aggregate_
+    exception_codes (a sibling function reading a different column) was
+    unaffected and kept working, which is what made the bug easy to miss.
+    """
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import tempfile
+        from pathlib import Path
+
+        from fcmr_core.reporting.aggregation import aggregate_status_counts
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wide_path = Path(tmp) / "wide.csv"
+            wide_path.write_text("overall_status\nWARN\nWARN\nOK\nERROR\n")
+            counts = aggregate_status_counts(wide_path)
+            assert counts == {"OK": 1, "WARN": 2, "ERROR": 1}
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_bar_chart_long_exception_codes_are_not_clipped_off_the_edge():
+    """Regression guard for a real bug found while building EAD Analytics:
+    build_bar_chart() right-aligns each label at a FIXED 200px left margin
+    with no font-family set (so the SVG falls back to the browser's default
+    serif font). Customer Master's exception codes are all short enough to
+    fit, but EAD's longer, more descriptive codes (e.g.
+    "MATURITY_BEFORE_DISBURSAL_OR_SANCTION", 38 chars) overflowed past
+    x=0 and were clipped clean off the left edge of the SVG viewBox --
+    silently invisible, not just visually truncated. The margin now sizes
+    itself to the longest label being rendered."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        from fcmr_core.reporting.charts import build_bar_chart
+
+        long_code = "MATURITY_BEFORE_DISBURSAL_OR_SANCTION"
+        svg = build_bar_chart({long_code: 5, "NEGATIVE_EAD": 1}, width=700, height=400)
+        assert long_code in svg, "long label was truncated/clipped instead of sized for"
+        assert 'font-family' in svg  # pins a real font so the width estimate holds
+    finally:
+        sys.path.remove(backend_dir)
+
+
+# ── EAD Analytics: the new "Analytics" screen (EAD-only rules, v1) ─────────
+def test_ead_row_rules_flag_expected_exceptions():
+    """Unit-level guard for each of the 11 EAD-only row rules (1, 2, 4, 5, 6,
+    8, 11, 12, 13, 14, 15): constructs one small DataFrame with a
+    deliberately-triggering case for every rule and checks each fires with
+    the right exception code -- and that a clean row stays OK."""
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import polars as pl
+
+        from fcmr_core.rules.ead_rules import EAD_ROW_RULES, run_ead_row_rules
+
+        assert len(EAD_ROW_RULES) == 11
+
+        df = pl.DataFrame(
+            {
+                "loan_id": ["CLEAN", "L1", "L2", "L3", "L4", "L5"],
+                "disbursement_date": ["01-01-2023", "01-04-2023", "01-05-2023", "10-02-2023", "01-06-2023", "01-01-2020"],
+                "sanction_date": ["01-01-2023", "01-01-2023", "01-01-2023", "01-01-2023", "01-01-2023", "01-01-2019"],
+                "sanction_amount": [100.0, 100.0, 100.0, 100.0, 50.0, 100.0],
+                "disbursed_amount": [90.0, 90.0, 90.0, 90.0, 60.0, 90.0],
+                "future_pos": [10.0, 95.0, 10.0, 10.0, 10.0, 10.0],
+                "ead": [100.0, 100.0, -5.0, 100.0, 100.0, 100.0],
+                "npa_flag_date": [None, None, "01-01-2024", None, None, "01-06-2020"],
+                "business_date": ["31-03-2024"] * 6,
+                "maturity_date": ["01-01-2030", "01-04-2028", "01-05-2025", "01-01-2019", "01-06-2028", "01-01-2021"],
+                "original_tenure": [84, 60, 24, 60, -5, 12],
+                "product_helper": ["TW"] * 6,
+                "ucid": ["U0", "U1", "U1", "U2", "U3", "U4"],
+                "customer_id": ["C0", "C1", "C1", "C2", "C3", "C4"],
+            }
+        )
+        annotated = run_ead_row_rules(df)
+        codes = {row["loan_id"]: row for row in annotated.to_dicts()}
+
+        assert codes["CLEAN"]["_exc_quick_mortality_code"] == ""
+        assert codes["CLEAN"]["_exc_sanction_disbursal_delay_code"] == ""
+        assert codes["CLEAN"]["_exc_disbursal_before_sanction_code"] == ""
+        assert codes["CLEAN"]["_exc_outstanding_exceeds_disbursed_code"] == ""
+        assert codes["CLEAN"]["_exc_disbursed_exceeds_sanctioned_code"] == ""
+        assert codes["CLEAN"]["_exc_negative_ead_code"] == ""
+        assert codes["CLEAN"]["_exc_tenure_mismatch_code"] == ""
+        assert codes["CLEAN"]["_exc_maturity_before_disbursal_or_sanction_code"] == ""
+        assert codes["CLEAN"]["_exc_matured_still_on_book_code"] == ""
+        assert codes["CLEAN"]["_exc_invalid_tenure_code"] == ""
+        assert codes["CLEAN"]["_exc_new_disbursal_to_npa_customer_code"] == ""
+
+        assert codes["L1"]["_exc_sanction_disbursal_delay_code"] == "SANCTION_DISBURSAL_DELAY"
+        assert codes["L1"]["_exc_outstanding_exceeds_disbursed_code"] == "OUTSTANDING_EXCEEDS_DISBURSED"
+        assert codes["L2"]["_exc_quick_mortality_code"] == "QUICK_MORTALITY"
+        assert codes["L2"]["_exc_negative_ead_code"] == "NEGATIVE_EAD"
+        assert codes["L3"]["_exc_maturity_before_disbursal_or_sanction_code"] == "MATURITY_BEFORE_DISBURSAL_OR_SANCTION"
+        assert codes["L3"]["_exc_matured_still_on_book_code"] == "MATURED_STILL_ON_BOOK"
+        assert codes["L4"]["_exc_invalid_tenure_code"] == "INVALID_TENURE"
+        assert codes["L5"]["_exc_quick_mortality_code"] == "QUICK_MORTALITY"
+
+        # Disbursal-before-sanction and disbursed-exceeds-sanctioned, tested
+        # separately since the shared frame above doesn't trigger them.
+        df2 = pl.DataFrame(
+            {
+                "loan_id": ["D1", "D2", "T1"],
+                "disbursement_date": ["01-01-2023", "01-04-2023", "01-01-2020"],
+                "sanction_date": ["15-01-2023", "01-01-2023", "01-01-2019"],
+                "sanction_amount": [100.0, 50.0, 100.0],
+                "disbursed_amount": [90.0, 90.0, 90.0],
+                "future_pos": [10.0, 10.0, 10.0],
+                "ead": [100.0, 100.0, 100.0],
+                "npa_flag_date": [None, None, None],
+                "business_date": ["31-03-2024"] * 3,
+                "maturity_date": ["01-01-2030"] * 3,
+                # T1: disbursed 01-01-2020, maturity 01-01-2030 = exactly 120
+                # months, but Original Tenure says 60 -> tenure mismatch.
+                "original_tenure": [84, 60, 60],
+                "product_helper": ["TW"] * 3,
+                "ucid": ["U5", "U6", "U7"],
+                "customer_id": ["C5", "C6", "C7"],
+            }
+        )
+        annotated2 = run_ead_row_rules(df2)
+        codes2 = {row["loan_id"]: row for row in annotated2.to_dicts()}
+        assert codes2["D1"]["_exc_disbursal_before_sanction_code"] == "DISBURSAL_BEFORE_SANCTION"
+        assert codes2["D2"]["_exc_disbursed_exceeds_sanctioned_code"] == "DISBURSED_EXCEEDS_SANCTIONED"
+        assert codes2["T1"]["_exc_tenure_mismatch_code"] == "TENURE_MISMATCH"
+
+        # Rule 15: a later loan for the same customer, disbursed after
+        # another of that customer's loans went NPA.
+        df3 = pl.DataFrame(
+            {
+                "loan_id": ["OLD", "NEW"],
+                "disbursement_date": ["01-01-2020", "01-06-2024"],
+                "sanction_date": ["01-01-2019", "01-01-2024"],
+                "sanction_amount": [100.0, 100.0],
+                "disbursed_amount": [90.0, 90.0],
+                "future_pos": [10.0, 10.0],
+                "ead": [100.0, 100.0],
+                "npa_flag_date": ["01-01-2022", None],
+                "business_date": ["31-03-2024"] * 2,
+                "maturity_date": ["01-01-2030"] * 2,
+                "original_tenure": [120, 120],
+                "product_helper": ["TW"] * 2,
+                "ucid": ["SAME", "SAME"],
+                "customer_id": ["SAMEC", "SAMEC"],
+            }
+        )
+        annotated3 = run_ead_row_rules(df3)
+        codes3 = {row["loan_id"]: row for row in annotated3.to_dicts()}
+        assert codes3["NEW"]["_exc_new_disbursal_to_npa_customer_code"] == "NEW_DISBURSAL_TO_NPA_CUSTOMER"
+        assert codes3["OLD"]["_exc_new_disbursal_to_npa_customer_code"] == ""
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_ead_rules_handle_already_parsed_date_columns_not_just_raw_strings():
+    """Regression guard for a real bug found while wiring this feature up:
+    DuckDB-backed ingestion (fcmr_core.catalog.store.get_upload_df /
+    build_consolidated_df) auto-parses a recognized "DD-MM-YYYY" column
+    into a genuine pl.Date column at ingest time -- it does NOT stay a raw
+    string. The rules' date-parsing helper originally always cast to Utf8
+    first and re-parsed as "%d-%m-%Y", which for an already-Date column
+    reformats it to ISO text ("2023-04-01") and then fails to re-parse
+    against the DD-MM-YYYY pattern, silently nulling out every date and
+    making every date-based rule a no-op. Confirmed against the real app
+    via TestClient before this fix: none of quick_mortality,
+    sanction_disbursal_delay, tenure_mismatch, maturity_before_disbursal_
+    or_sanction, or matured_still_on_book ever fired. This test builds the
+    DataFrame with genuine pl.Date columns (as ingestion actually produces)
+    rather than strings, so it fails the way the real bug did if the
+    date-parsing helper regresses back to assuming raw text.
+    """
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import datetime
+
+        import polars as pl
+
+        from fcmr_core.rules.ead_rules import run_ead_row_rules
+
+        df = pl.DataFrame(
+            {
+                "loan_id": ["L1"],
+                "disbursement_date": [datetime.date(2023, 5, 1)],
+                "sanction_date": [datetime.date(2023, 1, 1)],
+                "npa_flag_date": [datetime.date(2024, 1, 1)],
+                "business_date": [datetime.date(2024, 3, 31)],
+                "maturity_date": [datetime.date(2019, 1, 1)],
+                "original_tenure": [60],
+                "sanction_amount": [100.0],
+                "disbursed_amount": [90.0],
+                "future_pos": [10.0],
+                "ead": [100.0],
+                "product_helper": ["TW"],
+                "ucid": ["U1"],
+                "customer_id": ["C1"],
+            },
+            schema_overrides={
+                "disbursement_date": pl.Date,
+                "sanction_date": pl.Date,
+                "npa_flag_date": pl.Date,
+                "business_date": pl.Date,
+                "maturity_date": pl.Date,
+            },
+        )
+        annotated = run_ead_row_rules(df)
+        row = annotated.to_dicts()[0]
+        # 2024-01-01 - 2023-05-01 = 245 days < 365.
+        assert row["_exc_quick_mortality_code"] == "QUICK_MORTALITY"
+        # 2023-05-01 - 2023-01-01 = 120 days > 30 (default threshold).
+        assert row["_exc_sanction_disbursal_delay_code"] == "SANCTION_DISBURSAL_DELAY"
+        # Maturity (2019) is before both disbursal and sanction (2023).
+        assert row["_exc_maturity_before_disbursal_or_sanction_code"] == "MATURITY_BEFORE_DISBURSAL_OR_SANCTION"
+        # Matured in 2019, business date 2024-03-31, still 10.0 outstanding.
+        assert row["_exc_matured_still_on_book_code"] == "MATURED_STILL_ON_BOOK"
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_ead_reports_compute_expected_summaries():
+    """Unit-level guard for the 4 EAD summary reports (7, 9, 10, 18)."""
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import polars as pl
+
+        from fcmr_core.rules.ead_reports import (
+            month_wise_disbursal_summary,
+            npa_flag_date_change_report,
+            product_ead_reconciliation_summary,
+            system_product_minmax_summary,
+        )
+
+        df = pl.DataFrame(
+            {
+                "loan_id": ["L1", "L2"],
+                "product_helper": ["TW", "TW"],
+                "stage": ["Stage 1", "Stage 3"],
+                "ead": [100.0, 50.0],
+                "gross_book_value": [10.0, 5.0],
+                "zero_90_days_interest": [1.0, 0.5],
+                "zero_90_int_final": [0.2, 0.3],
+                "system": ["SysA", "SysA"],
+                "scheme_name": ["ProdA", "ProdA"],
+                "sanction_amount": [100.0, 200.0],
+                "financial_irr": [12.0, 14.0],
+                "original_tenure": [24, 36],
+                "disbursement_date": ["01-04-2023", "01-05-2023"],
+                "disbursed_amount": [90.0, 190.0],
+                "state": ["MH", "GJ"],
+            }
+        )
+
+        recon = product_ead_reconciliation_summary(df)
+        row = recon.filter(pl.col("product_helper") == "TW").to_dicts()[0]
+        assert row["lans"] == 2
+        assert row["ead_total"] == 150.0
+        assert row["stage1_ead"] == 100.0
+        assert row["stage3_ead"] == 50.0
+        assert row["check1_diff"] == 0.0  # Stage1(100) + Stage3(50) == EAD(150)
+
+        minmax = system_product_minmax_summary(df).to_dicts()[0]
+        assert minmax["min_sanction_amount"] == 100.0
+        assert minmax["max_sanction_amount"] == 200.0
+        assert minmax["min_original_tenure"] == 24
+        assert minmax["max_original_tenure"] == 36
+
+        month_wise = month_wise_disbursal_summary(df, 2023, include_state=False)
+        row = month_wise.to_dicts()[0]
+        assert row["Apr_amount"] == 90.0
+        assert row["Apr_count"] == 1
+        assert row["May_amount"] == 190.0
+
+        # Rule 18 needs multiple source files -- single-file input has none.
+        single_file_df = df.with_columns(pl.lit("only.csv").alias("_source_file"))
+        assert npa_flag_date_change_report(single_file_df).height == 0
+
+        multi_file_df = pl.DataFrame(
+            {
+                "loan_id": ["L1", "L1"],
+                "business_date": ["31-01-2024", "29-02-2024"],
+                "npa_flag_date": ["15-01-2024", "20-02-2024"],
+                "_source_file": ["jan.csv", "feb.csv"],
+            }
+        )
+        changes = npa_flag_date_change_report(multi_file_df).to_dicts()
+        assert len(changes) == 1
+        assert changes[0]["from_file"] == "jan.csv"
+        assert changes[0]["to_file"] == "feb.csv"
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
+    """Functional test of the new EAD Analytics screen through the real app:
+    upload + map a real EAD file (going through DuckDB-backed ingestion, so
+    this also guards the date-dtype bug above at the route level), run the
+    row-rule checks, download the results, and run every summary report.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import re
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        csv_bytes = (
+            b"loan_id,disbursement_date,sanction_date,sanction_amount,disbursed_amount,future_pos,ead,"
+            b"npa_flag_date,business_date,maturity_date,original_tenure,system,scheme_name,financial_irr,"
+            b"stage,gross_book_value,zero_90_days_interest,zero_90_int_final,state\n"
+            b"L1,01-04-2023,01-01-2023,100.0,90.0,95.0,100.0,,31-03-2024,01-04-2028,60,"
+            b"OneLMS_TW,ProdA,12.0,Stage 1,10.0,1.0,0.5,MH\n"
+            b"L2,01-05-2023,01-01-2023,100.0,90.0,10.0,-5.0,01-01-2024,31-03-2024,01-05-2025,24,"
+            b"SCF,ProdB,13.0,Stage 2,20.0,2.0,0.5,GJ\n"
+        )
+        fields = [
+            "loan_id", "disbursement_date", "sanction_date", "sanction_amount", "disbursed_amount",
+            "future_pos", "ead", "npa_flag_date", "business_date", "maturity_date", "original_tenure",
+            "system", "scheme_name", "financial_irr", "stage", "gross_book_value",
+            "zero_90_days_interest", "zero_90_int_final", "state",
+        ]
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("ead_analytics.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+            upload_id = next(
+                u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "ead_analytics.csv"
+            )
+            resp = client.post(
+                f"/dashboard/uploads/{upload_id}/map-columns",
+                data={f"map_{f}": f for f in fields},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            # Selection screen reflects the now-ready upload.
+            resp = client.get("/dashboard/analytics/ead")
+            assert resp.status_code == 200
+            assert "Exception Checks" in resp.text
+            assert "Sanction-to-Disbursal Delay" in resp.text
+
+            # Run every row rule, with a per-Product-Helper threshold override.
+            from fcmr_core.rules.ead_rules import EAD_ROW_RULES as _ALL_EAD_ROW_RULES
+
+            resp = client.post(
+                "/dashboard/analytics/ead/run",
+                data={
+                    "rules": [m.rule_id for m in _ALL_EAD_ROW_RULES],
+                    "default_days": "30",
+                    "type_names": ["TW"],
+                    "type_days": ["10"],
+                },
+            )
+            assert resp.status_code == 200
+            assert "Download Wide CSV" in resp.text
+
+            # The per-Type override was persisted for next time.
+            overrides, default_days = catalog_store.get_ead_sanction_disbursal_thresholds()
+            assert overrides["TW"] == 10
+            assert default_days == 30
+
+            run_id = re.search(r"/dashboard/analytics/ead/run/([\w-]+)/download/wide", resp.text).group(1)
+            wide = client.get(f"/dashboard/analytics/ead/run/{run_id}/download/wide")
+            assert wide.status_code == 200
+            assert "QUICK_MORTALITY" in wide.text  # L2 went NPA 245 days after disbursal (< 365)
+            assert "NEGATIVE_EAD" in wide.text  # L2's EAD is -5.0
+            assert "OUTSTANDING_EXCEEDS_DISBURSED" in wide.text  # L1's future_pos (95) > disbursed (90)
+
+            long_csv = client.get(f"/dashboard/analytics/ead/run/{run_id}/download/long")
+            assert long_csv.status_code == 200
+
+            # Revisiting the same run_id later re-renders without recomputing.
+            resp = client.get(f"/dashboard/analytics/ead/run/{run_id}")
+            assert resp.status_code == 200
+
+            # Summary reports, each via its real route + CSV download.
+            resp = client.post("/dashboard/analytics/ead/summary/product-recon", data={})
+            assert resp.status_code == 200 and "Product-wise EAD Reconciliation" in resp.text
+            dl = client.get("/dashboard/analytics/ead/summary/product-recon/download")
+            assert dl.status_code == 200 and "check1_diff" in dl.text
+
+            resp = client.post("/dashboard/analytics/ead/summary/system-product-minmax", data={})
+            assert resp.status_code == 200
+            dl = client.get("/dashboard/analytics/ead/summary/system-product-minmax/download")
+            assert "min_sanction_amount" in dl.text
+
+            resp = client.post(
+                "/dashboard/analytics/ead/summary/month-wise-disbursal",
+                data={"fy_start_year": "2023", "include_state": "true"},
+            )
+            assert resp.status_code == 200
+            dl = client.get(
+                "/dashboard/analytics/ead/summary/month-wise-disbursal/download",
+                params={"fy_start_year": 2023, "include_state": True},
+            )
+            assert "Apr_amount" in dl.text
+
+            resp = client.post("/dashboard/analytics/ead/summary/npa-flag-changes", data={})
+            assert resp.status_code == 200
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_ead_analytics_detects_npa_flag_change_across_two_separate_uploads():
+    """Functional test of rule 18 via the real app: two separately uploaded
+    EAD files for the same loan, with a Business Date each and a changed
+    (non-null -> different non-null) NPA Flag Date between them."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        jan_csv = b"loan_id,business_date,npa_flag_date\nL1,31-01-2024,15-01-2024\n"
+        feb_csv = b"loan_id,business_date,npa_flag_date\nL1,29-02-2024,20-02-2024\n"
+
+        with TestClient(loan_main.app) as client:
+            for name, data in [("jan.csv", jan_csv), ("feb.csv", feb_csv)]:
+                client.post(
+                    "/dashboard/upload",
+                    data={"report_type": "ead_files"},
+                    files=[("files", (name, data, "text/csv"))],
+                    follow_redirects=False,
+                )
+                upload_id = next(u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == name)
+                resp = client.post(
+                    f"/dashboard/uploads/{upload_id}/map-columns",
+                    data={
+                        "map_loan_id": "loan_id",
+                        "map_business_date": "business_date",
+                        "map_npa_flag_date": "npa_flag_date",
+                    },
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 303
+
+            dl = client.get("/dashboard/analytics/ead/summary/npa-flag-changes/download")
+            assert dl.status_code == 200
+            lines = dl.text.strip().splitlines()
+            assert len(lines) == 2  # header + one changed row
+            assert "jan.csv" in lines[1] and "feb.csv" in lines[1]
+            assert "2024-01-15" in lines[1] and "2024-02-20" in lines[1]
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]

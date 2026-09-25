@@ -25,7 +25,12 @@ def aggregate_status_counts(wide_csv_path: Path) -> dict[str, int]:
     try:
         df = pl.read_csv(wide_csv_path, columns=["overall_status"], infer_schema_length=0)
         counts = df["overall_status"].value_counts(sort=True).to_dicts()
-        result = {row["overall_status"]: row["counts"] for row in counts}
+        # polars' value_counts().to_dicts() names the count column "count" --
+        # this used to read "counts" (plural), which KeyErrors on every call
+        # and was silently swallowed by the except below, so this always
+        # returned all-zero counts regardless of the real data (the wide CSV
+        # itself, and aggregate_exception_codes below, were both fine).
+        result = {row["overall_status"]: row["count"] for row in counts}
         # Ensure all statuses are present
         return {
             "OK": result.get("OK", 0),
