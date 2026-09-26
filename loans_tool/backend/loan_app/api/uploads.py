@@ -6,13 +6,15 @@ import hashlib
 import io
 import json
 import os
+import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 
 import duckdb
 import polars as pl
@@ -26,6 +28,7 @@ from fcmr_core.schemas.loader import (
     best_raw_for_canonical_from_scores,
     get_canonical_fields,
     get_schema,
+    label_for_report_type,
 )
 
 logger = get_logger("loan_app.processing")
@@ -222,6 +225,68 @@ async def upload_form(request: Request):
         request=request,
         name="upload.html",
         context={"report_types": report_types},
+    )
+
+
+@router.get("/schema/{report_type}/download")
+async def download_schema(report_type: str):
+    """A report type's canonical schema as a two-sheet Excel workbook: a
+    blank Template (headers are the exact canonical field names -- a file
+    built from this needs no column mapping at all, every column
+    auto-matches on upload) and a Field Reference (required?, data type,
+    and every raw column name this schema already recognizes automatically
+    -- so keeping one of *those* names instead of matching the Template
+    exactly also auto-maps). Meant to be downloaded before preparing a
+    source file, so the mapping step on upload is a formality rather than
+    a manual per-column exercise.
+    """
+    if report_type not in available_report_types():
+        raise HTTPException(status_code=404, detail=f"Unknown report type: {report_type}")
+
+    fields = get_canonical_fields(report_type)
+    label = label_for_report_type(report_type)
+
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill(start_color="1B3A5C", end_color="1B3A5C", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=10)
+
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "Template"
+    for ci, spec in enumerate(fields, start=1):
+        cell = ws1.cell(row=1, column=ci, value=spec.canonical)
+        cell.fill = header_fill
+        cell.font = header_font
+        ws1.column_dimensions[get_column_letter(ci)].width = max(len(spec.canonical) + 2, 14)
+
+    ws2 = wb.create_sheet("Field Reference")
+    for ci, h in enumerate(["Canonical Field", "Required", "Data Type", "Accepted Column Names"], start=1):
+        cell = ws2.cell(row=1, column=ci, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+    for ri, spec in enumerate(fields, start=2):
+        ws2.cell(row=ri, column=1, value=spec.canonical)
+        ws2.cell(row=ri, column=2, value="Yes" if spec.required else "No")
+        ws2.cell(row=ri, column=3, value=spec.dtype)
+        ws2.cell(row=ri, column=4, value=", ".join(spec.aliases))
+    for ci, width in enumerate([24, 12, 12, 70], start=1):
+        ws2.column_dimensions[get_column_letter(ci)].width = width
+    ws2.freeze_panes = "A2"
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".xlsx")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    wb.save(tmp_path)
+
+    filename = f"{label.replace(' ', '_')}_Schema.xlsx"
+    return FileResponse(
+        tmp_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=filename,
+        background=BackgroundTask(tmp_path.unlink, missing_ok=True),
     )
 
 
