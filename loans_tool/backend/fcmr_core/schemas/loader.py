@@ -226,6 +226,17 @@ def get_canonical_fields(report_type: str) -> list[ColumnSpec]:
     return sorted(schema.columns, key=lambda c: (not c.required, c.canonical))
 
 
+# report_type -> display label, for the handful whose natural title-cased
+# form ("Ead Files") reads wrong. Shared by every screen that lists report
+# types (Analytics hub, Consolidate & Download, ...) so they can't drift
+# from each other.
+_LABEL_OVERRIDES = {"ead_files": "EAD Files"}
+
+
+def label_for_report_type(report_type: str) -> str:
+    return _LABEL_OVERRIDES.get(report_type, report_type.replace("_", " ").title())
+
+
 def _reload() -> None:
     _REGISTRY.clear()
     for yaml_file in config_settings.schemas_dir.glob("*.yaml"):

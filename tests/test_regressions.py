@@ -1660,17 +1660,18 @@ def test_loans_wired_into_home_spec_and_auth():
     )
 
 
-# ── loan_app/api/ead_consolidate.py: Parquet download ───────────────────────
-def test_ead_consolidate_parquet_download_round_trips():
+# ── loan_app/api/consolidate.py: generic Consolidate & Download ────────────
+def test_consolidate_parquet_download_round_trips_for_any_report_type():
     """
-    Functional test of the EAD Consolidation "Download Parquet" button:
-    hits the real route through the real app/middleware (LOANS_TRUST_HOST_AUTH
-    bypass, same as production when embedded in Uzumaki), with
-    _build_consolidated_df monkeypatched to a known small DataFrame so the
-    test doesn't need to drive the full upload/column-mapping pipeline just
-    to exercise the new serialization endpoint. Verifies the response is
-    genuinely valid Parquet bytes that round-trip to the same data, not just
-    a 200 status.
+    Functional test of the (now generic, was EAD-only) Consolidate &
+    Download "Download Parquet" button: hits the real route through the
+    real app/middleware (LOANS_TRUST_HOST_AUTH bypass, same as production
+    when embedded in Uzumaki), with store.build_consolidated_df
+    monkeypatched to a known small DataFrame so the test doesn't need to
+    drive the full upload/column-mapping pipeline. Runs it for a
+    non-EAD report type (technical_writeoff) specifically, since the
+    whole point of generalizing this route was that every report type
+    gets it now, not just EAD Files.
     """
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
@@ -1690,24 +1691,34 @@ def test_ead_consolidate_parquet_download_round_trips():
 
         import polars as pl
         from fastapi.testclient import TestClient
-        from loan_app.api import ead_consolidate
+        from fcmr_core.catalog import store as catalog_store
 
-        expected = pl.DataFrame({"pan": ["ABCDE1234F"], "outstanding_principal": [100000.5]})
-        ead_consolidate._build_consolidated_df = lambda engagement_id: expected
+        expected = pl.DataFrame({"loan_id": ["L1"], "business_date": ["2024-01-01"]})
+        real_build = catalog_store.build_consolidated_df
+        catalog_store.build_consolidated_df = lambda engagement_id, report_type: (
+            expected if report_type == "technical_writeoff" else pl.DataFrame()
+        )
 
-        with TestClient(loan_main.app) as client:
-            resp = client.get("/dashboard/ead/download/parquet")
-            assert resp.status_code == 200
-            assert resp.headers["content-type"] == "application/octet-stream"
-            assert ".parquet" in resp.headers["content-disposition"]
+        try:
+            with TestClient(loan_main.app) as client:
+                resp = client.get("/dashboard/consolidate/technical_writeoff/download/parquet")
+                assert resp.status_code == 200
+                assert resp.headers["content-type"] == "application/octet-stream"
+                assert ".parquet" in resp.headers["content-disposition"]
+                assert "Technical_Writeoff" in resp.headers["content-disposition"]
 
-            round_tripped = pl.read_parquet(io.BytesIO(resp.content))
-            assert round_tripped.to_dicts() == expected.to_dicts()
+                round_tripped = pl.read_parquet(io.BytesIO(resp.content))
+                assert round_tripped.to_dicts() == expected.to_dicts()
 
-            # Empty result still 404s, same as the existing CSV/Excel routes.
-            ead_consolidate._build_consolidated_df = lambda engagement_id: pl.DataFrame()
-            resp = client.get("/dashboard/ead/download/parquet")
-            assert resp.status_code == 404
+                # Empty result still 404s, same as the CSV/Excel routes.
+                resp = client.get("/dashboard/consolidate/collection_report/download/parquet")
+                assert resp.status_code == 404
+
+                # Unknown report type -- clean 404, not a 500.
+                resp = client.get("/dashboard/consolidate/not_a_real_type")
+                assert resp.status_code == 404
+        finally:
+            catalog_store.build_consolidated_df = real_build
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
@@ -1716,24 +1727,30 @@ def test_ead_consolidate_parquet_download_round_trips():
                 del sys.modules[mod]
 
 
-def test_ead_download_routes_send_full_body_not_chunked():
+def test_consolidate_download_routes_still_set_content_length_via_file_response():
     """
     Regression guard for a real reported bug: EAD downloads (Parquet
     especially) were painfully slow -- ~500 KB/s for a same-machine
-    localhost transfer of an already-fully-buffered response. Root cause:
-    StreamingResponse(io.BytesIO(data), ...) iterates the BytesIO object,
-    and Python's file-iterator protocol splits it on newline bytes
-    (0x0A) -- for binary data like Parquet/Excel, that's roughly one
-    "chunk" every 256 bytes by pure chance, so a 150MB file became
-    ~580,000 tiny ASGI send() calls. There's no actual streaming benefit
-    to lose here since the full content is always built in memory first
-    anyway, so the fix is a plain Response with the complete bytes.
+    localhost transfer of an already-fully-buffered response. Root cause
+    at the time: StreamingResponse(io.BytesIO(data), ...) iterates the
+    BytesIO object, and Python's file-iterator protocol splits it on
+    newline bytes (0x0A) -- for binary data like Parquet/Excel, that's
+    roughly one "chunk" every 256 bytes by pure chance, so a 150MB file
+    became ~580,000 tiny ASGI send() calls. The fix at the time was a
+    plain Response with the complete bytes (no streaming at all).
 
-    A chunked/streaming response never sets Content-Length (it can't know
-    the total size upfront); a plain Response always does. That header's
-    presence is the black-box signal this test checks, on data specifically
-    engineered to contain many embedded newline bytes -- the exact
-    pathological case that made this slow.
+    These routes now write to a temp file and serve it with FileResponse
+    instead (so a large consolidated dataset isn't held in memory twice
+    over -- see the perf fixes elsewhere in this codebase). FileResponse
+    reads the file in fixed-size binary chunks, not via BytesIO's
+    line-iteration protocol, so it doesn't reintroduce that pathology --
+    confirmed separately by benchmarking it against a 150MB newline-heavy
+    payload (~2,300 chunks, not ~580,000). What both a plain Response and
+    FileResponse share, and what a real chunked/streaming response would
+    lack, is a genuine Content-Length header (a chunked response can't
+    know the total size upfront) -- that's the black-box signal this test
+    checks, on data specifically engineered to contain many embedded
+    newline bytes.
     """
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
@@ -1751,22 +1768,26 @@ def test_ead_download_routes_send_full_body_not_chunked():
 
         import polars as pl
         from fastapi.testclient import TestClient
-        from loan_app.api import ead_consolidate
+        from fcmr_core.catalog import store as catalog_store
 
         # A string containing lots of "\n" bytes, so any accidental
         # BytesIO-line-iteration would fragment this into many chunks.
         newline_heavy = "\n".join(f"row{i}" for i in range(5000))
         expected = pl.DataFrame({"loan_id": ["L1"], "notes": [newline_heavy]})
-        ead_consolidate._build_consolidated_df = lambda engagement_id: expected
+        real_build = catalog_store.build_consolidated_df
+        catalog_store.build_consolidated_df = lambda engagement_id, report_type: expected
 
-        with TestClient(loan_main.app) as client:
-            for path in ("csv", "parquet", "excel"):
-                resp = client.get(f"/dashboard/ead/download/{path}")
-                assert resp.status_code == 200
-                assert "content-length" in resp.headers, (
-                    f"/{path} download has no Content-Length -- looks chunked/streamed again"
-                )
-                assert int(resp.headers["content-length"]) == len(resp.content)
+        try:
+            with TestClient(loan_main.app) as client:
+                for path in ("csv", "parquet", "excel"):
+                    resp = client.get(f"/dashboard/consolidate/ead_files/download/{path}")
+                    assert resp.status_code == 200
+                    assert "content-length" in resp.headers, (
+                        f"/{path} download has no Content-Length -- looks chunked/streamed again"
+                    )
+                    assert int(resp.headers["content-length"]) == len(resp.content)
+        finally:
+            catalog_store.build_consolidated_df = real_build
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
@@ -2961,6 +2982,69 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
             assert uploads["batch_a.csv"]["status"] == "mapping_pending"
             assert uploads["batch_b.csv"]["status"] == "mapping_pending"
             assert json_mod.loads(uploads["batch_a.csv"]["sniffed_headers"]) == ["loan_id", "DrsPOS"]
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_download_schema_produces_template_and_reference_sheets():
+    """New feature: 'Download Schema' lets someone prepare a source file
+    before uploading, instead of only discovering the expected columns at
+    the mapping step. Verifies the real route returns a genuine two-sheet
+    Excel workbook for a real report type (ead_files): a "Template" sheet
+    whose header row is exactly the canonical field names (a file built
+    from this needs no mapping at all), and a "Field Reference" sheet
+    listing every canonical field's required/dtype/accepted-aliases --
+    including a known required field (loan_id) and a known alias
+    (AgreementNo) so this isn't just checking sheet names exist. Also
+    checks the unknown-report-type path 404s cleanly."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("openpyxl")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import io
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import openpyxl
+        from fastapi.testclient import TestClient
+
+        with TestClient(loan_main.app) as client:
+            resp = client.get("/dashboard/schema/ead_files/download")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            assert "EAD_Files_Schema.xlsx" in resp.headers["content-disposition"]
+
+            wb = openpyxl.load_workbook(io.BytesIO(resp.content))
+            assert wb.sheetnames == ["Template", "Field Reference"]
+
+            template_headers = [c.value for c in next(wb["Template"].iter_rows(max_row=1)) if c.value]
+            assert "loan_id" in template_headers
+            assert "disbursed_amount" in template_headers
+            # No data rows -- just the header, ready to fill in.
+            assert wb["Template"].max_row == 1
+
+            ref = wb["Field Reference"]
+            ref_rows = {row[0].value: row for row in ref.iter_rows(min_row=2) if row[0].value}
+            loan_id_row = ref_rows["loan_id"]
+            assert loan_id_row[1].value == "Yes"  # Required
+            assert "AgreementNo" in loan_id_row[3].value  # Accepted Column Names
+
+            # Unknown report type -- clean 404, not a 500.
+            resp = client.get("/dashboard/schema/not_a_real_type/download")
+            assert resp.status_code == 404
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
@@ -4332,6 +4416,15 @@ def test_analytics_hub_lists_every_dataset_and_links_only_where_analytics_exist(
             assert 'href="/dashboard/analytics/ead"' in resp.text
             assert 'href="/dashboard"' in resp.text
             assert resp.text.count("No analytics defined yet for this dataset type.") == 3
+
+            # Consolidate & Download is generic -- every report type gets
+            # one, including the 3 with no analytics defined yet (that's
+            # the whole point of generalizing it off of EAD-only).
+            for report_type in (
+                "ead_files", "customer_master", "technical_writeoff",
+                "collection_report", "disbursement_report",
+            ):
+                assert f'href="/dashboard/consolidate/{report_type}"' in resp.text
 
             # The new top-level nav item is present and points at the hub.
             assert 'href="/dashboard/analytics"' in resp.text

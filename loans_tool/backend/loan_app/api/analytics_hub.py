@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from fcmr_core.catalog import store
-from fcmr_core.schemas.loader import available_report_types
+from fcmr_core.schemas.loader import available_report_types, label_for_report_type
 
 router = APIRouter()
 _templates_dir = Path(__file__).parent.parent / "web" / "templates"
@@ -32,12 +32,6 @@ _ANALYTICS_ROUTES = {
     # the uploads list instead, same as before this hub existed.
     "customer_master": "/dashboard",
 }
-
-_LABEL_OVERRIDES = {"ead_files": "EAD Files"}
-
-
-def _label(report_type: str) -> str:
-    return _LABEL_OVERRIDES.get(report_type, report_type.replace("_", " ").title())
 
 
 @router.get("/dashboard/analytics", response_class=HTMLResponse)
@@ -54,9 +48,13 @@ async def analytics_hub(request: Request):
         datasets.append(
             {
                 "report_type": report_type,
-                "label": _label(report_type),
+                "label": label_for_report_type(report_type),
                 "ready_count": ready_counts.get(report_type, 0),
                 "analytics_url": _ANALYTICS_ROUTES.get(report_type),
+                # Consolidate & Download is generic -- every report type
+                # gets one, unlike analytics_url above which only exists
+                # for types with real checks built.
+                "consolidate_url": f"/dashboard/consolidate/{report_type}",
             }
         )
 
