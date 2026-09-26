@@ -1867,6 +1867,108 @@ def test_sql_analytics_runs_real_query_across_report_types():
                 del sys.modules[mod]
 
 
+def test_saved_sql_queries_crud():
+    """Unit-level guard for the saved-analytics store functions: create,
+    list (newest first), and delete a saved SQL Analytics query."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        from fcmr_core.catalog import store as catalog_store
+
+        catalog_store.init_catalog()
+        qid = catalog_store.create_saved_query("My Test Analytics", "SELECT 1", created_by="tester")
+        try:
+            saved = {q["query_id"]: q for q in catalog_store.list_saved_queries()}
+            assert qid in saved
+            assert saved[qid]["name"] == "My Test Analytics"
+            assert saved[qid]["sql_text"] == "SELECT 1"
+            assert saved[qid]["created_by"] == "tester"
+        finally:
+            catalog_store.delete_saved_query(qid)
+
+        assert qid not in {q["query_id"] for q in catalog_store.list_saved_queries()}
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_sql_analytics_can_save_and_rerun_a_successful_query_as_analytics():
+    """Functional test of 'Save as Analytics' through the real app: run a
+    real query, save it, confirm it shows up on the page (so it can be
+    clicked to re-run without retyping the SQL next time), and delete it.
+    Also checks the validation paths (no name, no query) fail cleanly."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+    pytest.importorskip("duckdb")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        import polars as pl
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        real_build_consolidated_df = catalog_store.build_consolidated_df
+        catalog_store.build_consolidated_df = lambda engagement_id, report_type: (
+            pl.DataFrame({"loan_id": ["L1", "L2"]}) if report_type == "ead_files" else pl.DataFrame()
+        )
+
+        query_id = None
+        try:
+            with TestClient(loan_main.app) as client:
+                sql = "SELECT COUNT(*) AS n FROM ead_files"
+                resp = client.post("/dashboard/analytics/sql/run", data={"sql": sql})
+                assert resp.status_code == 200 and resp.json()["rows"][0]["n"] == 2
+
+                # Validation: no name, no sql.
+                resp = client.post("/dashboard/analytics/sql/saved", data={"name": "", "sql": sql})
+                assert resp.status_code == 400
+                resp = client.post("/dashboard/analytics/sql/saved", data={"name": "X", "sql": ""})
+                assert resp.status_code == 400
+
+                resp = client.post(
+                    "/dashboard/analytics/sql/saved",
+                    data={"name": "EAD Loan Count", "sql": sql},
+                )
+                assert resp.status_code == 200
+                body = resp.json()
+                query_id = body["query_id"]
+                assert body["name"] == "EAD Loan Count"
+                assert body["sql_text"] == sql
+
+                # Persisted globally -- shows up on a fresh page load.
+                resp = client.get("/dashboard/analytics/sql")
+                assert resp.status_code == 200
+                assert "EAD Loan Count" in resp.text
+                assert f'data-query-id="{query_id}"' in resp.text
+
+                # Deleting it removes it from the store (and so, the page).
+                resp = client.post(f"/dashboard/analytics/sql/saved/{query_id}/delete")
+                assert resp.status_code == 200 and resp.json()["ok"] is True
+                query_id = None
+
+                resp = client.get("/dashboard/analytics/sql")
+                assert "EAD Loan Count" not in resp.text
+        finally:
+            catalog_store.build_consolidated_df = real_build_consolidated_df
+            if query_id:
+                catalog_store.delete_saved_query(query_id)
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── loan_app/main.py: unhandled exceptions must be visible, not silent ─────
 def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
     """

@@ -34,6 +34,7 @@ _templates_dir = Path(__file__).parent.parent / "web" / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
 
 PREVIEW_ROW_LIMIT = 500
+MAX_SAVED_QUERY_NAME_LENGTH = 120
 
 
 def _load_tables(engagement_id: str | None) -> dict[str, pl.DataFrame]:
@@ -66,7 +67,11 @@ async def sql_analytics_page(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="sql_analytics.html",
-        context={"tables": table_info, "default_sql": default_sql},
+        context={
+            "tables": table_info,
+            "default_sql": default_sql,
+            "saved_queries": store.list_saved_queries(),
+        },
     )
 
 
@@ -125,3 +130,33 @@ async def sql_analytics_export(request: Request):
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="query_result.csv"'},
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Saved queries -- "run it successfully once, click to re-run it next time"
+# instead of retyping the SQL. Global (not engagement-scoped): see the
+# comment on the saved_sql_queries table for why.
+# ══════════════════════════════════════════════════════════════════════════════
+@router.post("/dashboard/analytics/sql/saved")
+async def sql_analytics_save(request: Request):
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    sql = str(form.get("sql", "")).strip()
+    if not name:
+        return JSONResponse({"error": "Enter a name for this analytics."}, status_code=400)
+    if len(name) > MAX_SAVED_QUERY_NAME_LENGTH:
+        return JSONResponse(
+            {"error": f"Name is too long (max {MAX_SAVED_QUERY_NAME_LENGTH} characters)."}, status_code=400
+        )
+    if not sql:
+        return JSONResponse({"error": "No query to save."}, status_code=400)
+
+    created_by = request.session.get("username") or "admin"
+    query_id = store.create_saved_query(name, sql, created_by=created_by)
+    return JSONResponse({"query_id": query_id, "name": name, "sql_text": sql})
+
+
+@router.post("/dashboard/analytics/sql/saved/{query_id}/delete")
+async def sql_analytics_delete_saved(query_id: str):
+    store.delete_saved_query(query_id)
+    return JSONResponse({"ok": True})
