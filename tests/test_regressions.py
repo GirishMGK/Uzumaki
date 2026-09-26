@@ -4229,3 +4229,227 @@ def test_brs_consolidator_does_not_leak_into_main_app_report_types():
         assert "brs" not in available_report_types()
     finally:
         sys.path.remove(backend_dir)
+
+
+# ── EAD <-> BRS linking analytics ───────────────────────────────────────────
+def test_ead_vs_brs_disbursement_report_flags_missing_and_mismatched_only():
+    """Unit-level guard: EAD's disbursed_amount per loan (loan_id) vs the sum
+    of a BRS Disbursement export's amount for the same loan (agreement_no).
+    A loan whose BRS rows sum to the same total as EAD (even split across
+    several BRS rows) must NOT be flagged; a mismatch, a loan missing from
+    one side, and an extra BRS-only loan each must be."""
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import polars as pl
+
+        from fcmr_core.rules.ead_brs_linking import ead_vs_brs_disbursement_report
+
+        ead = pl.DataFrame(
+            {
+                "loan_id": ["L1", "L2", "L3", "L4"],
+                "disbursed_amount": [1000.0, 2000.0, 3000.0, 4000.0],
+            }
+        )
+        brs = pl.DataFrame(
+            {
+                "agreement_no": ["L1", "L1", "L2", "L5"],
+                "amount": [600.0, 400.0, 1500.0, 999.0],
+                "product": ["Auto", "Auto", "Auto", "Personal"],
+            }
+        )
+        result = {row["loan_id"]: row for row in ead_vs_brs_disbursement_report(ead, brs).to_dicts()}
+
+        assert "L1" not in result  # 600 + 400 == 1000, matched exactly
+        assert result["L2"]["status"] == "Amount Mismatch" and result["L2"]["difference"] == 500.0
+        assert result["L3"]["status"] == "Missing in BRS"
+        assert result["L4"]["status"] == "Missing in BRS"
+        assert result["L5"]["status"] == "Missing in EAD" and result["L5"]["product"] == "Personal"
+
+        # No BRS data at all -- no crash, every EAD loan flagged missing.
+        empty_brs = pl.DataFrame({"agreement_no": [], "amount": []})
+        assert ead_vs_brs_disbursement_report(ead, empty_brs).height == 4
+
+        # Wrong file uploaded (no agreement_no/amount columns) -- clear error,
+        # not a silent all-null join.
+        with pytest.raises(ValueError, match="doesn't look like a BRS Consolidator export"):
+            ead_vs_brs_disbursement_report(ead, pl.DataFrame({"some_other_col": [1, 2]}))
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_ead_vs_brs_collection_report_sums_principal_and_interest():
+    """Unit-level guard: EAD's principal_paid + interest_paid per loan vs
+    the BRS Collection export's amount for the same loan."""
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import polars as pl
+
+        from fcmr_core.rules.ead_brs_linking import ead_vs_brs_collection_report
+
+        ead = pl.DataFrame(
+            {
+                "loan_id": ["L1", "L2", "L3"],
+                "principal_paid": [100.0, 200.0, 300.0],
+                "interest_paid": [10.0, 20.0, 30.0],
+            }
+        )
+        brs = pl.DataFrame(
+            {
+                "agreement_no": ["L1", "L3"],
+                "amount": [110.0, 999.0],
+                "product": ["Auto", "Auto"],
+            }
+        )
+        result = {row["loan_id"]: row for row in ead_vs_brs_collection_report(ead, brs).to_dicts()}
+
+        assert "L1" not in result  # 100 + 10 == 110, matched exactly
+        assert result["L2"]["status"] == "Missing in BRS" and result["L2"]["ead_collection_amount"] == 220.0
+        assert result["L3"]["status"] == "Amount Mismatch"
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_read_brs_export_reads_csv_and_excel_and_rejects_unknown_extension():
+    """read_brs_export() reads back BRS Consolidator's own download formats
+    directly (no column mapping needed -- canonical names already in
+    place), and raises a clear error for anything else."""
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import io
+
+        import polars as pl
+
+        from fcmr_core.rules.ead_brs_linking import read_brs_export
+
+        df = pl.DataFrame({"agreement_no": ["L1"], "amount": [100.0]})
+
+        csv_df = read_brs_export("export.csv", df.write_csv().encode())
+        assert csv_df["agreement_no"].to_list() == ["L1"]
+
+        buf = io.BytesIO()
+        df.write_excel(buf)
+        xlsx_df = read_brs_export("export.xlsx", buf.getvalue())
+        assert xlsx_df["agreement_no"].to_list() == ["L1"]
+
+        with pytest.raises(ValueError, match="unsupported file type"):
+            read_brs_export("export.txt", b"junk")
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_ead_analytics_link_to_brs_end_to_end():
+    """Functional test of the new 'Link to BRS' checks through the real
+    app: upload + map a real EAD file, then upload a one-off BRS export as
+    a file (never catalogued -- BRS Consolidator has no persistence) on
+    both the Disbursement and Collection routes, and confirm the result is
+    persisted under a run_id so it can be downloaded again without
+    resubmitting the file."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import re
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        ead_csv = (
+            b"loan_id,disbursed_amount,principal_paid,interest_paid\n"
+            b"L1,1000.0,100.0,10.0\n"
+            b"L2,2000.0,200.0,20.0\n"
+        )
+
+        with TestClient(loan_main.app) as client:
+            # A dedicated engagement (see test_analytics_hub_...'s comment
+            # above) keeps this test's per-loan_id sums isolated from every
+            # other test's EAD uploads sharing the same loan_id ("L1", "L2")
+            # in the persistent dev catalog.duckdb's shared None/"default"
+            # engagement bucket.
+            resp = client.post("/", data={"name": "ead-brs-link-test"}, follow_redirects=False)
+            assert resp.status_code == 303
+
+            client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("ead_brs.csv", ead_csv, "text/csv"))],
+                follow_redirects=False,
+            )
+            upload_id = next(u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "ead_brs.csv")
+            resp = client.post(
+                f"/dashboard/uploads/{upload_id}/map-columns",
+                data={
+                    "map_loan_id": "loan_id",
+                    "map_disbursed_amount": "disbursed_amount",
+                    "map_principal_paid": "principal_paid",
+                    "map_interest_paid": "interest_paid",
+                },
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            resp = client.get("/dashboard/analytics/ead")
+            assert resp.status_code == 200 and "Link to BRS" in resp.text
+
+            brs_disb_csv = b"agreement_no,amount,product\nL1,1000.0,Auto\nL3,500.0,Auto\n"
+            resp = client.post(
+                "/dashboard/analytics/ead/brs-link/disbursement",
+                files=[("brs_file", ("brs_disb.csv", brs_disb_csv, "text/csv"))],
+            )
+            assert resp.status_code == 200 and "EAD vs BRS Disbursement Reconciliation" in resp.text
+            assert "L2" in resp.text  # missing in BRS
+            assert "L3" in resp.text  # missing in EAD
+
+            run_id = re.search(r"/dashboard/analytics/ead/brs-link/([\w-]+)/download", resp.text).group(1)
+            dl = client.get(f"/dashboard/analytics/ead/brs-link/{run_id}/download")
+            assert dl.status_code == 200
+            lines = dl.text.strip().splitlines()
+            assert len(lines) == 3  # header + L2 + L3 -- L1 matched exactly, correctly excluded
+
+            # Revisiting the same run_id's download later re-serves the
+            # persisted CSV without needing the BRS file again.
+            dl_again = client.get(f"/dashboard/analytics/ead/brs-link/{run_id}/download")
+            assert dl_again.status_code == 200 and dl_again.text == dl.text
+
+            brs_coll_csv = b"agreement_no,amount,product\nL1,110.0,Auto\n"
+            resp = client.post(
+                "/dashboard/analytics/ead/brs-link/collection",
+                files=[("brs_file", ("brs_coll.csv", brs_coll_csv, "text/csv"))],
+            )
+            assert resp.status_code == 200 and "EAD vs BRS Collection Reconciliation" in resp.text
+            assert "L2" in resp.text  # 200 + 20 == 220, missing in BRS
+
+            # Wrong file entirely (not a BRS export) -- clean 400, not a crash.
+            resp = client.post(
+                "/dashboard/analytics/ead/brs-link/disbursement",
+                files=[("brs_file", ("not_brs.csv", b"col_a,col_b\n1,2\n", "text/csv"))],
+            )
+            assert resp.status_code == 400
+
+            # Unknown kind in the URL -- 404, not a 500.
+            resp = client.post(
+                "/dashboard/analytics/ead/brs-link/nonsense",
+                files=[("brs_file", ("x.csv", b"agreement_no,amount\nL1,1\n", "text/csv"))],
+            )
+            assert resp.status_code == 404
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]

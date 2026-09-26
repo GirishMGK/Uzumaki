@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 
 import polars as pl
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -25,6 +25,11 @@ from fcmr_core.config import settings
 from fcmr_core.reporting.aggregation import aggregate_exception_codes, aggregate_status_counts
 from fcmr_core.reporting.builder import build_exception_csvs
 from fcmr_core.reporting.charts import build_bar_chart, build_donut_svg
+from fcmr_core.rules.ead_brs_linking import (
+    ead_vs_brs_collection_report,
+    ead_vs_brs_disbursement_report,
+    read_brs_export,
+)
 from fcmr_core.rules.ead_cross_dataset import (
     ucid_cross_check_report,
     written_off_customer_fresh_disbursal_report,
@@ -48,6 +53,10 @@ def _consolidated_ead_df(engagement_id: str | None) -> pl.DataFrame:
 
 def _run_outputs_dir(run_id: str) -> Path:
     return settings.outputs_dir / f"ead_{run_id}"
+
+
+def _brs_link_outputs_dir(run_id: str) -> Path:
+    return settings.outputs_dir / f"ead_brs_{run_id}"
 
 
 @router.get("/dashboard/analytics/ead", response_class=HTMLResponse)
@@ -256,3 +265,66 @@ async def ead_summary_download(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Link to BRS — reconciles EAD against a one-off uploaded BRS Consolidator
+# export (Disbursement or Collection). Unlike the summary reports above,
+# the second dataset here is never catalogued (BRS Consolidator is a
+# stateless standalone tool), so it can't be recomputed on a GET download
+# request -- the result is persisted to disk under a run_id instead, same
+# convention as the row-rule exception runs.
+# ══════════════════════════════════════════════════════════════════════════════
+_BRS_LINK_TITLES = {
+    "disbursement": "EAD vs BRS Disbursement Reconciliation",
+    "collection": "EAD vs BRS Collection Reconciliation",
+}
+
+
+@router.post("/dashboard/analytics/ead/brs-link/{kind}", response_class=HTMLResponse)
+async def ead_brs_link_run(request: Request, kind: str, brs_file: UploadFile = File(...)):
+    if kind not in _BRS_LINK_TITLES:
+        raise HTTPException(status_code=404, detail="Unknown BRS link check")
+
+    engagement_id = request.session.get("engagement_id")
+    ead_df = _consolidated_ead_df(engagement_id)
+    if ead_df.is_empty():
+        raise HTTPException(status_code=400, detail="No ready EAD files found for this engagement.")
+
+    data = await brs_file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded BRS file is empty.")
+
+    try:
+        brs_df = read_brs_export(brs_file.filename or "", data)
+        if kind == "disbursement":
+            result = ead_vs_brs_disbursement_report(ead_df, brs_df)
+        else:
+            result = ead_vs_brs_collection_report(ead_df, brs_df)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    run_id = str(uuid.uuid4())
+    out_dir = _brs_link_outputs_dir(run_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result.write_csv(out_dir / f"{run_id}.csv")
+
+    return templates.TemplateResponse(
+        request=request,
+        name="ead_summary_result.html",
+        context={
+            "title": _BRS_LINK_TITLES[kind],
+            "columns": result.columns,
+            "rows": result.to_dicts(),
+            "row_count": len(result),
+            "download_url": f"/dashboard/analytics/ead/brs-link/{run_id}/download",
+        },
+    )
+
+
+@router.get("/dashboard/analytics/ead/brs-link/{run_id}/download")
+async def ead_brs_link_download(run_id: str):
+    path = _brs_link_outputs_dir(run_id) / f"{run_id}.csv"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+    return FileResponse(path, media_type="text/csv", filename=f"EAD_BRS_Link_{run_id[:8]}.csv")
