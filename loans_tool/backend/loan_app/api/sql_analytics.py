@@ -18,13 +18,16 @@ persist or corrupt even if it tries a DDL/DML statement.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import duckdb
 import polars as pl
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 
 from fcmr_core.catalog import store
 from fcmr_core.schemas.loader import available_report_types
@@ -52,6 +55,32 @@ def _run_query(tables: dict[str, pl.DataFrame], sql: str) -> pl.DataFrame:
         for name, df in tables.items():
             con.register(name, df)
         return con.execute(sql).pl()
+    finally:
+        con.close()
+
+
+def _strip_trailing_semicolon(sql: str) -> str:
+    s = sql.rstrip()
+    return s[:-1].rstrip() if s.endswith(";") else s
+
+
+def _run_query_to_csv(tables: dict[str, pl.DataFrame], sql: str, dest: Path) -> None:
+    """Stream a query's result straight to a CSV file via DuckDB's own COPY,
+    never materializing it as a polars DataFrame at all -- unlike
+    `_run_query` (used by the /run preview, which needs the DataFrame for
+    its row-capped JSON response), an export just needs the bytes on disk,
+    and COPY writes them directly as DuckDB produces each batch."""
+    con = duckdb.connect(":memory:")
+    try:
+        for name, df in tables.items():
+            con.register(name, df)
+        # A single trailing ';' is valid on its own but not inside the
+        # parens COPY wraps it in -- strip it so a query that already
+        # worked via _run_query's plain con.execute(sql) (which tolerates
+        # one) doesn't break only on export.
+        inner_sql = _strip_trailing_semicolon(sql)
+        safe_dest = str(dest).replace("'", "''")
+        con.execute(f"COPY ({inner_sql}) TO '{safe_dest}' (FORMAT CSV, HEADER)")
     finally:
         con.close()
 
@@ -119,16 +148,26 @@ async def sql_analytics_export(request: Request):
             status_code=400, detail="No ingested files ready yet — upload and map at least one file first."
         )
 
+    # Writes straight to a temp file and serves it via FileResponse
+    # (streamed in chunks by Starlette) rather than building the whole CSV
+    # as a Python string, then again as a bytes object, then handing that
+    # single in-memory blob to Response() as the entire HTTP body -- for a
+    # large result that's the same data held twice in Python memory with
+    # nothing sent to the browser until all of it is ready.
+    fd, tmp_name = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
     try:
-        result = _run_query(tables, sql)
+        _run_query_to_csv(tables, sql, tmp_path)
     except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    csv_bytes = result.write_csv().encode("utf-8")
-    return Response(
-        content=csv_bytes,
+    return FileResponse(
+        tmp_path,
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="query_result.csv"'},
+        filename="query_result.csv",
+        background=BackgroundTask(tmp_path.unlink, missing_ok=True),
     )
 
 

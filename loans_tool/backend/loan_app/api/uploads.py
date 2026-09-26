@@ -113,7 +113,7 @@ def _as_csv_bytes(filename: str, content: bytes) -> tuple[str, bytes] | None:
     if lower.endswith(".csv"):
         return filename, content
     if lower.endswith((".xlsx", ".xls")):
-        df = pl.read_excel(io.BytesIO(content), engine="openpyxl")
+        df = pl.read_excel(io.BytesIO(content), engine="calamine")
     elif lower.endswith(".parquet"):
         df = pl.read_parquet(io.BytesIO(content))
     else:
@@ -225,6 +225,28 @@ async def upload_form(request: Request):
     )
 
 
+def _check_size(size: int, filename: str) -> None:
+    if size > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"File {filename} exceeds 5 GB limit.")
+
+
+async def _stream_to_path(file: UploadFile, dest: Path, chunk_size: int = 256 * 1024) -> int:
+    """Copy an UploadFile straight to disk in fixed-size chunks, checking
+    the running total against the upload cap as data arrives. Never holds
+    more than one chunk of the file in memory at a time -- unlike a plain
+    `await file.read()` (the whole file, up to the 5 GB cap, as one Python
+    bytes object) followed by a chunked *re*-write of that same in-memory
+    buffer, which is what this replaces. Returns the total bytes written.
+    """
+    total = 0
+    with dest.open("wb") as out:
+        while chunk := await file.read(chunk_size):
+            total += len(chunk)
+            _check_size(total, file.filename or dest.name)
+            out.write(chunk)
+    return total
+
+
 @router.post("/upload")
 async def do_upload(
     request: Request,
@@ -232,6 +254,7 @@ async def do_upload(
     folder: list[UploadFile] = File(default=[]),
     files: list[UploadFile] = File(default=[]),
 ):
+    import shutil
     import tempfile
     import zipfile
 
@@ -264,31 +287,81 @@ async def do_upload(
     # Process files from .zip if present
     temp_dir = None
     try:
-        processed_files = []
+        # (filename, source) queued for the write phase below. `source` is
+        # either a Path to a file already sitting on disk to be moved into
+        # place (a streamed direct CSV upload, or a CSV extracted from a
+        # zip -- neither ever needs to be read into Python memory at all),
+        # or `bytes` already fully materialized (an Excel/Parquet file
+        # converted to CSV -- both formats need their whole file available
+        # to parse, so there's no streaming option for them regardless of
+        # source).
+        processed_files: list[tuple[str, Path | bytes]] = []
+
+        def _ensure_temp_dir() -> tempfile.TemporaryDirectory:
+            nonlocal temp_dir
+            if temp_dir is None:
+                temp_dir = tempfile.TemporaryDirectory()
+            return temp_dir
 
         for file in upload_files:
-            if file.filename and file.filename.lower().endswith(".zip"):
-                # Unzip and extract CSV/Excel/Parquet files
-                logger.info("Reading uploaded zip: %s", file.filename)
-                content = await file.read()
-                logger.info("Read %s (%d bytes); extracting", file.filename, len(content))
-                temp_dir = tempfile.TemporaryDirectory()
-                with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                    zf.extractall(temp_dir.name)
-                # Collect all supported files from the unzipped directory
-                for root, dirs, filenames in os.walk(temp_dir.name):
+            fname_lower = (file.filename or "").lower()
+
+            if fname_lower.endswith(".zip"):
+                # Stream the zip itself straight to disk rather than
+                # buffering potentially several GB of zip bytes in memory
+                # just to hand them to zipfile.ZipFile -- it opens just as
+                # well from a path as from BytesIO.
+                logger.info("Streaming uploaded zip to disk: %s", file.filename)
+                td = _ensure_temp_dir()
+                zip_path = Path(td.name) / f"{uuid.uuid4()}.zip"
+                total = await _stream_to_path(file, zip_path)
+                logger.info("Streamed %s (%d bytes); extracting", file.filename, total)
+
+                extract_dir = Path(td.name) / f"extracted_{uuid.uuid4()}"
+                with zipfile.ZipFile(zip_path) as zf:
+                    zf.extractall(extract_dir)
+                zip_path.unlink(missing_ok=True)
+
+                for root, dirs, filenames in os.walk(extract_dir):
                     for fname in filenames:
-                        if fname.lower().endswith(_SUPPORTED_UPLOAD_EXTENSIONS):
-                            full_path = Path(root) / fname
-                            converted = _as_csv_bytes(fname, full_path.read_bytes())
+                        if not fname.lower().endswith(_SUPPORTED_UPLOAD_EXTENSIONS):
+                            continue
+                        full_path = Path(root) / fname
+                        if fname.lower().endswith(".csv"):
+                            # Already on disk in the format we want --
+                            # queue it to be moved into place directly,
+                            # never read fully into memory.
+                            _check_size(full_path.stat().st_size, fname)
+                            processed_files.append((fname, full_path))
+                        else:
+                            raw = full_path.read_bytes()
+                            _check_size(len(raw), fname)
+                            converted = _as_csv_bytes(fname, raw)
                             if converted:
+                                _check_size(len(converted[1]), fname)
                                 processed_files.append(converted)
-            elif file.filename and file.filename.lower().endswith(_SUPPORTED_UPLOAD_EXTENSIONS):
+
+            elif fname_lower.endswith(".csv"):
+                # Stream straight to a staging path -- never materialize
+                # the whole file in a Python bytes object. Moved into its
+                # final upload_id-keyed location in the write phase below.
+                logger.info("Streaming uploaded file to disk: %s", file.filename)
+                td = _ensure_temp_dir()
+                staged_path = Path(td.name) / f"{uuid.uuid4()}.csv"
+                total = await _stream_to_path(file, staged_path)
+                logger.info("Streamed %s (%d bytes)", file.filename, total)
+                processed_files.append((file.filename, staged_path))
+
+            elif fname_lower.endswith(_SUPPORTED_UPLOAD_EXTENSIONS):
+                # Excel/Parquet: no streaming path -- polars needs the
+                # whole file available to parse either format's structure.
                 logger.info("Reading uploaded file: %s", file.filename)
                 content = await file.read()
                 logger.info("Read %s (%d bytes)", file.filename, len(content))
+                _check_size(len(content), file.filename)
                 converted = _as_csv_bytes(file.filename, content)
                 if converted:
+                    _check_size(len(converted[1]), file.filename)
                     processed_files.append(converted)
 
         if not processed_files:
@@ -304,14 +377,12 @@ async def do_upload(
         # still making progress.
         created_uploads = []
         with store.open_connection() as con:
-            for filename, content in processed_files:
+            for filename, source in processed_files:
                 # Guard against a filename carrying path separators (e.g. a
                 # crafted multipart request, or a zip entry with a "../"
                 # style name) turning into a write outside dest_dir below,
                 # or just crashing on a missing intermediate directory.
                 filename = os.path.basename(filename)
-                if len(content) > settings.max_upload_bytes:
-                    raise HTTPException(status_code=413, detail=f"File {filename} exceeds 5 GB limit.")
 
                 # Create upload row with batch_id and engagement_id
                 logger.info("Creating upload record for %s", filename)
@@ -323,15 +394,17 @@ async def do_upload(
                     con=con,
                 )
 
-                # Stream write in 256 KB chunks — avoids holding full file in RAM
                 dest_dir = settings.uploads_dir / upload_id
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 csv_path = dest_dir / filename
-                logger.info("Writing %s to disk (%d bytes) at %s", filename, len(content), csv_path)
-                chunk_size = 256 * 1024
-                with csv_path.open("wb") as out:
-                    for i in range(0, len(content), chunk_size):
-                        out.write(content[i : i + chunk_size])
+
+                if isinstance(source, Path):
+                    logger.info("Moving %s into place at %s", filename, csv_path)
+                    shutil.move(str(source), str(csv_path))
+                else:
+                    logger.info("Writing %s to disk (%d bytes) at %s", filename, len(source), csv_path)
+                    with csv_path.open("wb") as out:
+                        out.write(source)
                 logger.info("Finished writing %s to disk", filename)
 
                 # Sniff headers and set mapping_pending

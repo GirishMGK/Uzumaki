@@ -1867,6 +1867,77 @@ def test_sql_analytics_runs_real_query_across_report_types():
                 del sys.modules[mod]
 
 
+def test_sql_analytics_export_streams_to_file_and_survives_trailing_semicolon():
+    """Performance regression guard: /export used to build the whole CSV
+    as a Python string, then again as bytes, then hand that one in-memory
+    blob to Response() as the entire HTTP body. It now runs the query via
+    DuckDB's own COPY straight to a temp file and serves that with
+    FileResponse (streamed) instead -- bypassing polars entirely rather
+    than just moving where the bytes get buffered, since COPY writes the
+    result directly as DuckDB produces it, unlike /run which still needs a
+    materialized DataFrame for its row-capped JSON preview. Wrapping the
+    user's SQL in `COPY (<sql>) TO ...` breaks on a query with a trailing
+    ';' (valid standalone, not valid inside those parens) -- confirms that
+    still exports correctly since /run's plain con.execute(sql) already
+    tolerated one and export must not regress on a query that worked
+    there. Also checks the actual CSV bytes served are correct, and that
+    the download headers (filename, content-type) are what the browser
+    needs to save it."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+    pytest.importorskip("duckdb")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import polars as pl
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        real_build_consolidated_df = catalog_store.build_consolidated_df
+        catalog_store.build_consolidated_df = lambda engagement_id, report_type: (
+            pl.DataFrame({"loan_id": ["L1", "L2"], "disbursed_amount": [100.0, 200.0]})
+            if report_type == "ead_files"
+            else pl.DataFrame()
+        )
+
+        try:
+            with TestClient(loan_main.app) as client:
+                resp = client.post(
+                    "/dashboard/analytics/sql/export",
+                    data={"sql": "SELECT * FROM ead_files ORDER BY loan_id;"},
+                )
+                assert resp.status_code == 200
+                assert resp.headers["content-type"].startswith("text/csv")
+                assert 'filename="query_result.csv"' in resp.headers["content-disposition"]
+                lines = resp.text.strip().splitlines()
+                assert lines[0] == "loan_id,disbursed_amount"
+                assert lines[1:] == ["L1,100.0", "L2,200.0"]
+
+                # Bad SQL still fails cleanly (400), not a 500, and doesn't
+                # leave a temp file behind (the route unlinks it on error).
+                resp = client.post(
+                    "/dashboard/analytics/sql/export", data={"sql": "SELECT * FROM no_such_table"}
+                )
+                assert resp.status_code == 400
+        finally:
+            catalog_store.build_consolidated_df = real_build_consolidated_df
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 def test_saved_sql_queries_crud():
     """Unit-level guard for the saved-analytics store functions: create,
     list (newest first), and delete a saved SQL Analytics query."""
@@ -2079,10 +2150,10 @@ def test_upload_checkpoint_logging_pinpoints_progress():
         new_content = processing_log.read_text(encoding="utf-8")[before_size:]
         expected_in_order = [
             "Upload request received: 1 file(s)",
-            "Reading uploaded file: checkpoint_test.csv",
-            "Read checkpoint_test.csv",
+            "Streaming uploaded file to disk: checkpoint_test.csv",
+            "Streamed checkpoint_test.csv",
             "Creating upload record for checkpoint_test.csv",
-            "Writing checkpoint_test.csv to disk",
+            "Moving checkpoint_test.csv into place",
             "Finished writing checkpoint_test.csv to disk",
             "ready for column mapping",
             "Upload request complete: 1 file(s) processed",
@@ -2898,6 +2969,152 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
                 del sys.modules[mod]
 
 
+def test_do_upload_streams_csv_and_zipped_csv_without_corrupting_content():
+    """Performance regression guard: do_upload() used to read an entire
+    uploaded file into one Python bytes object (`await file.read()`) before
+    writing it back out in chunks -- for a multi-GB file that's the whole
+    thing held in memory before a single byte reaches disk. Both a direct
+    .csv upload and a .csv extracted from a .zip are now streamed straight
+    to disk instead (a zip's own bytes are streamed to a temp file too,
+    rather than buffered, before zipfile opens it from that path). This is
+    a content-correctness guard for that rewrite, not a memory-usage
+    guard: on a moderately large real file (5,000 rows) it confirms the
+    ingested row count and a specific known row's value survive the new
+    streaming/move path exactly, for both the direct-CSV and zip-extracted-
+    CSV cases."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import io
+        import zipfile
+        from pathlib import Path
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        n = 5000
+        lines = ["loan_id,disbursed_amount"] + [f"L{i},{i * 10}" for i in range(n)]
+        csv_bytes = ("\n".join(lines) + "\n").encode("utf-8")
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("zipped_stream.csv", csv_bytes)
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("direct_stream.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("batch_stream.zip", zip_buf.getvalue(), "application/zip"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            uploads = {u["filename"]: u for u in catalog_store.list_uploads()}
+            for filename in ("direct_stream.csv", "zipped_stream.csv"):
+                upload = uploads[filename]
+                assert upload["status"] == "mapping_pending"
+                on_disk = Path(upload["csv_path"])
+                assert on_disk.exists()
+                content = on_disk.read_text(encoding="utf-8")
+                assert content == csv_bytes.decode("utf-8")
+                assert "L4999,49990" in content
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_do_upload_enforces_size_cap_while_streaming_direct_and_zipped_files():
+    """The 5 GB cap has to still be enforced with the streaming rewrite --
+    both for a direct CSV upload (checked as chunks arrive, not after a
+    full `await file.read()`) and for a CSV extracted from a zip (checked
+    against its on-disk extracted size). Lowers the cap via monkeypatch
+    rather than actually uploading gigabytes in a test."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import io
+        import zipfile
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.config import settings as fcmr_settings
+
+        real_cap = fcmr_settings.max_upload_bytes
+        fcmr_settings.max_upload_bytes = 200  # tiny, deliberately below the test payloads
+
+        oversized_csv = ("loan_id,disbursed_amount\n" + "\n".join(f"L{i},{i}" for i in range(50))).encode()
+        assert len(oversized_csv) > fcmr_settings.max_upload_bytes
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("oversized_in_zip.csv", oversized_csv)
+
+        try:
+            with TestClient(loan_main.app) as client:
+                resp = client.post(
+                    "/dashboard/upload",
+                    data={"report_type": "ead_files"},
+                    files=[("files", ("direct_oversized.csv", oversized_csv, "text/csv"))],
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 413
+
+                resp = client.post(
+                    "/dashboard/upload",
+                    data={"report_type": "ead_files"},
+                    files=[("files", ("oversized.zip", zip_buf.getvalue(), "application/zip"))],
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 413
+
+                # A file genuinely under the (lowered) cap still succeeds.
+                small_csv = b"loan_id,disbursed_amount\nL1,100\n"
+                assert len(small_csv) <= fcmr_settings.max_upload_bytes
+                resp = client.post(
+                    "/dashboard/upload",
+                    data={"report_type": "ead_files"},
+                    files=[("files", ("small.csv", small_csv, "text/csv"))],
+                    follow_redirects=False,
+                )
+                assert resp.status_code == 303
+        finally:
+            fcmr_settings.max_upload_bytes = real_cap
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── fcmr_core/schemas/loader.py: best_raw_for_canonical dedup ───────────────
 def test_best_raw_for_canonical_prefers_exact_match_over_near_duplicate():
     """
@@ -3153,6 +3370,41 @@ def test_ingest_csv_rejects_a_rename_that_would_duplicate_a_column():
         sys.path.remove(backend_dir)
 
 
+def test_ingest_csv_row_counts_come_from_the_copy_statement_not_a_second_scan():
+    """Performance regression guard: _stream_to_parquet() used to run a
+    `SELECT COUNT(*) FROM raw_csv` before the COPY, then a second
+    `SELECT COUNT(*) FROM read_parquet(...)` after it -- two extra full
+    passes over the same CSV parse just to produce two numbers
+    (total_rows, accepted_rows) that were always equal in practice, since
+    both counted the exact same already-ignore_errors-filtered view the
+    COPY itself reads from. Now both come from the COPY statement's own
+    returned row count in one pass. Confirms total_rows/accepted_rows are
+    still correct (and still equal, rejected_rows still 0) for an ordinary
+    file with no genuinely malformed rows."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        import tempfile
+        from pathlib import Path
+
+        from fcmr_core.ingestion.pipeline import ingest_csv
+
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = Path(tmp) / "f.csv"
+            csv_path.write_text(
+                "loan_id,disbursed_amount\nL1,100\nL2,200\nL3,300\n", encoding="utf-8"
+            )
+            result = ingest_csv(csv_path, "ead_files")
+
+            assert result.total_rows == 3
+            assert result.accepted_rows == 3
+            assert result.rejected_rows == 0
+            assert result.rejects_path is None
+    finally:
+        sys.path.remove(backend_dir)
+
+
 def test_map_columns_page_suggests_exact_match_not_near_duplicate():
     """
     Real functional check of the GET /map-columns screen for a file with
@@ -3320,6 +3572,44 @@ def test_aggregate_status_counts_reads_real_counts_not_always_zero():
             wide_path.write_text("overall_status\nWARN\nWARN\nOK\nERROR\n")
             counts = aggregate_status_counts(wide_path)
             assert counts == {"OK": 1, "WARN": 2, "ERROR": 1}
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_aggregate_exception_codes_vectorized_matches_prior_python_loop_semantics():
+    """Regression guard for a performance fix: aggregate_exception_codes()
+    used to split/strip/count the pipe-joined exception_codes column in a
+    pure-Python row loop -- correct, but a real cost on a large batch since
+    this runs on every EAD Analytics run view and download. Rewritten as a
+    vectorized Polars split/explode/group_by. This pins the exact counting
+    semantics that rewrite must preserve: multi-code rows split correctly,
+    a code repeated within one row's pipe-list counts once per occurrence,
+    blank/whitespace-only values contribute nothing, and top_n limits
+    correctly (None returns every code, not just the default 10)."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import tempfile
+        from pathlib import Path
+
+        from fcmr_core.reporting.aggregation import aggregate_exception_codes
+
+        with tempfile.TemporaryDirectory() as tmp:
+            wide_path = Path(tmp) / "wide.csv"
+            # Row 1: two distinct codes. Row 2: same code twice (pipe-joined
+            # by a hypothetical multi-rule match). Row 3: blank (OK row).
+            # Row 4: whitespace padding around codes, must still be counted.
+            wide_path.write_text(
+                "exception_codes\nCODE_A|CODE_B\nCODE_A|CODE_A\n\n CODE_C  | CODE_A \n"
+            )
+            all_counts = aggregate_exception_codes(wide_path, top_n=None)
+            assert all_counts == {"CODE_A": 4, "CODE_B": 1, "CODE_C": 1}
+
+            top_1 = aggregate_exception_codes(wide_path, top_n=1)
+            assert top_1 == {"CODE_A": 4}
+
+            # No wide CSV yet (run hasn't happened) -- empty, not a crash.
+            assert aggregate_exception_codes(Path(tmp) / "missing.csv") == {}
     finally:
         sys.path.remove(backend_dir)
 

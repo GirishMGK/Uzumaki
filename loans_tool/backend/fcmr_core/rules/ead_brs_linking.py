@@ -67,7 +67,7 @@ def read_brs_export(filename: str, data: bytes) -> pl.DataFrame:
     if lower.endswith(".csv"):
         return pl.read_csv(data, infer_schema_length=10000, ignore_errors=True)
     if lower.endswith((".xlsx", ".xls")):
-        return pl.read_excel(io.BytesIO(data), engine="openpyxl")
+        return pl.read_excel(io.BytesIO(data), engine="calamine")
     if lower.endswith(".parquet"):
         return pl.read_parquet(io.BytesIO(data))
     raise ValueError(f"{filename}: unsupported file type (expected .csv, .xlsx, .xls, or .parquet)")

@@ -139,7 +139,6 @@ def _stream_to_parquet(
         """)
 
         raw_cols = [row[0] for row in con.execute("DESCRIBE raw_csv").fetchall()]
-        total_rows: int = con.execute("SELECT COUNT(*) FROM raw_csv").fetchone()[0]  # type: ignore[index]
 
         # Resolve to a collision-free {raw: final_name} covering every raw
         # column, not just the ones rename_map touches -- a rename target
@@ -166,19 +165,24 @@ def _stream_to_parquet(
 
         select_sql = ", ".join(select_parts)
 
-        con.execute(f"""
+        # DuckDB's own COPY statement returns the row count it wrote --
+        # capture that directly instead of the two separate full CSV/Parquet
+        # scans this used to run just to compute total_rows and
+        # accepted_rows (a `SELECT COUNT(*) FROM raw_csv` before the COPY,
+        # then a `SELECT COUNT(*) FROM read_parquet(...)` after it). Both of
+        # those counted the exact same already-`ignore_errors`-filtered view
+        # this COPY reads from, so they were always equal in practice --
+        # this just stops paying for a second full parse of the CSV to
+        # confirm a number the COPY already knows.
+        copy_result = con.execute(f"""
             COPY (
                 SELECT row_number() OVER () AS _row_num, {select_sql}
                 FROM raw_csv
             ) TO '{parquet_path.as_posix()}'
             (FORMAT PARQUET, COMPRESSION ZSTD)
         """)
-
-        accepted_rows: int = con.execute(
-            f"SELECT COUNT(*) FROM read_parquet('{parquet_path.as_posix()}')"
-        ).fetchone()[
-            0
-        ]  # type: ignore[index]
+        accepted_rows: int = copy_result.fetchone()[0]  # type: ignore[index]
+        total_rows = accepted_rows
 
     rejected_rows = total_rows - accepted_rows
 

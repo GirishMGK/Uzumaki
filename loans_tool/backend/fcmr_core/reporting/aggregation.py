@@ -55,23 +55,29 @@ def aggregate_exception_codes(wide_csv_path: Path, top_n: int | None = 10) -> di
         return {}
 
     try:
+        # Fully vectorized in Polars (Rust): split the pipe-joined codes per
+        # row, explode to one row per code, then value_counts(). The
+        # previous version did this same split/strip/count in a pure-Python
+        # loop over every row -- fine at a few thousand rows, but a real
+        # cost on a large batch (this runs on every EAD Analytics run view
+        # and download), same class of fix as build_exception_csvs' own
+        # vectorization above. (A group_by(..., maintain_order=True) here
+        # measured *slower* than the old Python loop at 2M rows --
+        # maintain_order forces a non-parallel path; value_counts() doesn't
+        # need it, since which of several equal-count codes sorts first is
+        # a cosmetic chart-ordering detail, not something callers rely on.)
         df = pl.read_csv(wide_csv_path, columns=["exception_codes"], infer_schema_length=0)
-        # Parse pipe-delimited codes
-        all_codes = []
-        for codes_str in df["exception_codes"]:
-            if codes_str and str(codes_str).strip():
-                codes = [c.strip() for c in str(codes_str).split("|") if c.strip()]
-                all_codes.extend(codes)
-
-        # Count and sort
-        code_counts = {}
-        for code in all_codes:
-            code_counts[code] = code_counts.get(code, 0) + 1
-
-        # Return top N (or all if top_n is None)
-        sorted_codes = sorted(code_counts.items(), key=lambda x: x[1], reverse=True)
-        limit = top_n if top_n is not None else len(sorted_codes)
-        return {code: count for code, count in sorted_codes[:limit]}
+        codes = (
+            df.get_column("exception_codes")
+            .fill_null("")
+            .str.split("|")
+            .explode(empty_as_null=False)
+            .str.strip_chars()
+        )
+        codes = codes.filter(codes != "")
+        counts = codes.value_counts(sort=True)
+        limit = top_n if top_n is not None else counts.height
+        return {row["exception_codes"]: row["count"] for row in counts.head(limit).to_dicts()}
     except Exception:
         return {}
 
