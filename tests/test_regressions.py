@@ -3893,3 +3893,80 @@ def test_ead_analytics_cross_dataset_checks_end_to_end():
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── Analytics hub: "pick a dataset, then pick what to run" landing page ────
+def test_analytics_hub_lists_every_dataset_and_links_only_where_analytics_exist():
+    """Functional test of the new /dashboard/analytics hub through the real
+    app: it must list every registered report type (not just ones with
+    analytics), link "Open Analytics" only for EAD Files (-> the EAD
+    Analytics screen) and Customer Master (-> the existing per-upload
+    dashboard, left unmigrated per the user's explicit choice), and say
+    "no analytics defined yet" for the rest (Technical Writeoff, Collection
+    Report, Disbursement Report). Also checks the ready count updates once
+    a real EAD file is uploaded and mapped."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        with TestClient(loan_main.app) as client:
+            # A dedicated engagement, selected via the real engagements
+            # route, keeps this test's ready-count assertions isolated from
+            # every other test's EAD uploads -- those all land in the
+            # shared None/"default" engagement bucket in this persistent
+            # dev catalog.duckdb, and the hub's ready count (like EAD
+            # Consolidation's and EAD Analytics' own) is engagement-scoped
+            # only when a real engagement_id is in session.
+            resp = client.post("/", data={"name": "analytics-hub-test"}, follow_redirects=False)
+            assert resp.status_code == 303
+
+            resp = client.get("/dashboard/analytics")
+            assert resp.status_code == 200
+            for label in ("EAD Files", "Customer Master", "Technical Writeoff", "Collection Report", "Disbursement Report"):
+                assert label in resp.text
+            assert 'href="/dashboard/analytics/ead"' in resp.text
+            assert 'href="/dashboard"' in resp.text
+            assert resp.text.count("No analytics defined yet for this dataset type.") == 3
+
+            # The new top-level nav item is present and points at the hub.
+            assert 'href="/dashboard/analytics"' in resp.text
+
+            ead_csv = b"loan_id,disbursement_date\nL1,01-01-2024\n"
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("hub.csv", ead_csv, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+            upload_id = next(u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "hub.csv")
+            resp = client.post(
+                f"/dashboard/uploads/{upload_id}/map-columns",
+                data={"map_loan_id": "loan_id", "map_disbursement_date": "disbursement_date"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            resp = client.get("/dashboard/analytics")
+            assert resp.status_code == 200
+            ead_card = resp.text[resp.text.index("EAD Files") : resp.text.index("EAD Files") + 300]
+            assert "1 file ready" in ead_card
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
