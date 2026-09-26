@@ -2990,6 +2990,69 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
                 del sys.modules[mod]
 
 
+def test_download_schema_produces_template_and_reference_sheets():
+    """New feature: 'Download Schema' lets someone prepare a source file
+    before uploading, instead of only discovering the expected columns at
+    the mapping step. Verifies the real route returns a genuine two-sheet
+    Excel workbook for a real report type (ead_files): a "Template" sheet
+    whose header row is exactly the canonical field names (a file built
+    from this needs no mapping at all), and a "Field Reference" sheet
+    listing every canonical field's required/dtype/accepted-aliases --
+    including a known required field (loan_id) and a known alias
+    (AgreementNo) so this isn't just checking sheet names exist. Also
+    checks the unknown-report-type path 404s cleanly."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("openpyxl")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import io
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import openpyxl
+        from fastapi.testclient import TestClient
+
+        with TestClient(loan_main.app) as client:
+            resp = client.get("/dashboard/schema/ead_files/download")
+            assert resp.status_code == 200
+            assert resp.headers["content-type"] == (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            assert "EAD_Files_Schema.xlsx" in resp.headers["content-disposition"]
+
+            wb = openpyxl.load_workbook(io.BytesIO(resp.content))
+            assert wb.sheetnames == ["Template", "Field Reference"]
+
+            template_headers = [c.value for c in next(wb["Template"].iter_rows(max_row=1)) if c.value]
+            assert "loan_id" in template_headers
+            assert "disbursed_amount" in template_headers
+            # No data rows -- just the header, ready to fill in.
+            assert wb["Template"].max_row == 1
+
+            ref = wb["Field Reference"]
+            ref_rows = {row[0].value: row for row in ref.iter_rows(min_row=2) if row[0].value}
+            loan_id_row = ref_rows["loan_id"]
+            assert loan_id_row[1].value == "Yes"  # Required
+            assert "AgreementNo" in loan_id_row[3].value  # Accepted Column Names
+
+            # Unknown report type -- clean 404, not a 500.
+            resp = client.get("/dashboard/schema/not_a_real_type/download")
+            assert resp.status_code == 404
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 def test_do_upload_streams_csv_and_zipped_csv_without_corrupting_content():
     """Performance regression guard: do_upload() used to read an entire
     uploaded file into one Python bytes object (`await file.read()`) before

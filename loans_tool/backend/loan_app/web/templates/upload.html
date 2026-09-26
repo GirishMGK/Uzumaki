@@ -18,7 +18,11 @@
           <option value="{{ rt }}">{{ "EAD Files" if rt == "ead_files" else rt.replace("_"," ").title() }}</option>
           {% endfor %}
         </select>
-        <p class="help-text">Select the type of report you are uploading.</p>
+        <p class="help-text">
+          Select the type of report you are uploading.
+          <a href="#" id="download-schema-link" target="_blank" rel="noopener" style="margin-left:6px;">⬇ Download Schema</a>
+          for this report type — a blank template with the exact column names expected, plus every other column name already recognized.
+        </p>
       </div>
 
       <!-- Folder picker -->
@@ -87,6 +91,13 @@
 </div>
 
 <script>
+  function updateSchemaLink() {
+    const reportType = document.getElementById("report_type").value;
+    document.getElementById("download-schema-link").href = "/dashboard/schema/" + reportType + "/download";
+  }
+  document.getElementById("report_type").addEventListener("change", updateSchemaLink);
+  updateSchemaLink();
+
   function updateFileCount(inputId, labelId) {
     const input = document.getElementById(inputId);
     const label = document.getElementById(labelId);
