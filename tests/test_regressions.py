@@ -3970,3 +3970,262 @@ def test_analytics_hub_lists_every_dataset_and_links_only_where_analytics_exist(
         for mod in list(sys.modules):
             if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
                 del sys.modules[mod]
+
+
+# ── brs_consolidator.py: standalone BRS upload/map/consolidate tool ────────
+def test_brs_consolidator_classifies_disbursement_and_collection_by_filename():
+    """Rule confirmed with the user: a file is Disbursement if its name
+    contains "disbursement"/"disbursal" (case-insensitive), Collection if
+    it contains "collection", else unrecognized (None) -- the caller must
+    then skip it rather than silently guessing."""
+    pytest.importorskip("polars")
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import brs_consolidator as bc
+
+        assert bc._classify_kind("ProductA_Disbursement.xlsx") == "Disbursement"
+        assert bc._classify_kind("productb_DISBURSAL_jan.csv") == "Disbursement"
+        assert bc._classify_kind("Collection_Feb24.xlsx") == "Collection"
+        assert bc._classify_kind("collection.csv") == "Collection"
+        assert bc._classify_kind("random_file.csv") is None
+        assert bc._classify_kind("readme.txt") is None
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "brs_consolidator":
+                del sys.modules[mod]
+
+
+def test_brs_consolidator_reads_only_transaction_details_1_sheet():
+    """Regression guard for the exact requirement: only the sheet named
+    "Transaction Details 1" is consolidated out of a multi-sheet Excel
+    file, matched case-insensitively and whitespace-trimmed (confirmed
+    with the user) -- "Transaction Details" (no "1") or "Txn Details 1"
+    must NOT match. A CSV has no sheet concept and is read as-is."""
+    pytest.importorskip("polars")
+    pytest.importorskip("openpyxl")
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import io
+
+        import openpyxl
+
+        import brs_consolidator as bc
+
+        def _make_xlsx(sheet_name: str) -> bytes:
+            wb = openpyxl.Workbook()
+            ws0 = wb.active
+            ws0.title = "Summary"
+            ws0["A1"] = "ignore me"
+            ws1 = wb.create_sheet(sheet_name)
+            ws1.append(["AGREEMENT NO", "AMOUNT"])
+            ws1.append(["L1", 100])
+            wb.save(buf := io.BytesIO())
+            return buf.getvalue()
+
+        for sheet_name in ("Transaction Details 1", "TRANSACTION DETAILS 1", "  Transaction Details 1  "):
+            df, err = bc._read_sheet("f.xlsx", _make_xlsx(sheet_name))
+            assert err is None, f"expected a match for sheet name {sheet_name!r}, got error: {err}"
+            assert df["AGREEMENT NO"].to_list() == ["L1"]
+
+        for sheet_name in ("Transaction Details", "Transaction Detail 1", "Txn Details 1"):
+            df, err = bc._read_sheet("f.xlsx", _make_xlsx(sheet_name))
+            assert df is None
+            assert err is not None and "no \"Transaction Details 1\" sheet" in err
+
+        csv_df, csv_err = bc._read_sheet("f.csv", b"AGREEMENT NO,AMOUNT\nL2,200\n")
+        assert csv_err is None
+        assert csv_df["AGREEMENT NO"].to_list() == ["L2"]
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "brs_consolidator":
+                del sys.modules[mod]
+
+
+def test_brs_consolidator_expands_zip_preserving_product_folder():
+    """Regression guard for the folder-per-product upload: a zip entry's
+    top-level folder becomes its Product tag; a file sitting at the zip's
+    own root (no subfolder) gets product=None, meaning it needs the
+    manual product-name step; non-data files (e.g. a stray .txt) are
+    excluded entirely."""
+    pytest.importorskip("polars")
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import io
+        import zipfile
+
+        import brs_consolidator as bc
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("ProductA/ProductA_Disbursement.csv", "x")
+            zf.writestr("ProductA/ProductA_Collection.csv", "x")
+            zf.writestr("ProductB/nested/ProductB_Disbursement.csv", "x")
+            zf.writestr("root_Disbursement.csv", "x")
+            zf.writestr("ProductA/readme.txt", "not a data file")
+
+        expanded = bc._expand_named_bytes([("batch.zip", zip_buf.getvalue())])
+        by_name = {filename: product for product, filename, _ in expanded}
+
+        assert by_name["ProductA_Disbursement.csv"] == "ProductA"
+        assert by_name["ProductA_Collection.csv"] == "ProductA"
+        # A deeper nested path still tags the TOP-level folder as product.
+        assert by_name["ProductB_Disbursement.csv"] == "ProductB"
+        # A file at the zip's own root has no folder to infer a product from.
+        assert by_name["root_Disbursement.csv"] is None
+        assert "readme.txt" not in by_name
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "brs_consolidator":
+                del sys.modules[mod]
+
+
+def test_brs_consolidator_consolidates_disbursement_and_collection_separately():
+    """End-to-end guard for the core requirement: Disbursement and
+    Collection files are consolidated into two SEPARATE DataFrames (never
+    merged together), each tagged with Product and _source_file, using a
+    shared column mapping across both kinds."""
+    pytest.importorskip("polars")
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import polars as pl
+
+        import brs_consolidator as bc
+
+        entries = [
+            {
+                "product": "ProductA",
+                "filename": "ProductA_Disbursement.csv",
+                "kind": "Disbursement",
+                "df": pl.DataFrame({"AGREEMENT NO": ["L1"], "AMOUNT": [1000.0]}),
+            },
+            {
+                "product": "ProductA",
+                "filename": "ProductA_Collection.csv",
+                "kind": "Collection",
+                "df": pl.DataFrame({"AGREEMENT NO": ["L1"], "AMOUNT": [200.0]}),
+            },
+            {
+                "product": "ProductB",
+                "filename": "ProductB_Disbursement.csv",
+                "kind": "Disbursement",
+                "df": pl.DataFrame({"AGREEMENT NO": ["L2"], "AMOUNT": [500.0]}),
+            },
+        ]
+        mapping = {"AGREEMENT NO": "agreement_no", "AMOUNT": "amount"}
+
+        disb = bc._consolidate([e for e in entries if e["kind"] == "Disbursement"], mapping)
+        coll = bc._consolidate([e for e in entries if e["kind"] == "Collection"], mapping)
+
+        assert sorted(disb["agreement_no"].to_list()) == ["L1", "L2"]
+        assert sorted(disb["product"].to_list()) == ["ProductA", "ProductB"]
+        assert coll["agreement_no"].to_list() == ["L1"]
+        assert coll["product"].to_list() == ["ProductA"]
+        assert "_source_file" in disb.columns and "_source_file" in coll.columns
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "brs_consolidator":
+                del sys.modules[mod]
+
+
+def test_brs_consolidator_download_buttons_survive_excel_row_limit():
+    """Same guard as EAD Consolidator's equivalent test: a consolidation
+    past Excel's 1,048,576-rows-per-sheet limit must not crash the whole
+    build -- Excel is skipped with a clear reason, CSV/Parquet still
+    succeed."""
+    pytest.importorskip("polars")
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import polars as pl
+
+        import brs_consolidator as bc
+
+        small = pl.DataFrame({"agreement_no": ["L1", "L2"], "product": ["A", "B"]})
+        small_downloads = bc._build_downloads(small)
+        assert small_downloads["excel"]["error"] is None
+        assert small_downloads["excel"]["skipped_reason"] is None
+        assert small_downloads["excel"]["data"]
+
+        big = pl.DataFrame({"agreement_no": ["L1"] * (bc.EXCEL_ROW_LIMIT + 1)})
+        big_downloads = bc._build_downloads(big)
+        assert big_downloads["excel"]["skipped_reason"] is not None
+        assert big_downloads["excel"]["data"] is None
+        assert big_downloads["csv"]["data"]
+        assert big_downloads["parquet"]["data"]
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "brs_consolidator":
+                del sys.modules[mod]
+
+
+def test_brs_consolidator_registered_in_hub_and_auth():
+    """Guards the new tool's wiring into the Uzumaki hub, same as the
+    equivalent EAD Consolidator registration test."""
+    assert os.path.exists(os.path.join(REPO_ROOT, "brs_consolidator.py"))
+    assert os.path.exists(os.path.join(REPO_ROOT, "_pages", "brs_consolidator.py"))
+
+    with open(os.path.join(REPO_ROOT, "auth.py"), encoding="utf-8") as f:
+        auth_src = f.read()
+    assert '"BRS Consolidator"' in auth_src
+
+    with open(os.path.join(REPO_ROOT, "Home.py"), encoding="utf-8") as f:
+        home_src = f.read()
+    assert '"BRS Consolidator"' in home_src
+    assert '_pages/brs_consolidator.py' in home_src
+
+    with open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8") as f:
+        spec_src = f.read()
+    assert "brs_consolidator.py" in spec_src
+
+
+def test_brs_schema_has_all_fifteen_canonical_fields_and_required_agreement_no():
+    """Guards the canonical BRS schema against silently dropping a field
+    from the exact 15-column spec the user gave, and that agreement_no
+    (the key EAD-linking field) stays required. Built as a local SchemaMap
+    inside brs_consolidator.py rather than a fcmr_core/schemas/*.yaml file
+    -- a yaml there would be auto-discovered by available_report_types()
+    and leak "BRS" into the main Loan Analytics app's own upload dropdown
+    and Analytics hub, which this standalone tool must not do (see
+    test_brs_consolidator_does_not_leak_into_main_app_report_types)."""
+    sys.path.insert(0, REPO_ROOT)
+    try:
+        import brs_consolidator as bc
+
+        fields = {spec.canonical: spec for spec in bc._BRS_COLUMNS}
+        expected = {
+            "category", "reco_doc_no", "agreement_no", "ref1", "ref2", "ref3", "txn_date", "amount",
+            "bank_name", "narration", "group_glid", "ageing", "ageing_bucket", "remarks", "clearance_date",
+        }
+        assert set(fields) == expected
+        assert fields["agreement_no"].required is True
+    finally:
+        sys.path.remove(REPO_ROOT)
+        for mod in list(sys.modules):
+            if mod == "brs_consolidator":
+                del sys.modules[mod]
+
+
+def test_brs_consolidator_does_not_leak_into_main_app_report_types():
+    """Regression guard for a real design mistake caught before it shipped:
+    the BRS schema was first written as fcmr_core/schemas/brs.yaml, which
+    is auto-discovered by available_report_types() -- that would have made
+    "BRS" show up as a selectable report type in the main Loan Analytics
+    app's own upload form and on the new Analytics hub, even though the
+    user only asked for a standalone consolidator tool, not a new report
+    type in that app's ingest pipeline. There must be no such yaml file,
+    and the main app's list of report types must be unchanged."""
+    assert not os.path.exists(
+        os.path.join(REPO_ROOT, "loans_tool", "backend", "fcmr_core", "schemas", "brs.yaml")
+    )
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        from fcmr_core.schemas.loader import available_report_types
+
+        assert "brs" not in available_report_types()
+    finally:
+        sys.path.remove(backend_dir)
