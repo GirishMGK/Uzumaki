@@ -14,10 +14,14 @@
     <div class="card">
       <div class="card-title">{{ d.label }}</div>
       <div class="card-sub">{{ d.ready_count }} file{{ "s" if d.ready_count != 1 else "" }} ready</div>
-      {% if d.analytics_url %}
-      <a href="{{ d.analytics_url }}" class="btn btn-primary" style="margin-top:12px;">Open Analytics</a>
-      {% else %}
-      <div style="margin-top:12px; font-size:12.5px; color:var(--muted);">No analytics defined yet for this dataset type.</div>
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+        {% if d.analytics_url %}
+        <a href="{{ d.analytics_url }}" class="btn btn-primary">Open Analytics</a>
+        {% endif %}
+        <a href="{{ d.consolidate_url }}" class="btn btn-ghost">Consolidate &amp; Download</a>
+      </div>
+      {% if not d.analytics_url %}
+      <div style="margin-top:8px; font-size:12.5px; color:var(--muted);">No analytics defined yet for this dataset type.</div>
       {% endif %}
     </div>
     {% endfor %}
