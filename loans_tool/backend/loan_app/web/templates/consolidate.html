@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}EAD File Consolidation — Loan Analytics{% endblock %}
-{% block page_title %}EAD File Consolidation{% endblock %}
+{% block title %}{{ label }} Consolidation — Loan Analytics{% endblock %}
+{% block page_title %}{{ label }} Consolidation{% endblock %}
 
 {% block topbar_actions %}
   <a href="/dashboard/upload" class="btn btn-primary" style="margin-left:auto;">
@@ -18,18 +18,18 @@
   {% if total == 0 %}
   <div class="card empty-state">
     <div class="empty-icon">📊</div>
-    <h2>No EAD Files Ready</h2>
-    <p>Upload and map at least one EAD file before consolidating.</p>
-    {% if ead_pending %}
-    <p style="color:var(--warn-text); font-size:13px;">{{ ead_pending | length }} file(s) are still awaiting column mapping.</p>
+    <h2>No {{ label }} Files Ready</h2>
+    <p>Upload and map at least one {{ label }} file before consolidating.</p>
+    {% if pending %}
+    <p style="color:var(--warn-text); font-size:13px;">{{ pending | length }} file(s) are still awaiting column mapping.</p>
     {% endif %}
-    <a href="/dashboard/upload" class="btn btn-primary" style="margin-top:12px;">Upload EAD File</a>
+    <a href="/dashboard/upload" class="btn btn-primary" style="margin-top:12px;">Upload {{ label }} File</a>
   </div>
 
   {% else %}
   <div class="card">
     <div class="card-title">Ready to Consolidate</div>
-    <div class="card-sub">{{ total }} EAD file(s) mapped and ready. Consolidation stacks all files into a single dataset using canonical column names.</div>
+    <div class="card-sub">{{ total }} {{ label }} file(s) mapped and ready. Consolidation stacks all files into a single dataset using canonical column names.</div>
 
     <table class="data-table" style="margin-top:16px;">
       <thead>
@@ -40,7 +40,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for u in ead_ready %}
+        {% for u in ready %}
         <tr>
           <td class="filename">{{ u.filename }}</td>
           <td class="mono right">{{ "{:,}".format(u.row_count) if u.row_count else "—" }}</td>
@@ -50,18 +50,18 @@
       </tbody>
     </table>
 
-    {% if ead_pending %}
+    {% if pending %}
     <div style="margin-top:14px; padding:10px 14px; background:var(--warn-bg, #fffbe6); border:1px solid var(--warn-border, #ffe58f); border-radius:6px; font-size:13px; color:var(--warn-text, #7c5c00);">
-      ⚠ {{ ead_pending | length }} file(s) still pending column mapping — they will NOT be included in this consolidation.
-      {% for p in ead_pending %}
+      ⚠ {{ pending | length }} file(s) still pending column mapping — they will NOT be included in this consolidation.
+      {% for p in pending %}
         <a href="/dashboard/uploads/{{ p.upload_id }}/map-columns" style="margin-left:6px;">Map {{ p.filename }}</a>
       {% endfor %}
     </div>
     {% endif %}
 
     <div class="form-actions" style="margin-top:24px; gap:12px;">
-      <a href="/" class="btn btn-ghost">Back to Dashboard</a>
-      <a href="/dashboard/ead/download/csv" class="btn btn-ghost" id="btn-csv"
+      <a href="/dashboard/analytics" class="btn btn-ghost">Back to Analytics</a>
+      <a href="/dashboard/consolidate/{{ report_type }}/download/csv" class="btn btn-ghost" id="btn-csv"
          onclick="showLoading(this, 'Generating CSV…')">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="margin-right:4px;">
           <path d="M8 11V3M5 8l3 3 3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -69,7 +69,7 @@
         </svg>
         Download CSV
       </a>
-      <a href="/dashboard/ead/download/excel" class="btn btn-primary" id="btn-excel"
+      <a href="/dashboard/consolidate/{{ report_type }}/download/excel" class="btn btn-primary" id="btn-excel"
          onclick="showLoading(this, 'Generating Excel…')">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="margin-right:4px;">
           <path d="M8 11V3M5 8l3 3 3-3" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -77,7 +77,7 @@
         </svg>
         Download Excel
       </a>
-      <a href="/dashboard/ead/download/parquet" class="btn btn-ghost" id="btn-parquet"
+      <a href="/dashboard/consolidate/{{ report_type }}/download/parquet" class="btn btn-ghost" id="btn-parquet"
          onclick="showLoading(this, 'Generating Parquet…')">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="margin-right:4px;">
           <path d="M8 11V3M5 8l3 3 3-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -91,7 +91,7 @@
   <div class="card" style="background:var(--row-alt);">
     <div class="card-title">What does consolidation do?</div>
     <ol style="padding-left:18px; margin-top:10px; display:flex; flex-direction:column; gap:8px;">
-      <li style="font-size:13px;"><strong>Canonical Rename</strong> — Each file's raw headers are renamed to standard ECL field names (e.g., DrsPOS → outstanding_principal).</li>
+      <li style="font-size:13px;"><strong>Canonical Rename</strong> — Each file's raw headers are renamed to standard field names using its saved column mapping.</li>
       <li style="font-size:13px;"><strong>Stack</strong> — All rows from all files are combined into one dataset. Missing columns are filled with nulls.</li>
       <li style="font-size:13px;"><strong>Source Tracking</strong> — A <code>_source_file</code> column is added so each row can be traced back to its original file.</li>
       <li style="font-size:13px;"><strong>Excel</strong> includes a Summary sheet listing all source files, total rows, and generation timestamp.</li>
@@ -110,11 +110,10 @@ function showLoading(el, msg) {
     // Re-enable after 5 minutes in case the request truly fails/hangs --
     // this is a last-resort safety net, not a real completion signal
     // (a plain <a href> download gives the page no way to know when the
-    // browser has actually finished receiving it). 15s used to be plenty
-    // for a small batch, but consolidating a dozen-plus large EAD files
-    // (some 900K+ rows) genuinely takes longer than that, so the old
-    // timeout made the button flip back to "ready" while the server was
-    // still working -- looking like it silently failed when it hadn't.
+    // browser has actually finished receiving it). Consolidating a
+    // dozen-plus large files (some 900K+ rows) genuinely takes longer
+    // than a short timeout, so the button stays "generating" while the
+    // server is still working rather than silently flipping back.
     setTimeout(function() {
       el.style.opacity = "1";
       el.style.pointerEvents = "";
