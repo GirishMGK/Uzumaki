@@ -165,7 +165,7 @@ def _build_downloads(consolidated: pl.DataFrame) -> dict[str, dict]:
     else:
         try:
             excel_buf = io.BytesIO()
-            consolidated.to_pandas().to_excel(excel_buf, index=False, engine="openpyxl")
+            consolidated.to_pandas().to_excel(excel_buf, index=False, engine="xlsxwriter")
             results["excel"]["data"] = excel_buf.getvalue()
         except Exception as exc:
             results["excel"]["error"] = str(exc)

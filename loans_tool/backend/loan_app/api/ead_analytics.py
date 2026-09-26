@@ -12,13 +12,16 @@ every request/download -- no persistence needed.
 
 from __future__ import annotations
 
+import os
+import tempfile
 import uuid
 from pathlib import Path
 
 import polars as pl
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
+from starlette.background import BackgroundTask
 
 from fcmr_core.catalog import store
 from fcmr_core.config import settings
@@ -258,12 +261,22 @@ async def ead_summary_download(
     fy_start_year = fy_start_year or _current_fy_start_year()
     result = _build_summary_df(key, engagement_id, df, fy_start_year, include_state)
 
-    csv_bytes = result.write_csv().encode("utf-8")
+    # Written straight to a temp file and served via FileResponse (streamed
+    # by Starlette) instead of building the CSV as a Python string, then
+    # again as bytes, then handing that one in-memory blob to Response() as
+    # the entire body -- same fix as the SQL Analytics export, applied here
+    # for consistency.
     filename = f"EAD_{key.replace('-', '_')}.csv"
-    return Response(
-        content=csv_bytes,
+    fd, tmp_name = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    result.write_csv(tmp_path)
+
+    return FileResponse(
+        tmp_path,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        filename=filename,
+        background=BackgroundTask(tmp_path.unlink, missing_ok=True),
     )
 
 

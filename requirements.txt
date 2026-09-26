@@ -75,3 +75,12 @@ aiofiles
 itsdangerous
 psutil
 jinja2
+
+# polars' Excel engine (used by uploads.py, ead_consolidator.py,
+# brs_consolidator.py, ead_brs_linking.py): "calamine" is polars' own
+# default and, per its docs, "dramatically faster" than "openpyxl" --
+# measured ~12x on a 200k-row workbook in this repo. It needs this
+# package specifically; python-calamine above is a different binding
+# (used directly by je_audit_tool, not through polars) and does not
+# substitute for it.
+fastexcel

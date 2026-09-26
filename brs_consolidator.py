@@ -113,7 +113,7 @@ def _read_sheet(filename: str, data: bytes) -> tuple[pl.DataFrame | None, str | 
         if not match:
             return None, f'{filename}: no "Transaction Details 1" sheet found (has: {", ".join(sheet_names)})'
         try:
-            df = pl.read_excel(io.BytesIO(data), sheet_name=match, engine="openpyxl")
+            df = pl.read_excel(io.BytesIO(data), sheet_name=match, engine="calamine")
             return df, None
         except Exception as exc:
             return None, f"Could not read sheet '{match}' from {filename}: {exc}"
@@ -208,7 +208,7 @@ def _build_downloads(consolidated: pl.DataFrame) -> dict[str, dict]:
     else:
         try:
             excel_buf = io.BytesIO()
-            consolidated.to_pandas().to_excel(excel_buf, index=False, engine="openpyxl")
+            consolidated.to_pandas().to_excel(excel_buf, index=False, engine="xlsxwriter")
             results["excel"]["data"] = excel_buf.getvalue()
         except Exception as exc:
             results["excel"]["error"] = str(exc)
