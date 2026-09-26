@@ -202,6 +202,12 @@ _TOOLS = [
                 "for EAD Files, no login or engagement required.",
     },
     {
+        "group": "Finance & Loan Audit",
+        "icon": "🏦", "title": "BRS Consolidator", "tag": "Streamlit",
+        "desc": "Standalone upload → map columns → consolidate → download for Bank Reconciliation "
+                "Statement files, one product per folder, Disbursement and Collection kept separate.",
+    },
+    {
         "group": "Documents & PDFs",
         "icon": "📄", "title": "PDF Tools", "tag": "Streamlit",
         "desc": "Merge, split, reorder / remove / insert pages, and convert PDF to Word.",
@@ -342,6 +348,7 @@ def home():
 _ALL_TOOL_PAGES = {
     "Loan Analytics": st.Page("_pages/loans.py", title="Loan Analytics", icon="🏦"),
     "EAD Consolidator": st.Page("_pages/ead_consolidator.py", title="EAD Consolidator", icon="📥"),
+    "BRS Consolidator": st.Page("_pages/brs_consolidator.py", title="BRS Consolidator", icon="🏦"),
     "Statutory Extractor": st.Page("_pages/pf_statutory.py", title="Statutory Extractor", icon="🧾"),
     "Form 26AS Extractor": st.Page("_pages/form26as_page.py", title="Form 26AS Extractor", icon="🧮"),
     "PDF Tools": st.Page("_pages/pdf_tools_page.py", title="PDF Tools", icon="📄"),

@@ -34,6 +34,7 @@ from passlib.context import CryptContext
 TOOL_KEYS: list[str] = [
     "Loan Analytics",
     "EAD Consolidator",
+    "BRS Consolidator",
     "Statutory Extractor",
     "Form 26AS Extractor",
     "PDF Tools",
