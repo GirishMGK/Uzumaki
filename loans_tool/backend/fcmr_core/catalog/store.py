@@ -166,6 +166,21 @@ def init_catalog() -> None:
             )
         """)
 
+        # Saved SQL Analytics queries -- global, not engagement-scoped (like
+        # system_type_map): a saved query just names tables by report_type
+        # ("ead_files", "customer_master", ...), so it's equally valid to
+        # re-run against any engagement that has those datasets ready, not
+        # just the one it was saved from.
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS saved_sql_queries (
+                query_id     TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                sql_text     TEXT NOT NULL,
+                created_by   TEXT,
+                created_at   TEXT NOT NULL
+            )
+        """)
+
         # System -> Product Type lookup (EAD Files / Technical Writeoff
         # "system" column -> the Product Helper tag). Global, not
         # engagement-scoped: these are fixed loan-management-system names
@@ -698,6 +713,38 @@ def set_ead_sanction_disbursal_threshold(type_value: str | None, days: int) -> N
     """type_value=None sets the global default; otherwise a per-Product-Helper override."""
     key = _EAD_DELAY_DEFAULT_KEY if type_value is None else f"{_EAD_DELAY_OVERRIDE_PREFIX}{type_value}"
     set_setting(key, str(days))
+
+
+# ---------------------------------------------------------------------------
+# Saved SQL Analytics queries CRUD
+# ---------------------------------------------------------------------------
+
+
+def create_saved_query(name: str, sql_text: str, created_by: str = "admin") -> str:
+    """Save a successfully-run SQL Analytics query so it can be re-run with
+    one click next time, instead of retyping it."""
+    query_id = str(uuid.uuid4())
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO saved_sql_queries (query_id, name, sql_text, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [query_id, name, sql_text, created_by, _now()],
+        )
+    return query_id
+
+
+def list_saved_queries() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT * FROM saved_sql_queries ORDER BY created_at DESC"
+        ).fetchall()
+        cols = [d[0] for d in con.description]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def delete_saved_query(query_id: str) -> None:
+    with _conn() as con:
+        con.execute("DELETE FROM saved_sql_queries WHERE query_id=?", [query_id])
 
 
 def init_settings() -> None:

@@ -38,6 +38,25 @@
   </div>
 
   <div class="card">
+    <div class="card-title">Saved Analytics</div>
+    <div class="card-sub">Queries saved from a successful run — click Run to re-run one without retyping it. Saved once, usable from any engagement.</div>
+
+    <div id="saved-queries-list" style="margin-top:12px; display:flex; flex-direction:column; gap:8px;">
+      {% for q in saved_queries %}
+      <div class="saved-query-row" data-query-id="{{ q.query_id }}" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius);">
+        <div style="font-size:13px; font-weight:600;">{{ q.name }}</div>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="btn btn-ghost btn-sm run-saved-btn" data-sql="{{ q.sql_text }}">▶ Run</button>
+          <button type="button" class="btn btn-ghost btn-sm delete-saved-btn" data-query-id="{{ q.query_id }}">🗑</button>
+        </div>
+      </div>
+      {% else %}
+      <div id="no-saved-queries" style="font-size:12.5px; color:var(--muted);">No saved analytics yet — run a query below, then save it.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-title">Run a Query</div>
     <div class="card-sub">Standard SQL (DuckDB syntax). Runs only against the tables above, in an isolated session — never against the app's own data.</div>
 
@@ -53,7 +72,16 @@
     <div id="error-box" class="notice notice-err" style="display:none; margin-top:16px;"></div>
 
     <div id="result-wrap" style="display:none; margin-top:16px;">
-      <p id="result-caption" class="timestamp" style="margin-bottom:8px;"></p>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
+        <p id="result-caption" class="timestamp" style="margin:0;"></p>
+        <div id="save-analytics-wrap" style="display:flex; align-items:center; gap:6px;">
+          <button type="button" class="btn btn-ghost btn-sm" id="save-analytics-btn">💾 Save as Analytics</button>
+          <input type="text" id="save-analytics-name" placeholder="Name this analytics…" class="input" style="display:none; width:220px;">
+          <button type="button" class="btn btn-primary btn-sm" id="save-analytics-confirm-btn" style="display:none;">Save</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="save-analytics-cancel-btn" style="display:none;">Cancel</button>
+        </div>
+      </div>
+      <div id="save-analytics-notice" class="notice notice-err" style="display:none; margin-bottom:10px;"></div>
       <div style="overflow-x:auto;">
         <table class="data-table" id="result-table"></table>
       </div>
@@ -78,8 +106,11 @@ function showError(msg) {
   document.getElementById("result-wrap").style.display = "none";
 }
 
+let lastRunSql = "";
+
 function renderResult(data) {
   document.getElementById("error-box").style.display = "none";
+  resetSaveAnalyticsForm();
 
   const table = document.getElementById("result-table");
   const cols = data.columns;
@@ -103,11 +134,10 @@ function renderResult(data) {
   document.getElementById("result-wrap").style.display = "block";
 }
 
-document.getElementById("run-btn").addEventListener("click", async function() {
-  const sql = document.getElementById("sql-box").value.trim();
+async function runQuery(sql) {
   if (!sql) { showError("Enter a SQL query."); return; }
 
-  const btn = this;
+  const btn = document.getElementById("run-btn");
   btn.disabled = true;
   btn.textContent = "Running…";
   try {
@@ -118,6 +148,7 @@ document.getElementById("run-btn").addEventListener("click", async function() {
     });
     const data = await resp.json();
     if (!resp.ok) { showError(data.error || "Query failed."); return; }
+    lastRunSql = sql;
     renderResult(data);
   } catch (err) {
     showError("Network error: " + err.message);
@@ -125,6 +156,10 @@ document.getElementById("run-btn").addEventListener("click", async function() {
     btn.disabled = false;
     btn.textContent = "▶ Run";
   }
+}
+
+document.getElementById("run-btn").addEventListener("click", function() {
+  runQuery(document.getElementById("sql-box").value.trim());
 });
 
 document.getElementById("export-btn").addEventListener("click", function() {
@@ -132,6 +167,102 @@ document.getElementById("export-btn").addEventListener("click", function() {
   if (!sql) { showError("Enter a SQL query."); return; }
   document.getElementById("export-sql").value = sql;
   document.getElementById("export-form").submit();
+});
+
+// ── Saved Analytics: run a saved query, delete one, and save the just-run one ──
+document.getElementById("saved-queries-list").addEventListener("click", async function(e) {
+  const runBtn = e.target.closest(".run-saved-btn");
+  if (runBtn) {
+    document.getElementById("sql-box").value = runBtn.dataset.sql;
+    runQuery(runBtn.dataset.sql);
+    return;
+  }
+
+  const delBtn = e.target.closest(".delete-saved-btn");
+  if (delBtn) {
+    if (!confirm("Delete this saved analytics?")) return;
+    const row = delBtn.closest(".saved-query-row");
+    delBtn.disabled = true;
+    try {
+      const resp = await fetch("/dashboard/analytics/sql/saved/" + delBtn.dataset.queryId + "/delete", {method: "POST"});
+      if (!resp.ok) { delBtn.disabled = false; return; }
+      row.remove();
+      const list = document.getElementById("saved-queries-list");
+      if (!list.querySelector(".saved-query-row")) {
+        const empty = document.createElement("div");
+        empty.id = "no-saved-queries";
+        empty.style.cssText = "font-size:12.5px; color:var(--muted);";
+        empty.textContent = "No saved analytics yet — run a query below, then save it.";
+        list.appendChild(empty);
+      }
+    } catch (err) {
+      delBtn.disabled = false;
+    }
+  }
+});
+
+function resetSaveAnalyticsForm() {
+  document.getElementById("save-analytics-btn").style.display = "inline-block";
+  document.getElementById("save-analytics-name").style.display = "none";
+  document.getElementById("save-analytics-name").value = "";
+  document.getElementById("save-analytics-confirm-btn").style.display = "none";
+  document.getElementById("save-analytics-cancel-btn").style.display = "none";
+  document.getElementById("save-analytics-notice").style.display = "none";
+}
+
+document.getElementById("save-analytics-btn").addEventListener("click", function() {
+  this.style.display = "none";
+  document.getElementById("save-analytics-name").style.display = "inline-block";
+  document.getElementById("save-analytics-confirm-btn").style.display = "inline-block";
+  document.getElementById("save-analytics-cancel-btn").style.display = "inline-block";
+  document.getElementById("save-analytics-name").focus();
+});
+
+document.getElementById("save-analytics-cancel-btn").addEventListener("click", resetSaveAnalyticsForm);
+
+document.getElementById("save-analytics-confirm-btn").addEventListener("click", async function() {
+  const name = document.getElementById("save-analytics-name").value.trim();
+  const notice = document.getElementById("save-analytics-notice");
+  if (!name) { notice.textContent = "Enter a name."; notice.style.display = "block"; return; }
+
+  const btn = this;
+  btn.disabled = true;
+  try {
+    const resp = await fetch("/dashboard/analytics/sql/saved", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      body: "name=" + encodeURIComponent(name) + "&sql=" + encodeURIComponent(lastRunSql),
+    });
+    const data = await resp.json();
+    if (!resp.ok) { notice.textContent = data.error || "Could not save."; notice.style.display = "block"; return; }
+
+    const empty = document.getElementById("no-saved-queries");
+    if (empty) empty.remove();
+    const list = document.getElementById("saved-queries-list");
+    const row = document.createElement("div");
+    row.className = "saved-query-row";
+    row.dataset.queryId = data.query_id;
+    row.style.cssText = "display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius);";
+    row.innerHTML = '<div style="font-size:13px; font-weight:600;"></div>'
+      + '<div style="display:flex; gap:6px;">'
+      + '<button type="button" class="btn btn-ghost btn-sm run-saved-btn">▶ Run</button>'
+      + '<button type="button" class="btn btn-ghost btn-sm delete-saved-btn"></button>'
+      + '</div>';
+    row.querySelector("div").textContent = data.name;
+    const runBtn = row.querySelector(".run-saved-btn");
+    runBtn.dataset.sql = data.sql_text;
+    const delBtn = row.querySelector(".delete-saved-btn");
+    delBtn.dataset.queryId = data.query_id;
+    delBtn.textContent = "🗑";
+    list.appendChild(row);
+
+    resetSaveAnalyticsForm();
+  } catch (err) {
+    notice.textContent = "Network error: " + err.message;
+    notice.style.display = "block";
+  } finally {
+    btn.disabled = false;
+  }
 });
   </script>
   {% endif %}
