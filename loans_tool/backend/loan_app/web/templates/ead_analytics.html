@@ -142,6 +142,36 @@
     </div>
   </div>
 
+  {# ── Link to BRS ── #}
+  <div class="card">
+    <div class="card-title">Link to BRS</div>
+    <div class="card-sub">Upload a BRS Consolidator export (its own CSV/Excel/Parquet download) to reconcile against EAD, by matching BRS's Agreement No against EAD's Loan ID.</div>
+
+    <div style="margin-top:14px; display:flex; flex-direction:column; gap:14px;">
+      <form method="post" action="/dashboard/analytics/ead/brs-link/disbursement" enctype="multipart/form-data" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">EAD vs BRS Disbursement</div>
+          <div style="font-size:12px; color:var(--muted);">EAD's Disbursed Amount vs the BRS Disbursement export's Amount, per loan.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <input type="file" name="brs_file" accept=".csv,.xlsx,.xls,.parquet" required class="input" style="width:220px;">
+          <button type="submit" class="btn btn-ghost btn-sm">Run</button>
+        </div>
+      </form>
+
+      <form method="post" action="/dashboard/analytics/ead/brs-link/collection" enctype="multipart/form-data" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+        <div>
+          <div style="font-size:13.5px; font-weight:600;">EAD vs BRS Collection</div>
+          <div style="font-size:12px; color:var(--muted);">EAD's Principal + Interest Paid vs the BRS Collection export's Amount, per loan.</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <input type="file" name="brs_file" accept=".csv,.xlsx,.xls,.parquet" required class="input" style="width:220px;">
+          <button type="submit" class="btn btn-ghost btn-sm">Run</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   {% endif %}
 </div>
 {% endblock %}
