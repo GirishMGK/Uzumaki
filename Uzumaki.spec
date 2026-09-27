@@ -170,6 +170,15 @@ hiddenimports = [
     # gets its own Analysis() entry script below for the same reason. These
     # are its own top-level deps not already covered by another tool's list.
     "polars", "yaml", "aiofiles", "itsdangerous", "psutil", "jinja2",
+    # polars' "calamine" Excel engine (uploads.py, ead_brs_linking.py) binds
+    # fastexcel dynamically from inside polars' own dispatch code, not via a
+    # plain top-level `import fastexcel` PyInstaller's static analysis could
+    # find on its own -- same class of gap as uvicorn's loop/protocol
+    # implementations above. Without this, every Excel upload in the
+    # packaged exe fails (ModuleNotFoundError) even though the exact same
+    # code works from a source checkout, where fastexcel is just importable
+    # off the real filesystem.
+    "fastexcel",
 ] + streamlit_submodules + passlib_submodules + reportlab_submodules + ijson_submodules
 
 # Three hub pages (_pages/pdf_tools_page.py, je_audit.py, pf_statutory.py)

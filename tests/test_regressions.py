@@ -1660,6 +1660,42 @@ def test_loans_wired_into_home_spec_and_auth():
     )
 
 
+def test_fastexcel_is_bundled_into_the_packaged_exe():
+    """Regression guard for a real packaging gap found live: polars' fast
+    "calamine" Excel engine (switched to from "openpyxl" for a ~12x read
+    speedup -- uploads.py, ead_brs_linking.py, brs_consolidator.py) binds
+    the `fastexcel` package dynamically from inside polars' own dispatch
+    code on first use, not via a plain top-level `import fastexcel` that
+    PyInstaller's static analysis would discover on its own -- the exact
+    same class of gap the uvicorn loop/protocol implementations already
+    needed an explicit hiddenimports entry for (see the comment above
+    theirs in Uzumaki.spec). Without this, the exact code that works from
+    a source checkout (where fastexcel is just importable off the real
+    filesystem) fails with ModuleNotFoundError the first time anyone
+    uploads an Excel file in the packaged .exe -- and since it's a lazy,
+    call-time-only import, this doesn't crash startup, so a source-level
+    test suite (or a live check of the running dev server) never
+    exercises the actual packaged environment enough to catch it. Checks
+    both halves: the package must be a real dependency (requirements.txt)
+    AND explicitly hidden-imported (Uzumaki.spec), since either alone is
+    not enough -- source can run it, but PyInstaller's analysis can miss
+    it, or a real dependency could be present but never told to the
+    bundler at all.
+    """
+    requirements_src = open(os.path.join(REPO_ROOT, "requirements.txt"), encoding="utf-8").read()
+    assert "fastexcel" in requirements_src, (
+        "fastexcel must be a real dependency (requirements.txt) -- polars' "
+        "calamine Excel engine needs it at runtime"
+    )
+
+    spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
+    assert '"fastexcel"' in spec_src, (
+        "fastexcel must be in Uzumaki.spec's hiddenimports -- polars binds it "
+        "dynamically, so PyInstaller's static analysis can't discover it on "
+        "its own, exactly like uvicorn's loop/protocol implementations above it"
+    )
+
+
 # ── loan_app/api/consolidate.py: generic Consolidate & Download ────────────
 def test_consolidate_parquet_download_round_trips_for_any_report_type():
     """
