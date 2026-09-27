@@ -1,0 +1,113 @@
+report_type: closed_loans
+
+columns:
+  source_system_id:
+    aliases: ['SOURCESYSTEMID']
+    required: false
+    dtype: str
+
+  scheme_id:
+    aliases: ['PRODUCTID']
+    required: false
+    dtype: str
+
+  stateid:
+    aliases: ['STATEID']
+    required: false
+    dtype: str
+
+  state:
+    aliases: ['STATENAME']
+    required: false
+    dtype: str
+
+  branch_id:
+    aliases: ['BRANCHID']
+    required: false
+    dtype: str
+
+  branch_name:
+    aliases: ['BRANCHNAME']
+    required: false
+    dtype: str
+
+  groupid:
+    aliases: ['GROUPID']
+    required: false
+    dtype: str
+
+  customer_id:
+    aliases: ['CLIENTID']
+    required: false
+    dtype: str
+
+  full_name:
+    aliases: ['NAME']
+    required: false
+    dtype: str
+
+  loan_account_no:
+    aliases: ['LoanAgreementNO']
+    required: false
+    dtype: str
+
+  firstdisbursementdate:
+    aliases: ['FIRSTDISBURSEMENTDATE']
+    required: false
+    dtype: str
+
+  disbursed_amount:
+    aliases: ['DISBURSEDAMOUNT']
+    required: false
+    dtype: float
+
+  closeddate:
+    aliases: ['CLOSEDDATE']
+    required: false
+    dtype: str
+
+  closed_type:
+    aliases: ['ClosedType']
+    required: false
+    dtype: str
+
+  loanstatusid:
+    aliases: ['LOANSTATUSID']
+    required: false
+    dtype: str
+
+  loanstatusid_description:
+    aliases: ['LOANSTATUSID_DESCRIPTION']
+    required: false
+    dtype: str
+
+  maturity_date:
+    aliases: ['MATURITY Date']
+    required: false
+    dtype: str
+
+  dpd_as_on_monthend:
+    aliases: ['DPD AS ON MONTHEND']
+    required: false
+    dtype: float
+
+  manual_closure:
+    aliases: ['Manual Closure']
+    required: false
+    dtype: str
+
+  principal_wavier_off_written_off:
+    aliases: ['Principal Wavier Off _ written off']
+    required: false
+    dtype: float
+
+  interest_wavier_off_written_off:
+    aliases: ['Interest Wavier Off _ written off']
+    required: false
+    dtype: float
+
+  dpdclosure:
+    aliases: ['DPDCLOSURE']
+    required: false
+    dtype: float
+

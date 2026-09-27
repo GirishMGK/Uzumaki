@@ -1,117 +1,343 @@
-# Column mapping for the Customer Master upload.
-# Keys = canonical field names used throughout fcmr_core.
-# Values = list of accepted header variations (case-insensitive, whitespace-stripped).
 report_type: customer_master
 
 columns:
   customer_id:
-    aliases: [customer_id, cust_id, customerid, client_id, borrower_id]
+    aliases: ['customer_id', 'cust_id', 'customerid', 'client_id', 'borrower_id', 'CustomerID']
     required: true
     dtype: str
 
   full_name:
-    aliases: [full_name, customer_name, name, borrower_name, applicant_name]
+    aliases: ['full_name', 'customer_name', 'name', 'borrower_name', 'applicant_name', 'CustomerName']
     required: true
     dtype: str
 
   dob:
-    aliases: [dob, date_of_birth, birth_date, dateofbirth]
+    aliases: ['dob', 'date_of_birth', 'birth_date', 'dateofbirth', 'DOB']
     required: false
-    dtype: str   # kept as str; parsed in KYC rule
+    dtype: str
 
   gender:
-    aliases: [gender, sex]
+    aliases: ['gender', 'sex', 'GENDER']
     required: false
     dtype: str
 
   mobile:
-    aliases: [mobile, mobile_no, mobile_number, phone, phone_no, contact_no, contact_number]
+    aliases: ['mobile', 'mobile_no', 'mobile_number', 'phone', 'phone_no', 'contact_no', 'contact_number', 'APPLICANT PHONE NO']
     required: false
     dtype: str
 
   email:
-    aliases: [email, email_id, email_address, emailid]
+    aliases: ['email', 'email_id', 'email_address', 'emailid']
     required: false
     dtype: str
 
   pan:
-    aliases: [pan, pan_no, pan_number, permanent_account_number]
+    aliases: ['pan', 'pan_no', 'pan_number', 'permanent_account_number', 'PANCARDNO']
     required: false
     dtype: str
 
   aadhaar:
-    aliases: [aadhaar, aadhaar_no, aadhaar_number, aadhar, aadhar_no, uid]
+    aliases: ['aadhaar', 'aadhaar_no', 'aadhaar_number', 'aadhar', 'aadhar_no', 'uid']
     required: false
     dtype: str
 
   voter_id:
-    aliases: [voter_id, voter_id_no, epic_no, epic_number, voter_card]
+    aliases: ['voter_id', 'voter_id_no', 'epic_no', 'epic_number', 'voter_card', 'VOTERIDCARDNO']
     required: false
     dtype: str
 
   passport:
-    aliases: [passport, passport_no, passport_number]
+    aliases: ['passport', 'passport_no', 'passport_number']
     required: false
     dtype: str
 
   driving_licence:
-    aliases: [driving_licence, dl_no, dl_number, driving_license, licence_no, license_no]
+    aliases: ['driving_licence', 'dl_no', 'dl_number', 'driving_license', 'licence_no', 'license_no']
     required: false
     dtype: str
 
   address_line1:
-    aliases: [address_line1, address1, address_line_1, addr1, address]
+    aliases: ['address_line1', 'address1', 'address_line_1', 'addr1', 'address']
     required: false
     dtype: str
 
   address_line2:
-    aliases: [address_line2, address2, address_line_2, addr2]
+    aliases: ['address_line2', 'address2', 'address_line_2', 'addr2']
     required: false
     dtype: str
 
   city:
-    aliases: [city, city_name, town]
+    aliases: ['city', 'city_name', 'town']
     required: false
     dtype: str
 
   district:
-    aliases: [district, district_name]
+    aliases: ['district', 'district_name']
     required: false
     dtype: str
 
   state:
-    aliases: [state, state_name]
+    aliases: ['state', 'state_name']
     required: false
     dtype: str
 
   pincode:
-    aliases: [pincode, pin_code, pin, postal_code, zip, zipcode]
+    aliases: ['pincode', 'pin_code', 'pin', 'postal_code', 'zip', 'zipcode']
     required: false
     dtype: str
 
   bank_account:
-    aliases: [bank_account, bank_account_no, account_no, account_number, bank_acc]
+    aliases: ['bank_account', 'bank_account_no', 'account_no', 'account_number', 'bank_acc']
     required: false
     dtype: str
 
   ifsc:
-    aliases: [ifsc, ifsc_code, bank_ifsc]
+    aliases: ['ifsc', 'ifsc_code', 'bank_ifsc']
     required: false
     dtype: str
 
   lan:
-    aliases: [lan, loan_agreement_number, loan_account_no, loan_id, loan_no, account_no_loan]
+    aliases: ['lan', 'loan_agreement_number', 'loan_account_no', 'loan_id', 'loan_no', 'account_no_loan']
     required: true
     dtype: str
 
-  # Added for the EAD Analytics UCID cross-check (rule 16): EAD's own UCID
-  # column for the same loan (via `lan`/loan_id) should match this one.
   ucid:
-    aliases: [UCID, ucid]
+    aliases: ['UCID', 'ucid']
     required: false
     dtype: str
 
   coapplicant_mobile:
-    aliases: [co_applicant_mobile, coapplicant_phone, coapp_mobile, guarantor_mobile, coapplicant_contact]
+    aliases: ['co_applicant_mobile', 'coapplicant_phone', 'coapp_mobile', 'guarantor_mobile', 'coapplicant_contact', 'COAPPLICANT PHONE NO']
     required: false
     dtype: str
+
+  product_id:
+    aliases: ['ProductID']
+    required: false
+    dtype: str
+
+  product_name:
+    aliases: ['ProductName']
+    required: false
+    dtype: str
+
+  agreement_no:
+    aliases: ['AgreementNo']
+    required: false
+    dtype: str
+
+  sourcesystem_id:
+    aliases: ['SourcesystemID']
+    required: false
+    dtype: str
+
+  gr_customerid:
+    aliases: ['gr_CUSTOMERID']
+    required: false
+    dtype: str
+
+  los:
+    aliases: ['LOS']
+    required: false
+    dtype: str
+
+  branch_id:
+    aliases: ['BranchID']
+    required: false
+    dtype: str
+
+  groupid:
+    aliases: ['GROUPID']
+    required: false
+    dtype: str
+
+  rationcardno:
+    aliases: ['RATIONCARDNO']
+    required: false
+    dtype: str
+
+  othertypeid1:
+    aliases: ['OTHERTYPEID1']
+    required: false
+    dtype: str
+
+  marital_status:
+    aliases: ['MARITAL_STATUS']
+    required: false
+    dtype: str
+
+  coapplicant_id:
+    aliases: ['COAPPLICANT_ID']
+    required: false
+    dtype: str
+
+  coapplicant_name:
+    aliases: ['COAPPLICANT_Name']
+    required: false
+    dtype: str
+
+  coapplicant_voterid:
+    aliases: ['COAPPLICANT_VOTERID']
+    required: false
+    dtype: str
+
+  coapplicant_panno:
+    aliases: ['COAPPLICANT_PANNO']
+    required: false
+    dtype: str
+
+  coapplicant_rationcardid:
+    aliases: ['COAPPLICANT_RATIONCARDID']
+    required: false
+    dtype: str
+
+  coapplicant_othertypeid1:
+    aliases: ['COAPPLICANT_OTHERTYPEID1']
+    required: false
+    dtype: str
+
+  coapplicant_dob:
+    aliases: ['COAPPLICANT_DOB']
+    required: false
+    dtype: str
+
+  coapplicant_gender:
+    aliases: ['COAPPLICANT_GENDER']
+    required: false
+    dtype: str
+
+  noofdependents:
+    aliases: ['NOOFDEPENDENTS']
+    required: false
+    dtype: str
+
+  membankname:
+    aliases: ['MEMBANKNAME']
+    required: false
+    dtype: str
+
+  membankbranchname:
+    aliases: ['MEMBANKBRANCHNAME']
+    required: false
+    dtype: str
+
+  membankactno:
+    aliases: ['MEMBANKACTNO']
+    required: false
+    dtype: str
+
+  occupation:
+    aliases: ['OCCUPATION']
+    required: false
+    dtype: str
+
+  totmonthlyincome:
+    aliases: ['TOTMONTHLYINCOME']
+    required: false
+    dtype: float
+
+  monthlyfamilyexp:
+    aliases: ['MONTHLYFAMILYEXP']
+    required: false
+    dtype: str
+
+  obliations_of_other_loans:
+    aliases: ['Obliations of other Loans']
+    required: false
+    dtype: str
+
+  currentaddress1:
+    aliases: ['CURRENTADDRESS1']
+    required: false
+    dtype: str
+
+  currentaddress2:
+    aliases: ['CURRENTADDRESS2']
+    required: false
+    dtype: str
+
+  currentlandmark:
+    aliases: ['CURRENTLANDMARK']
+    required: false
+    dtype: str
+
+  currentcityid:
+    aliases: ['CURRENTCITYID']
+    required: false
+    dtype: str
+
+  currentzipcode:
+    aliases: ['CURRENTZIPCODE']
+    required: false
+    dtype: str
+
+  permanentaddress1:
+    aliases: ['PERMANENTADDRESS1']
+    required: false
+    dtype: str
+
+  permanentaddress2:
+    aliases: ['PERMANENTADDRESS2']
+    required: false
+    dtype: str
+
+  permanentlandmark:
+    aliases: ['PERMANENTLANDMARK']
+    required: false
+    dtype: str
+
+  permanentcityid:
+    aliases: ['PERMANENTCITYID']
+    required: false
+    dtype: str
+
+  permanentzipcode:
+    aliases: ['PERMANENTZIPCODE']
+    required: false
+    dtype: str
+
+  clientcreationdate:
+    aliases: ['CLIENTCREATIONDATE']
+    required: false
+    dtype: str
+
+  clientcreatedby:
+    aliases: ['CLIENTCREATEDBY']
+    required: false
+    dtype: str
+
+  last_client_details_update_date:
+    aliases: ['LastClientDetailsUpdateDate']
+    required: false
+    dtype: str
+
+  aplicant_aadharcarrefno:
+    aliases: ['aplicant_AADHARCARREFNO']
+    required: false
+    dtype: str
+
+  coaplicant_aadharcarrefno:
+    aliases: ['coaplicant_AADHARCARREFNO']
+    required: false
+    dtype: str
+
+  customertype:
+    aliases: ['CUSTOMERTYPE']
+    required: false
+    dtype: str
+
+  coappl_type:
+    aliases: ['COAPPL_TYPE']
+    required: false
+    dtype: str
+
+  foir:
+    aliases: ['FOIR']
+    required: false
+    dtype: str
+
+  customertype_los:
+    aliases: ['CUSTOMERTYPE_LOS']
+    required: false
+    dtype: str
+

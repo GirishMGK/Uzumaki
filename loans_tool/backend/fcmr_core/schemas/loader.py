@@ -230,7 +230,22 @@ def get_canonical_fields(report_type: str) -> list[ColumnSpec]:
 # form ("Ead Files") reads wrong. Shared by every screen that lists report
 # types (Analytics hub, Consolidate & Download, ...) so they can't drift
 # from each other.
-_LABEL_OVERRIDES = {"ead_files": "EAD Files"}
+_LABEL_OVERRIDES = {
+    "ead_files": "EAD Files",
+    # The 8 report types added straight from the client's master schema
+    # file (fcmr_core/schemas/*.yaml's own docstring-equivalent: see each
+    # file's report_type) -- their DataSet code (ADDA2, BTD, ...) is kept
+    # in the label since that's how the source system and this NBFC's own
+    # ops team refer to each export, not just its generic description.
+    "ead_addl_columns": "EAD Additional Columns (ADDA2)",
+    "disbursement_addl_columns": "Disbursement Additional Columns (ADDA3)",
+    "closed_loans": "Closed Loans (ADDA5)",
+    "bank_transfer": "Bank Transfer (BTD)",
+    "cancelled_rejected": "Cancelled/Rejected (CANDR)",
+    "cibil_report": "CIBIL Report (CRIF)",
+    "emi_due_report": "EMI Due Report (EMIDUE)",
+    "sap_addl_columns": "SAP Additional Columns (SAP_ZBSEG)",
+}
 
 
 def label_for_report_type(report_type: str) -> str:

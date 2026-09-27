@@ -1,0 +1,303 @@
+report_type: ead_addl_columns
+
+columns:
+  scheme_id:
+    aliases: ['ProductID']
+    required: false
+    dtype: str
+
+  scheme_name:
+    aliases: ['ProductName']
+    required: false
+    dtype: str
+
+  disbursement_date:
+    aliases: ['DisbursalDate']
+    required: false
+    dtype: str
+
+  loan_id:
+    aliases: ['AgreementNo']
+    required: false
+    dtype: str
+
+  source_system_id:
+    aliases: ['SourcesystemID']
+    required: false
+    dtype: str
+
+  bom:
+    aliases: ['BOM']
+    required: false
+    dtype: str
+
+  associateid:
+    aliases: ['AssociateId']
+    required: false
+    dtype: str
+
+  groupid:
+    aliases: ['GROUPID']
+    required: false
+    dtype: str
+
+  group_name:
+    aliases: ['GroupName']
+    required: false
+    dtype: str
+
+  fund_id:
+    aliases: ['FundID']
+    required: false
+    dtype: str
+
+  funder_name:
+    aliases: ['FunderName']
+    required: false
+    dtype: str
+
+  villageid:
+    aliases: ['VILLAGEID']
+    required: false
+    dtype: str
+
+  closed_date:
+    aliases: ['ClosedDate']
+    required: false
+    dtype: str
+
+  closure_type:
+    aliases: ['Closure Type']
+    required: false
+    dtype: str
+
+  purpose_category:
+    aliases: ['PurposeCategory']
+    required: false
+    dtype: str
+
+  principal_paid:
+    aliases: ['PrincipalPaid']
+    required: false
+    dtype: float
+
+  interest_paid:
+    aliases: ['InterestPaid']
+    required: false
+    dtype: float
+
+  other_charges_paid:
+    aliases: ['Other Charges Paid']
+    required: false
+    dtype: str
+
+  prin_advance:
+    aliases: ['PrinAdvance']
+    required: false
+    dtype: float
+
+  rescheduled_date:
+    aliases: ['Rescheduled Date']
+    required: false
+    dtype: str
+
+  next_installment_date:
+    aliases: ['Next Installment date']
+    required: false
+    dtype: str
+
+  cycle_due_date:
+    aliases: ['Cycle Due date']
+    required: false
+    dtype: str
+
+  annual_household_income:
+    aliases: ['Annual Household Income']
+    required: false
+    dtype: float
+
+  pincode:
+    aliases: ['PinCode']
+    required: false
+    dtype: str
+
+  principal_wavier_off_written_off:
+    aliases: ['Principal Wavier Off _ written off']
+    required: false
+    dtype: str
+
+  interest_wavier_off_written_off:
+    aliases: ['Interest Wavier Off _ written off']
+    required: false
+    dtype: str
+
+  emi_amount:
+    aliases: ['EMI Amount']
+    required: false
+    dtype: float
+
+  lastest_payment_date:
+    aliases: ['Lastest payment date']
+    required: false
+    dtype: str
+
+  lastest_payment_amount:
+    aliases: ['Lastest payment Amount']
+    required: false
+    dtype: float
+
+  charges_collected:
+    aliases: ['Charges Collected']
+    required: false
+    dtype: float
+
+  overdue_charges:
+    aliases: ['CBC Unpaid', 'ODC Unpaid']
+    required: false
+    dtype: float
+
+  cbc:
+    aliases: ['CBC']
+    required: false
+    dtype: float
+
+  odc:
+    aliases: ['ODC']
+    required: false
+    dtype: float
+
+  cbc_paid:
+    aliases: ['CBC Paid']
+    required: false
+    dtype: float
+
+  odc_paid:
+    aliases: ['ODC Paid']
+    required: false
+    dtype: float
+
+  processingfees:
+    aliases: ['PROCESSINGFEES']
+    required: false
+    dtype: float
+
+  ltv_lms:
+    aliases: ['LTV _LMS']
+    required: false
+    dtype: str
+
+  interest_type_fixed_floating:
+    aliases: ['Interest type _Fixed-Floating']
+    required: false
+    dtype: str
+
+  ckyc_id1:
+    aliases: ['CKYC_ID1']
+    required: false
+    dtype: str
+
+  ckyc_id2:
+    aliases: ['CKYC_ID2']
+    required: false
+    dtype: str
+
+  insur_policy_num:
+    aliases: ['INSUR POLICY NUM']
+    required: false
+    dtype: str
+
+  insur_coverageamt:
+    aliases: ['INSUR COVERAGEAMT']
+    required: false
+    dtype: str
+
+  insur_premium:
+    aliases: ['INSUR PREMIUM']
+    required: false
+    dtype: str
+
+  customercategory:
+    aliases: ['CUSTOMERCATEGORY']
+    required: false
+    dtype: str
+
+  indv_corpflag:
+    aliases: ['INDV_CORPFLAG']
+    required: false
+    dtype: str
+
+  product_id_merc:
+    aliases: ['ProductID _MERC']
+    required: false
+    dtype: str
+
+  los_risk_category:
+    aliases: ['LOS_RISK_CATEGORY']
+    required: false
+    dtype: str
+
+  rto_location_c:
+    aliases: ['Rto_Location__c']
+    required: false
+    dtype: str
+
+  source_channel:
+    aliases: ['SOURCE_CHANNEL']
+    required: false
+    dtype: str
+
+  property_type:
+    aliases: ['PROPERTY_TYPE']
+    required: false
+    dtype: str
+
+  property_addr1:
+    aliases: ['PROPERTY_ADDR1']
+    required: false
+    dtype: str
+
+  property_addr2:
+    aliases: ['PROPERTY_ADDR2']
+    required: false
+    dtype: str
+
+  property_addr3:
+    aliases: ['PROPERTY_ADDR3']
+    required: false
+    dtype: str
+
+  installment_start_date:
+    aliases: ['InstallmentStartDate']
+    required: false
+    dtype: str
+
+  flo_employee_id:
+    aliases: ['FLO _ EmployeeID']
+    required: false
+    dtype: str
+
+  dsa_name:
+    aliases: ['DSA_NAME']
+    required: false
+    dtype: str
+
+  groupname_isperpetual:
+    aliases: ['GROUPNAME - ISPERPETUAL']
+    required: false
+    dtype: str
+
+  dst_dsa_dme_fls_master_type:
+    aliases: ['DST_DSA_DME_FLS_Master TYPE']
+    required: false
+    dtype: str
+
+  dst_dsa_dme_fls_master_code:
+    aliases: ['DST_DSA_DME_FLS_Master CODE']
+    required: false
+    dtype: str
+
+  dst_dsa_dme_fls_master_name:
+    aliases: ['DST_DSA_DME_FLS_Master NAME']
+    required: false
+    dtype: str
+

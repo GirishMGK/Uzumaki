@@ -2,31 +2,137 @@ report_type: collection_report
 
 columns:
   loan_account_no:
-    aliases: [loan_account_no, lan, loan_account, loan_id]
+    aliases: ['loan_account_no', 'lan', 'loan_account', 'loan_id', 'LoanAgreementNo']
     required: true
     dtype: str
 
   collection_date:
-    aliases: [collection_date, payment_date, receipt_date, date]
+    aliases: ['collection_date', 'payment_date', 'receipt_date', 'date', 'Date of collection']
     required: false
     dtype: str
 
   amount_collected:
-    aliases: [amount_collected, collected_amount, payment_amount, receipt_amount, amount]
+    aliases: ['amount_collected', 'collected_amount', 'payment_amount', 'receipt_amount', 'amount', 'Amount Collected']
     required: false
     dtype: float
 
   collection_mode:
-    aliases: [collection_mode, payment_mode, mode_of_payment]
+    aliases: ['collection_mode', 'payment_mode', 'mode_of_payment', 'Mode of Collection']
     required: false
     dtype: str
 
   agent_id:
-    aliases: [agent_id, collector_id, field_agent]
+    aliases: ['agent_id', 'collector_id', 'field_agent']
     required: false
     dtype: str
 
   dpd:
-    aliases: [dpd, days_past_due, overdue_days]
+    aliases: ['dpd', 'days_past_due', 'overdue_days']
     required: false
     dtype: int
+
+  croid:
+    aliases: ['CROID']
+    required: false
+    dtype: str
+
+  client_name:
+    aliases: ['ClientName']
+    required: false
+    dtype: str
+
+  chargeid:
+    aliases: ['CHARGEID']
+    required: false
+    dtype: str
+
+  chargedesc:
+    aliases: ['chargedesc']
+    required: false
+    dtype: str
+
+  allocatedamt:
+    aliases: ['ALLOCATEDAMT']
+    required: false
+    dtype: float
+
+  total_collection_incl_arrear:
+    aliases: ['Total Collection Incl Arrear']
+    required: false
+    dtype: float
+
+  loan_transfer_date:
+    aliases: ['Loan Transfer Date']
+    required: false
+    dtype: str
+
+  last_eod_date:
+    aliases: ['Last EOD Date']
+    required: false
+    dtype: str
+
+  ptp_date:
+    aliases: ['PTP Date']
+    required: false
+    dtype: str
+
+  collected_by:
+    aliases: ['Collected By']
+    required: false
+    dtype: str
+
+  remarks:
+    aliases: ['Remarks']
+    required: false
+    dtype: str
+
+  appropriation_towards_principal_previous_emi_received:
+    aliases: ['Appropriation towards principal previous EMI - Received']
+    required: false
+    dtype: float
+
+  appropriation_towards_interest_previous_emi_received:
+    aliases: ['Appropriation towards interest previous EMI - Received']
+    required: false
+    dtype: float
+
+  appropriation_towards_principal_current_emi:
+    aliases: ['Appropriation towards principal current EMI']
+    required: false
+    dtype: float
+
+  appropriation_towards_interest_current_emi:
+    aliases: ['Appropriation towards interest current EMI']
+    required: false
+    dtype: float
+
+  appropriation_towards_principal_current_emi_received:
+    aliases: ['Appropriation towards principal current EMI - Received']
+    required: false
+    dtype: float
+
+  appropriation_towards_interest_current_emi_received:
+    aliases: ['Appropriation towards interest current EMI - Received']
+    required: false
+    dtype: float
+
+  collected_from:
+    aliases: ['Collected From']
+    required: false
+    dtype: str
+
+  bank_deposit_dt:
+    aliases: ['BankDepositDt']
+    required: false
+    dtype: str
+
+  bank_deposit_date:
+    aliases: ['BankDepositDate']
+    required: false
+    dtype: str
+
+  action_code:
+    aliases: ['Action_Code']
+    required: false
+    dtype: str
+

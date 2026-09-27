@@ -1,0 +1,183 @@
+report_type: sap_addl_columns
+
+columns:
+  co_code:
+    aliases: ['Co Code']
+    required: false
+    dtype: str
+
+  doc_no:
+    aliases: ['Doc No']
+    required: false
+    dtype: str
+
+  fiscal_year:
+    aliases: ['Fiscal Year']
+    required: false
+    dtype: str
+
+  line_item_no:
+    aliases: ['Line Item No']
+    required: false
+    dtype: str
+
+  doc_type:
+    aliases: ['Doc Type']
+    required: false
+    dtype: str
+
+  doc_date:
+    aliases: ['Doc Date']
+    required: false
+    dtype: str
+
+  posting_date:
+    aliases: ['Posting Date']
+    required: false
+    dtype: str
+
+  period:
+    aliases: ['Period']
+    required: false
+    dtype: str
+
+  user:
+    aliases: ['User']
+    required: false
+    dtype: str
+
+  t_code:
+    aliases: ['T-code']
+    required: false
+    dtype: str
+
+  reference:
+    aliases: ['Reference']
+    required: false
+    dtype: str
+
+  reversal_fiscal_year:
+    aliases: ['Reversal Fiscal Year']
+    required: false
+    dtype: str
+
+  doc_header_text:
+    aliases: ['Doc Header Text']
+    required: false
+    dtype: str
+
+  curr:
+    aliases: ['Curr']
+    required: false
+    dtype: str
+
+  entry_date:
+    aliases: ['Entry Date']
+    required: false
+    dtype: str
+
+  time:
+    aliases: ['Time']
+    required: false
+    dtype: str
+
+  none:
+    aliases: [None]
+    required: false
+    dtype: str
+
+  parked_by:
+    aliases: ['Parked by']
+    required: false
+    dtype: str
+
+  ref_transaction:
+    aliases: ['Ref Transaction']
+    required: false
+    dtype: str
+
+  business_transaction:
+    aliases: ['Business Transaction']
+    required: false
+    dtype: str
+
+  none_2:
+    aliases: [None]
+    required: false
+    dtype: str
+
+  none_3:
+    aliases: [None]
+    required: false
+    dtype: str
+
+  clearing_date:
+    aliases: ['Clearing Date']
+    required: false
+    dtype: str
+
+  clearing_entry_date:
+    aliases: ['Clearing Entry Date']
+    required: false
+    dtype: str
+
+  clearing_doc_no:
+    aliases: ['Clearing Doc No']
+    required: false
+    dtype: str
+
+  posting_key:
+    aliases: ['Posting Key']
+    required: false
+    dtype: str
+
+  account_type:
+    aliases: ['Account Type']
+    required: false
+    dtype: str
+
+  dr_cr_indicator:
+    aliases: ['Dr Cr indicator']
+    required: false
+    dtype: str
+
+  amt_in_local_curr:
+    aliases: ['Amt in local curr']
+    required: false
+    dtype: float
+
+  disbursed_amount:
+    aliases: ['Amount']
+    required: false
+    dtype: float
+
+  gl_amount:
+    aliases: ['GL amount']
+    required: false
+    dtype: float
+
+  text:
+    aliases: ['Text']
+    required: false
+    dtype: str
+
+  transaction_type:
+    aliases: ['Transaction type']
+    required: false
+    dtype: str
+
+  cost_centre:
+    aliases: ['Cost centre']
+    required: false
+    dtype: str
+
+  default_master_gl_code:
+    aliases: ['Default master GL code']
+    required: false
+    dtype: str
+
+  gl_code_of_actual_entry:
+    aliases: ['GL code of actual entry']
+    required: false
+    dtype: str
+

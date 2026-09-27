@@ -1,0 +1,98 @@
+report_type: bank_transfer
+
+columns:
+  business_date:
+    aliases: ['BUSINESS_DATE']
+    required: false
+    dtype: str
+
+  loan_status:
+    aliases: ['LOANSTATUS']
+    required: false
+    dtype: str
+
+  npastageid:
+    aliases: ['NPASTAGEID']
+    required: false
+    dtype: str
+
+  source_system_id:
+    aliases: ['SOURCESYSTEMID']
+    required: false
+    dtype: str
+
+  loan_id:
+    aliases: ['AGREEMENTNO']
+    required: false
+    dtype: str
+
+  disbursement_date:
+    aliases: ['DISBURSALDATE']
+    required: false
+    dtype: str
+
+  disbursalamount:
+    aliases: ['DISBURSALAMOUNT']
+    required: false
+    dtype: float
+
+  disbursed_amount:
+    aliases: ['DISBURSEDAMOUNT']
+    required: false
+    dtype: float
+
+  scheme_name:
+    aliases: ['PRODUCTNAME']
+    required: false
+    dtype: str
+
+  sub_sbu:
+    aliases: ['SUB_SBU']
+    required: false
+    dtype: str
+
+  utr_no:
+    aliases: ['UTR_NO']
+    required: false
+    dtype: str
+
+  utr_no_upddate:
+    aliases: ['UTR_NO_UPDDATE']
+    required: false
+    dtype: str
+
+  chequenum:
+    aliases: ['CHEQUENUM']
+    required: false
+    dtype: str
+
+  chequeamt:
+    aliases: ['CHEQUEAMT']
+    required: false
+    dtype: float
+
+  chequeid:
+    aliases: ['CHEQUEID']
+    required: false
+    dtype: str
+
+  mode:
+    aliases: ['PAYMENTMODE']
+    required: false
+    dtype: str
+
+  chequedate:
+    aliases: ['CHEQUEDATE']
+    required: false
+    dtype: str
+
+  bptype:
+    aliases: ['BPTYPE']
+    required: false
+    dtype: str
+
+  bank_acc_number:
+    aliases: ['BANK_ACC_NUMBER']
+    required: false
+    dtype: str
+

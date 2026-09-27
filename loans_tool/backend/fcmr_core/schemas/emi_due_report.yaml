@@ -1,0 +1,63 @@
+report_type: emi_due_report
+
+columns:
+  source_system_id:
+    aliases: ['SourcesystemID']
+    required: false
+    dtype: str
+
+  scheme_id:
+    aliases: ['ProductID']
+    required: false
+    dtype: str
+
+  lms_productid:
+    aliases: ['LMS_PRODUCTID']
+    required: false
+    dtype: str
+
+  scheme_name:
+    aliases: ['ProductName']
+    required: false
+    dtype: str
+
+  loan_id:
+    aliases: ['AgreementNo']
+    required: false
+    dtype: str
+
+  disbursement_date:
+    aliases: ['DisbursalDate']
+    required: false
+    dtype: str
+
+  business_date:
+    aliases: ['BusinessDate']
+    required: false
+    dtype: str
+
+  disbursed_amount:
+    aliases: ['DISBURSEDAMOUNT']
+    required: false
+    dtype: float
+
+  emi_due_amount:
+    aliases: ['EMI Due Amount']
+    required: false
+    dtype: float
+
+  emi_paid_amount:
+    aliases: ['EMI Paid Amount']
+    required: false
+    dtype: float
+
+  emi_outstanding_as_on_month_end:
+    aliases: ['EMI Outstanding as on month end']
+    required: false
+    dtype: float
+
+  collection_during_the_month:
+    aliases: ['Collection during the month']
+    required: false
+    dtype: float
+

@@ -3053,6 +3053,128 @@ def test_download_schema_produces_template_and_reference_sheets():
                 del sys.modules[mod]
 
 
+# ── Client master schema file: 4 schemas expanded + 8 new report types ─────
+def test_master_schema_expansion_preserves_every_existing_rule_dependency():
+    """Regression guard for the client's master schema file import: the 4
+    overlapping report types (Customer Master, EAD Files, Disbursement
+    Report, Collection Report) were expanded in place from the client's
+    authoritative schema -- every canonical name any existing rule/report/
+    cross-dataset-check/BRS-link function references must still exist
+    under its exact original name (confirmed separately by the full suite
+    passing unchanged), and the master file's own column for that same
+    concept must have been added as a *new alias* under the SAME
+    canonical name, not a competing new field. Spot-checks one field per
+    dataset via a real, un-mocked schema lookup (not a hardcoded literal
+    list) so this can't rot silently if the schema file is regenerated."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        from fcmr_core.schemas.loader import get_schema
+
+        ead = get_schema("ead_files")
+        # loan_id's aliases must now include the master file's own
+        # AGREEMENTID column *alongside* the pre-existing AgreementNo --
+        # both are real, separate columns in the client's EAD export, and
+        # collapsing them onto one canonical is intentional (loan_id is
+        # the one join key every existing rule/report/cross-check uses).
+        loan_id_col = next(c for c in ead.columns if c.canonical == "loan_id")
+        assert "AGREEMENTID" in loan_id_col.aliases
+        assert "AgreementNo" in loan_id_col.aliases  # the pre-existing alias must survive untouched
+
+        cm = get_schema("customer_master")
+        pan_col = next(c for c in cm.columns if c.canonical == "pan")
+        assert "PANCARDNO" in pan_col.aliases  # semantic match, not just exact-normalized
+
+        disb = get_schema("disbursement_report")
+        loan_col = next(c for c in disb.columns if c.canonical == "loan_account_no")
+        assert "AGREEMENTNO" in loan_col.aliases
+
+        coll = get_schema("collection_report")
+        loan_col2 = next(c for c in coll.columns if c.canonical == "loan_account_no")
+        assert "LoanAgreementNo" in loan_col2.aliases
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_disbursement_output_name_bug_was_fixed_not_imported():
+    """Regression guard for a real data-quality bug found in the client's
+    master schema file: 49 of the Disbursement dataset's 97 rows had
+    `Output Name` stuck on a single wrong value ('SOURCING_CHANNEL'),
+    copied down from one row instead of matching each row's own `Source
+    Column` (which every other row in the entire source sheet does). The
+    user confirmed the fix: treat Output Name = Source Column for those
+    rows. Confirms several of the previously-colliding fields (DOB,
+    ADDRESS, OCCUPATION, MAKE) ended up as their own distinct canonical
+    fields, not all sharing one."""
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        from fcmr_core.schemas.loader import get_schema
+
+        disb = get_schema("disbursement_report")
+        canonicals_for = {}
+        for src in ("DOB", "ADDRESS", "OCCUPATION", "MAKE", "INSURECOMPANY"):
+            match = [c.canonical for c in disb.columns if src in c.aliases]
+            assert match, f"{src} should have its own canonical field"
+            canonicals_for[src] = match[0]
+
+        # All distinct -- none of them collapsed onto a shared wrong name.
+        assert len(set(canonicals_for.values())) == len(canonicals_for)
+        assert "sourcing_channel" not in canonicals_for.values()
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_schema_download_works_for_every_registered_report_type():
+    """Broad functional smoke test directly covering the feature request:
+    'give an option to download the format for each data type' -- for
+    every one of the (now 13) registered report types, the real
+    /dashboard/schema/{report_type}/download route must return a valid,
+    non-empty two-sheet Excel workbook whose Template header row has at
+    least one column. Catches a report type whose schema is malformed
+    enough to crash Excel generation (e.g. a canonical name that isn't a
+    valid Excel reference, or a sheet-name length overflow) without
+    having to enumerate all 13 by hand."""
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("openpyxl")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import io
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import openpyxl
+        from fastapi.testclient import TestClient
+        from fcmr_core.schemas.loader import available_report_types
+
+        report_types = available_report_types()
+        assert len(report_types) == 13  # 5 original + 8 from the master schema file
+
+        with TestClient(loan_main.app) as client:
+            for report_type in report_types:
+                resp = client.get(f"/dashboard/schema/{report_type}/download")
+                assert resp.status_code == 200, f"{report_type} schema download failed"
+                wb = openpyxl.load_workbook(io.BytesIO(resp.content))
+                assert wb.sheetnames == ["Template", "Field Reference"], report_type
+                headers = [c.value for c in next(wb["Template"].iter_rows(max_row=1)) if c.value]
+                assert len(headers) > 0, f"{report_type} has an empty Template"
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 def test_do_upload_streams_csv_and_zipped_csv_without_corrupting_content():
     """Performance regression guard: do_upload() used to read an entire
     uploaded file into one Python bytes object (`await file.read()`) before
@@ -3202,17 +3324,26 @@ def test_do_upload_enforces_size_cap_while_streaming_direct_and_zipped_files():
 # ── fcmr_core/schemas/loader.py: best_raw_for_canonical dedup ───────────────
 def test_best_raw_for_canonical_prefers_exact_match_over_near_duplicate():
     """
-    Regression guard for a real crash: a file with both
-    `zero_90_days_interest` (an exact alias match) and
-    `zero_90_days_interest_Hist` (a "_Hist" variant that also fuzzy-matches
-    the same canonical, score 0.89) caused the naive
+    Regression guard for a real crash: a file with both an exact alias
+    match for a canonical field and a "_Hist"-style variant that also
+    fuzzy-matches the *same* canonical caused the naive
     {canonical: raw for raw, (canonical, _) in scored.items()} inversion
-    to keep whichever header was seen *last* -- in the real file, that was
-    the fuzzy "_Hist" variant, so the exact match was suggested as "Skip"
-    while "_Hist" got suggested for that canonical instead. Confirming
-    that mapping later crashed ingestion with polars'
-    "column ... is duplicate", since the untouched exact-match column was
-    still sitting under that exact name.
+    to keep whichever header was seen *last* -- in the real file that
+    caused this, that was the fuzzy "_Hist" variant, so the exact match
+    was suggested as "Skip" while "_Hist" got suggested for that
+    canonical instead. Confirming that mapping later crashed ingestion
+    with polars' "column ... is duplicate", since the untouched
+    exact-match column was still sitting under that exact name.
+
+    Originally used `zero_90_days_interest_Hist` as the fuzzy-matching
+    variant (the literal real-world example from the bug report) --
+    replaced with a synthetic `financial_irr_Hist` after the client's
+    master schema file confirmed `zero_90_days_interest_Hist` is itself
+    a real, distinct EAD column (a prior-period historical value), not a
+    near-duplicate of anything -- it's now its own recognized canonical
+    field (`zero_90_days_interest_hist`) and correctly scores an exact
+    1.0 match to itself, which stopped exercising the collision this
+    test exists to guard against.
     """
     backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
     sys.path.insert(0, backend_dir)
@@ -3223,15 +3354,15 @@ def test_best_raw_for_canonical_prefers_exact_match_over_near_duplicate():
 
         catalog_store.init_catalog()
         schema = get_schema("ead_files")
-        raw_headers = ["zero_90_days_interest", "zero_90_days_interest_Hist", "zero_90_int_Final"]
+        raw_headers = ["FinancialIRR", "financial_irr_Hist", "zero_90_int_Final"]
 
         scored = schema.map_headers_with_scores(raw_headers)
         # Confirm the real-world scoring collision still reproduces as expected.
-        assert scored["zero_90_days_interest"][0] == "zero_90_days_interest"
-        assert scored["zero_90_days_interest_Hist"][0] == "zero_90_days_interest"
+        assert scored["FinancialIRR"][0] == "financial_irr"
+        assert scored["financial_irr_Hist"][0] == "financial_irr"
 
         best = schema.best_raw_for_canonical(raw_headers)
-        assert best["zero_90_days_interest"] == "zero_90_days_interest"  # the exact match wins
+        assert best["financial_irr"] == "FinancialIRR"  # the exact match wins
         assert best["zero_90_int_final"] == "zero_90_int_Final"
     finally:
         sys.path.remove(backend_dir)
@@ -4378,9 +4509,13 @@ def test_analytics_hub_lists_every_dataset_and_links_only_where_analytics_exist(
     analytics), link "Open Analytics" only for EAD Files (-> the EAD
     Analytics screen) and Customer Master (-> the existing per-upload
     dashboard, left unmigrated per the user's explicit choice), and say
-    "no analytics defined yet" for the rest (Technical Writeoff, Collection
-    Report, Disbursement Report). Also checks the ready count updates once
-    a real EAD file is uploaded and mapped."""
+    "no analytics defined yet" for the rest -- Technical Writeoff,
+    Collection Report, Disbursement Report, plus the 8 report types added
+    straight from the client's master schema file (ead_addl_columns,
+    disbursement_addl_columns, closed_loans, bank_transfer,
+    cancelled_rejected, cibil_report, emi_due_report, sap_addl_columns),
+    11 in total. Also checks the ready count updates once a real EAD file
+    is uploaded and mapped."""
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
 
@@ -4411,11 +4546,16 @@ def test_analytics_hub_lists_every_dataset_and_links_only_where_analytics_exist(
 
             resp = client.get("/dashboard/analytics")
             assert resp.status_code == 200
-            for label in ("EAD Files", "Customer Master", "Technical Writeoff", "Collection Report", "Disbursement Report"):
+            for label in (
+                "EAD Files", "Customer Master", "Technical Writeoff", "Collection Report", "Disbursement Report",
+                "EAD Additional Columns (ADDA2)", "Disbursement Additional Columns (ADDA3)",
+                "Closed Loans (ADDA5)", "Bank Transfer (BTD)", "Cancelled/Rejected (CANDR)",
+                "CIBIL Report (CRIF)", "EMI Due Report (EMIDUE)", "SAP Additional Columns (SAP_ZBSEG)",
+            ):
                 assert label in resp.text
             assert 'href="/dashboard/analytics/ead"' in resp.text
             assert 'href="/dashboard"' in resp.text
-            assert resp.text.count("No analytics defined yet for this dataset type.") == 3
+            assert resp.text.count("No analytics defined yet for this dataset type.") == 11
 
             # Consolidate & Download is generic -- every report type gets
             # one, including the 3 with no analytics defined yet (that's
