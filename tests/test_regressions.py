@@ -3835,6 +3835,93 @@ def test_ead_row_rules_flag_expected_exceptions():
         sys.path.remove(backend_dir)
 
 
+def test_new_disbursal_to_npa_customer_rule_does_not_explode_on_repeated_snapshots():
+    """Regression guard for a real OOM/hang found against a production-sized
+    file: a real EAD extract has one row per loan per business-date
+    snapshot (often years of monthly history for the same loan), not one
+    row per loan. rule_new_disbursal_to_npa_customer used to self-join
+    customers' rows directly, so a customer with L loans x S snapshots
+    joined against itself at (L*S)^2 instead of L^2 -- for a customer with
+    a long multi-year history this reaches billions of join rows and OOMs
+    the whole backend process (which, embedded in the packaged .exe,
+    presents as the "Run" button silently doing nothing -- no error page,
+    the process just dies). This builds a dataset with many repeated
+    snapshot rows per loan (same shape as the production file that
+    triggered it) and asserts both that it still completes quickly and
+    that the correctness of rule 15 (established by
+    test_ead_row_rules_flag_expected_exceptions above) is unaffected by
+    collapsing to one row per loan before the join.
+    """
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import time
+
+        import polars as pl
+
+        from fcmr_core.rules.ead_rules import run_ead_row_rules
+
+        n_snapshots = 48  # 4 years of monthly business-date snapshots
+        loan_ids = []
+        ucids = []
+        disb_dates = []
+        npa_dates = []
+        business_dates = []
+        # Two loans for the same customer, each repeated across 48
+        # monthly snapshots -- 96 rows total for one customer, same shape
+        # as a real multi-year EAD extract. OLD went NPA in 2020; NEW was
+        # disbursed in 2024, after OLD's NPA date, so NEW should be
+        # flagged on every one of its snapshot rows.
+        for snap in range(n_snapshots):
+            bdate = f"{(snap % 12) + 1:02d}-01-{2020 + snap // 12}"
+            loan_ids.append("OLD")
+            ucids.append("SAME")
+            disb_dates.append("01-01-2020")
+            npa_dates.append("01-06-2020")
+            business_dates.append(bdate)
+            loan_ids.append("NEW")
+            ucids.append("SAME")
+            disb_dates.append("01-06-2024")
+            npa_dates.append(None)
+            business_dates.append(bdate)
+
+        df = pl.DataFrame(
+            {
+                "loan_id": loan_ids,
+                "ucid": ucids,
+                "customer_id": ucids,
+                "disbursement_date": disb_dates,
+                "sanction_date": ["01-01-2019"] * len(loan_ids),
+                "sanction_amount": [100.0] * len(loan_ids),
+                "disbursed_amount": [90.0] * len(loan_ids),
+                "future_pos": [10.0] * len(loan_ids),
+                "ead": [100.0] * len(loan_ids),
+                "npa_flag_date": npa_dates,
+                "business_date": business_dates,
+                "maturity_date": ["01-01-2035"] * len(loan_ids),
+                "original_tenure": [120] * len(loan_ids),
+                "product_helper": ["TW"] * len(loan_ids),
+            }
+        )
+
+        t0 = time.monotonic()
+        annotated = run_ead_row_rules(df, ["new_disbursal_to_npa_customer"])
+        elapsed = time.monotonic() - t0
+
+        # The join must not multiply row count -- one output row per input
+        # row, not one per (row, matching-NPA-event) pair.
+        assert annotated.height == df.height
+        assert elapsed < 10.0, f"took {elapsed:.1f}s -- self-join is running at row, not loan, granularity"
+
+        codes = annotated.filter(pl.col("loan_id") == "NEW")["_exc_new_disbursal_to_npa_customer_code"]
+        assert (codes == "NEW_DISBURSAL_TO_NPA_CUSTOMER").all()
+        old_codes = annotated.filter(pl.col("loan_id") == "OLD")["_exc_new_disbursal_to_npa_customer_code"]
+        assert (old_codes == "").all()
+    finally:
+        sys.path.remove(backend_dir)
+
+
 def test_ead_rules_handle_already_parsed_date_columns_not_just_raw_strings():
     """Regression guard for a real bug found while wiring this feature up:
     DuckDB-backed ingestion (fcmr_core.catalog.store.get_upload_df /

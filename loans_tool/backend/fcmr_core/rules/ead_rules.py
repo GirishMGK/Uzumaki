@@ -237,14 +237,35 @@ def rule_new_disbursal_to_npa_customer(df: pl.DataFrame) -> pl.DataFrame:
             _parse_date(df, "npa_flag_date").alias("_npa_dt"),
         ]
     )
-    npa_events = work.filter(pl.col("_npa_dt").is_not_null() & pl.col("_cust_key").is_not_null()).select(
+
+    # Collapse to one row per (customer, loan) before the self-join below.
+    # A real EAD extract has one row per loan per business-date snapshot
+    # (often years of monthly history), so without this the join runs at
+    # row granularity: a customer with L loans x S snapshots joins
+    # against itself at (L*S)^2 instead of L^2 -- OOMs on a realistic
+    # multi-year file even though the customer's actual loan count is
+    # small. disbursement_date and npa_flag_date are per-loan facts that
+    # don't vary across a loan's own snapshots, so min() here is just
+    # picking the (only) value out of its repeats, not changing meaning.
+    per_loan = (
+        work.filter(pl.col("_cust_key").is_not_null() & pl.col("loan_id").is_not_null())
+        .group_by(["_cust_key", "loan_id"])
+        .agg(
+            [
+                pl.col("_disb_dt").min().alias("_disb_dt"),
+                pl.col("_npa_dt").min().alias("_npa_dt"),
+            ]
+        )
+    )
+
+    npa_events = per_loan.filter(pl.col("_npa_dt").is_not_null()).select(
         [
             pl.col("_cust_key"),
             pl.col("loan_id").alias("_other_loan_id"),
             pl.col("_npa_dt").alias("_other_npa_dt"),
         ]
     )
-    joined = work.join(npa_events, on="_cust_key", how="left")
+    joined = per_loan.join(npa_events, on="_cust_key", how="left")
     offending = joined.filter(
         (pl.col("loan_id") != pl.col("_other_loan_id"))
         & pl.col("_disb_dt").is_not_null()
@@ -253,6 +274,9 @@ def rule_new_disbursal_to_npa_customer(df: pl.DataFrame) -> pl.DataFrame:
     )
     earliest = offending.group_by("loan_id").agg(pl.col("_other_npa_dt").min().alias("_earliest_other_npa"))
 
+    # Back to row granularity: earliest has one row per loan_id, so this
+    # join doesn't multiply the snapshot rows, it just tags each of a
+    # loan's rows with the same per-loan result.
     work = work.join(earliest, on="loan_id", how="left")
     gap_days = (pl.col("_disb_dt") - pl.col("_earliest_other_npa")).dt.total_days()
     cond = pl.col("_earliest_other_npa").is_not_null()
