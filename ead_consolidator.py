@@ -133,58 +133,87 @@ def _timestamp() -> str:
 EXCEL_ROW_LIMIT = 1_048_575
 
 
-def _build_downloads(consolidated: pl.DataFrame) -> dict[str, dict]:
-    """Builds the bytes for each download format independently, isolating
-    failures so one format can never hide the others -- previously CSV,
-    Excel, and Parquet were built back-to-back in one pass, so a
-    consolidation past Excel's 1,048,576-row-per-sheet limit made
-    to_excel() raise and killed the whole script before it ever reached
-    the CSV/Parquet buttons, leaving *no* download option visible at all
-    even though CSV/Parquet were perfectly fine.
-
-    Returns {"csv": {...}, "excel": {...}, "parquet": {...}}, each a dict
-    with "data" (bytes or None), "error" (str or None), and, for excel
-    only, "skipped_reason" (str or None) when the row limit was hit.
-    """
-    results: dict[str, dict] = {
-        "csv": {"data": None, "error": None},
-        "excel": {"data": None, "error": None, "skipped_reason": None},
-        "parquet": {"data": None, "error": None},
-    }
-
+def _build_csv(consolidated: pl.DataFrame) -> dict:
     try:
-        results["csv"]["data"] = consolidated.write_csv().encode("utf-8")
+        return {"data": consolidated.write_csv().encode("utf-8"), "error": None}
     except Exception as exc:
-        results["csv"]["error"] = str(exc)
+        return {"data": None, "error": str(exc)}
 
+
+def _build_excel(consolidated: pl.DataFrame) -> dict:
     if len(consolidated) > EXCEL_ROW_LIMIT:
-        results["excel"]["skipped_reason"] = (
-            f"Too many rows for Excel ({len(consolidated):,} > {EXCEL_ROW_LIMIT:,} row limit "
-            "per sheet) — use CSV or Parquet instead."
-        )
-    else:
-        try:
-            excel_buf = io.BytesIO()
-            consolidated.to_pandas().to_excel(excel_buf, index=False, engine="xlsxwriter")
-            results["excel"]["data"] = excel_buf.getvalue()
-        except Exception as exc:
-            results["excel"]["error"] = str(exc)
+        return {
+            "data": None, "error": None,
+            "skipped_reason": (
+                f"Too many rows for Excel ({len(consolidated):,} > {EXCEL_ROW_LIMIT:,} row "
+                "limit per sheet) — use CSV or Parquet instead."
+            ),
+        }
+    try:
+        excel_buf = io.BytesIO()
+        # .to_pandas() + xlsxwriter is the expensive step here -- a full
+        # second in-memory copy of the data plus per-cell writing -- which
+        # is exactly why this format is built on demand (see render()):
+        # a user who only wants CSV/Parquet should never pay for it, let
+        # alone risk the packaged app's child process getting OOM-killed
+        # building an Excel file nobody asked for.
+        consolidated.to_pandas().to_excel(excel_buf, index=False, engine="xlsxwriter")
+        return {"data": excel_buf.getvalue(), "error": None, "skipped_reason": None}
+    except Exception as exc:
+        return {"data": None, "error": str(exc), "skipped_reason": None}
 
+
+def _build_parquet(consolidated: pl.DataFrame) -> dict:
     try:
         parquet_buf = io.BytesIO()
         consolidated.write_parquet(parquet_buf)
-        results["parquet"]["data"] = parquet_buf.getvalue()
+        return {"data": parquet_buf.getvalue(), "error": None}
     except Exception as exc:
-        results["parquet"]["error"] = str(exc)
+        return {"data": None, "error": str(exc)}
 
-    return results
+
+_DOWNLOAD_BUILDERS = {"csv": _build_csv, "excel": _build_excel, "parquet": _build_parquet}
+_DOWNLOAD_KEYS = tuple(f"ec_dl_{fmt}" for fmt in _DOWNLOAD_BUILDERS)
+_FORMAT_EXT = {"csv": "csv", "excel": "xlsx", "parquet": "parquet"}
+
+
+def _render_download_slot(container, fmt: str, label: str, consolidated: pl.DataFrame, ts: str, mime: str) -> None:
+    """Builds this one format's bytes on demand -- only once the user
+    clicks "Generate <Format>", and cached from then on -- instead of all
+    three formats unconditionally on every script rerun. A user who only
+    ever clicks "Generate Parquet" (fast, polars-native) should never also
+    pay for the much heavier CSV/Excel builds; see _build_excel's
+    docstring for why that specifically matters for the packaged app."""
+    state_key = f"ec_dl_{fmt}"
+    result = st.session_state.get(state_key)
+    with container:
+        if result is None:
+            if st.button(f"Generate {label}", key=f"ec_gen_{fmt}", use_container_width=True):
+                with st.spinner(f"Building {label}…"):
+                    st.session_state[state_key] = _DOWNLOAD_BUILDERS[fmt](consolidated)
+                st.rerun()
+            return
+        if result.get("skipped_reason"):
+            st.warning(result["skipped_reason"])
+        elif result["error"]:
+            st.error(f"{label} generation failed: {result['error']}")
+        else:
+            st.download_button(
+                f"⬇ Download {label}",
+                data=result["data"],
+                file_name=f"EAD_Consolidated_{ts}.{_FORMAT_EXT[fmt]}",
+                mime=mime,
+                use_container_width=True,
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # UI
 # ══════════════════════════════════════════════════════════════════════════════
 def _reset():
-    for key in ("ec_files", "ec_raw_uploads", "ec_mapping_confirmed", "ec_user_mapping", "ec_consolidated"):
+    keys = ("ec_files", "ec_raw_uploads", "ec_mapping_confirmed", "ec_user_mapping",
+            "ec_consolidated", "ec_download_ts") + _DOWNLOAD_KEYS
+    for key in keys:
         st.session_state.pop(key, None)
 
 
@@ -222,7 +251,8 @@ def render():
     if new_uploads:
         st.session_state["ec_raw_uploads"] = [(f.name, f.getvalue()) for f in new_uploads]
         st.session_state["ec_uploader_gen"] = uploader_gen + 1
-        for key in ("ec_mapping_confirmed", "ec_user_mapping", "ec_consolidated"):
+        for key in ("ec_mapping_confirmed", "ec_user_mapping", "ec_consolidated",
+                    "ec_download_ts") + _DOWNLOAD_KEYS:
             st.session_state.pop(key, None)
         st.rerun()
 
@@ -270,7 +300,8 @@ def render():
     if submitted:
         st.session_state["ec_user_mapping"] = user_mapping
         st.session_state["ec_mapping_confirmed"] = True
-        st.session_state.pop("ec_consolidated", None)
+        for key in ("ec_consolidated", "ec_download_ts") + _DOWNLOAD_KEYS:
+            st.session_state.pop(key, None)
 
     if not st.session_state.get("ec_mapping_confirmed"):
         render_footer()
@@ -306,47 +337,12 @@ def render():
     st.success(f"Consolidated {len(consolidated):,} rows from {len(raw_uploads)} file(s).")
     st.dataframe(consolidated.head(50).to_pandas(), use_container_width=True)
 
-    ts = _timestamp()
-    downloads = _build_downloads(consolidated)
+    ts = st.session_state.setdefault("ec_download_ts", _timestamp())
     col1, col2, col3 = st.columns(3)
-    with col1:
-        csv_result = downloads["csv"]
-        if csv_result["error"]:
-            st.error(f"CSV generation failed: {csv_result['error']}")
-        else:
-            st.download_button(
-                "⬇ Download CSV",
-                data=csv_result["data"],
-                file_name=f"EAD_Consolidated_{ts}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-    with col2:
-        excel_result = downloads["excel"]
-        if excel_result["skipped_reason"]:
-            st.warning(excel_result["skipped_reason"])
-        elif excel_result["error"]:
-            st.error(f"Excel generation failed: {excel_result['error']}")
-        else:
-            st.download_button(
-                "⬇ Download Excel",
-                data=excel_result["data"],
-                file_name=f"EAD_Consolidated_{ts}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-    with col3:
-        parquet_result = downloads["parquet"]
-        if parquet_result["error"]:
-            st.error(f"Parquet generation failed: {parquet_result['error']}")
-        else:
-            st.download_button(
-                "⬇ Download Parquet",
-                data=parquet_result["data"],
-                file_name=f"EAD_Consolidated_{ts}.parquet",
-                mime="application/octet-stream",
-                use_container_width=True,
-            )
+    _render_download_slot(col1, "csv", "CSV", consolidated, ts, "text/csv")
+    _render_download_slot(col2, "excel", "Excel", consolidated, ts,
+                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    _render_download_slot(col3, "parquet", "Parquet", consolidated, ts, "application/octet-stream")
 
     st.button("Start over", on_click=_reset)
     render_footer()

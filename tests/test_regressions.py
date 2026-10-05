@@ -2775,9 +2775,12 @@ def test_ead_consolidator_download_buttons_survive_excel_row_limit():
     single build pass shared with CSV/Parquet, killing the whole script
     before any of the three download buttons rendered -- so a real
     23-file/8.8M-row consolidation showed *no* download option at all,
-    even though CSV/Parquet would have been fine. _build_downloads()
-    builds each format independently: Excel is skipped with a clear
-    reason instead of raising, and CSV/Parquet are still produced.
+    even though CSV/Parquet would have been fine. Each format now has its
+    own builder (_build_csv/_build_excel/_build_parquet, each built
+    on-demand from its own "Generate <Format>" button -- see
+    _render_download_slot): Excel is skipped with a clear reason instead
+    of raising, and CSV/Parquet are unaffected since they're never even
+    attempted together with it.
     """
     pytest.importorskip("polars")
     sys.path.insert(0, REPO_ROOT)
@@ -2787,25 +2790,27 @@ def test_ead_consolidator_download_buttons_survive_excel_row_limit():
         import ead_consolidator as ec
 
         small = pl.DataFrame({"loan_id": ["L1", "L2"], "ead": [10.0, 20.0]})
-        small_downloads = ec._build_downloads(small)
-        assert small_downloads["csv"]["error"] is None
-        assert small_downloads["csv"]["data"]
-        assert small_downloads["excel"]["skipped_reason"] is None
-        assert small_downloads["excel"]["error"] is None
-        assert small_downloads["excel"]["data"]
-        assert small_downloads["parquet"]["error"] is None
-        assert small_downloads["parquet"]["data"]
+        assert ec._build_csv(small)["error"] is None
+        assert ec._build_csv(small)["data"]
+        small_excel = ec._build_excel(small)
+        assert small_excel["skipped_reason"] is None
+        assert small_excel["error"] is None
+        assert small_excel["data"]
+        assert ec._build_parquet(small)["error"] is None
+        assert ec._build_parquet(small)["data"]
 
         big = pl.DataFrame({"loan_id": ["L1"] * (ec.EXCEL_ROW_LIMIT + 1)})
-        big_downloads = ec._build_downloads(big)
-        assert big_downloads["excel"]["skipped_reason"] is not None
-        assert big_downloads["excel"]["data"] is None
-        assert big_downloads["excel"]["error"] is None
+        big_excel = ec._build_excel(big)
+        assert big_excel["skipped_reason"] is not None
+        assert big_excel["data"] is None
+        assert big_excel["error"] is None
         # CSV and Parquet must still succeed even though Excel was skipped.
-        assert big_downloads["csv"]["error"] is None
-        assert big_downloads["csv"]["data"]
-        assert big_downloads["parquet"]["error"] is None
-        assert big_downloads["parquet"]["data"]
+        big_csv = ec._build_csv(big)
+        assert big_csv["error"] is None
+        assert big_csv["data"]
+        big_parquet = ec._build_parquet(big)
+        assert big_parquet["error"] is None
+        assert big_parquet["data"]
     finally:
         sys.path.remove(REPO_ROOT)
         for mod in list(sys.modules):
