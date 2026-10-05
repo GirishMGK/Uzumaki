@@ -2,249 +2,497 @@ report_type: ead_files
 
 columns:
   loan_id:
-    aliases: [AgreementNo, agreement_no, loan_id, lan, loan_account_no, account_no, loanid, agreementid, AGREEMENTID_R]
+    aliases: ['AgreementNo', 'agreement_no', 'loan_id', 'lan', 'loan_account_no', 'account_no', 'loanid', 'agreementid', 'AGREEMENTID_R', 'AGREEMENTID']
     required: true
     dtype: str
 
   entity:
-    aliases: [Entity, entity, company, company_name]
+    aliases: ['Entity', 'entity', 'company', 'company_name']
     required: false
     dtype: str
 
   source_system_id:
-    aliases: [SourcesystemID, source_system_id, system_id, sourcesystemid]
+    aliases: ['SourcesystemID', 'source_system_id', 'system_id', 'sourcesystemid']
     required: false
     dtype: str
 
   scheme_id:
-    aliases: [SchemeID, scheme_id, ProductID, product_id, portfolio_code, schemeid, productid]
+    aliases: ['SchemeID', 'scheme_id', 'ProductID', 'product_id', 'portfolio_code', 'schemeid', 'productid']
     required: false
     dtype: str
 
   scheme_name:
-    aliases: [SchemeName, scheme_name, ProductName, product_name, product, schemename, productname]
+    aliases: ['SchemeName', 'scheme_name', 'ProductName', 'product_name', 'product', 'schemename', 'productname']
     required: false
     dtype: str
 
   sbu:
-    aliases: [SBU, sbu, sub_business_unit, segment, business_unit]
+    aliases: ['SBU', 'sbu', 'sub_business_unit', 'segment', 'business_unit']
     required: false
     dtype: str
 
   sub_sbu:
-    aliases: [SubSBU, sub_sbu, subsbu, sub_segment]
+    aliases: ['SubSBU', 'sub_sbu', 'subsbu', 'sub_segment']
     required: false
     dtype: str
 
   branch_id:
-    aliases: [BranchID, branch_id, branch_code, branchid]
+    aliases: ['BranchID', 'branch_id', 'branch_code', 'branchid']
     required: false
     dtype: str
 
   branch_name:
-    aliases: [BranchName, branch_name, branch, branchname]
+    aliases: ['BranchName', 'branch_name', 'branch', 'branchname']
     required: false
     dtype: str
 
   state:
-    aliases: [State, state, state_name, geography]
+    aliases: ['State', 'state', 'state_name', 'geography']
     required: false
     dtype: str
 
   channel_code:
-    aliases: [ChannelCode, channel_code, channel, channelcode]
+    aliases: ['ChannelCode', 'channel_code', 'channel', 'channelcode']
     required: false
     dtype: str
 
   channel_desc:
-    aliases: [ChannelCodeDesc, channel_desc, channel_description, sourcing_channel, channelcodedesc]
+    aliases: ['ChannelCodeDesc', 'channel_desc', 'channel_description', 'sourcing_channel', 'channelcodedesc']
     required: false
     dtype: str
 
   loan_status:
-    aliases: [LoanStatus, loan_status, status, account_status, loanstatus]
+    aliases: ['LoanStatus', 'loan_status', 'status', 'account_status', 'loanstatus']
     required: false
     dtype: str
 
   stage:
-    aliases: [Stage, stage, ecl_stage, ind_as_stage, ind_as_109_stage]
+    aliases: ['Stage', 'stage', 'ecl_stage', 'ind_as_stage', 'ind_as_109_stage']
     required: false
     dtype: str
 
   dpd_bucket:
-    aliases: [DPDBucketing, dpd_bucket, dpd_band, dpd_range, days_past_due, dpdbucketing, dpd]
+    aliases: ['DPDBucketing', 'dpd_bucket', 'dpd_band', 'dpd_range', 'days_past_due', 'dpdbucketing', 'dpd', 'DPD']
     required: false
     dtype: str
 
   disbursement_date:
-    aliases: [DisbursalDate, disbursement_date, disbursal_date, disb_date, disbursaldate, disbursed_on]
+    aliases: ['DisbursalDate', 'disbursement_date', 'disbursal_date', 'disb_date', 'disbursaldate', 'disbursed_on']
     required: false
     dtype: str
 
   mob:
-    aliases: [MOB, mob, months_on_book, tenure_months, months_outstanding]
+    aliases: ['MOB', 'mob', 'months_on_book', 'tenure_months', 'months_outstanding']
     required: false
     dtype: int
 
   sanction_amount:
-    aliases: [SANCTIONAMOUNT, sanction_amount, sanctioned_amount, loan_amount, sanctionamount]
+    aliases: ['SANCTIONAMOUNT', 'sanction_amount', 'sanctioned_amount', 'loan_amount', 'sanctionamount']
     required: false
     dtype: float
 
   disbursed_amount:
-    aliases: [DISBURSEDAMOUNT, disbursed_amount, disbursement_amount, disbursedamount]
+    aliases: ['DISBURSEDAMOUNT', 'disbursed_amount', 'disbursement_amount', 'disbursedamount']
     required: false
     dtype: float
 
   outstanding_principal:
-    aliases: [DrsPOS, outstanding_principal, drs_pos, principal_outstanding, outstanding_pos, drspos, os_principal]
+    aliases: ['DrsPOS', 'outstanding_principal', 'drs_pos', 'principal_outstanding', 'outstanding_pos', 'drspos', 'os_principal']
     required: false
     dtype: float
 
   outstanding_interest:
-    aliases: [DrsInt, outstanding_interest, drs_int, interest_outstanding, drsint, os_interest]
+    aliases: ['DrsInt', 'outstanding_interest', 'drs_int', 'interest_outstanding', 'drsint', 'os_interest']
     required: false
     dtype: float
 
   accrued_interest:
-    aliases: [AccruedInterest, accrued_interest, accrued_int, accruedinterest, interest_accrued]
+    aliases: ['AccruedInterest', 'accrued_interest', 'accrued_int', 'accruedinterest', 'interest_accrued']
     required: false
     dtype: float
 
   overdue_charges:
-    aliases: [OverDueCharges, overdue_charges, cbc_unpaid, odc_unpaid, charges_overdue, overduecharges, penal_charges]
+    aliases: ['OverDueCharges', 'overdue_charges', 'cbc_unpaid', 'odc_unpaid', 'charges_overdue', 'overduecharges', 'penal_charges']
     required: false
     dtype: float
 
   future_pos:
-    aliases: [FuturePOS, future_pos, future_principal, lifetime_ead, futurepos, future_outstanding]
+    aliases: ['FuturePOS', 'future_pos', 'future_principal', 'lifetime_ead', 'futurepos', 'future_outstanding']
     required: false
     dtype: float
 
   gross_book_value:
-    aliases: [Gross_Loans_and_Advances, gross_book_value, gross_loans, gross_advances, gbv, gross_loans_and_advances]
+    aliases: ['Gross_Loans_and_Advances', 'gross_book_value', 'gross_loans', 'gross_advances', 'gbv', 'gross_loans_and_advances']
     required: false
     dtype: float
 
   ead:
-    aliases: [EAD, ead, exposure_at_default, exposure]
+    aliases: ['EAD', 'ead', 'exposure_at_default', 'exposure']
     required: false
     dtype: float
 
   collateral_value:
-    aliases: [National_Asset_Value, collateral_value, national_asset_value, asset_value, security_value, nationalassetvalue]
+    aliases: ['National_Asset_Value', 'collateral_value', 'national_asset_value', 'asset_value', 'security_value', 'nationalassetvalue']
     required: false
     dtype: float
 
   covered_portion:
-    aliases: [Covered_Portion, covered_portion, secured_portion, coveredportion]
+    aliases: ['Covered_Portion', 'covered_portion', 'secured_portion', 'coveredportion']
     required: false
     dtype: float
 
   uncovered_portion:
-    aliases: [Uncovered_Portion, uncovered_portion, unsecured_portion, uncoveredportion]
+    aliases: ['Uncovered_Portion', 'uncovered_portion', 'unsecured_portion', 'uncoveredportion']
     required: false
     dtype: float
 
   existing_provision:
-    aliases: [Provsion_as_per_Policy, existing_provision, provision_as_per_policy, policy_provision, provsion_as_per_policy]
+    aliases: ['Provsion_as_per_Policy', 'existing_provision', 'provision_as_per_policy', 'policy_provision', 'provsion_as_per_policy']
     required: false
     dtype: float
 
   additional_provision:
-    aliases: [AdditionalProvision, additional_provision, management_overlay, overlay, additionalprovision]
+    aliases: ['AdditionalProvision', 'additional_provision', 'management_overlay', 'overlay', 'additionalprovision']
     required: false
     dtype: float
 
   total_provision:
-    aliases: [Total_Provision, total_provision, ecl_provision, total_ecl, totalprovision]
+    aliases: ['Total_Provision', 'total_provision', 'ecl_provision', 'total_ecl', 'totalprovision']
     required: false
     dtype: float
 
   principal_paid:
-    aliases: [PrincipalPaid, principal_paid, principalpaid]
+    aliases: ['PrincipalPaid', 'principal_paid', 'principalpaid']
     required: false
     dtype: float
 
   interest_paid:
-    aliases: [InterestPaid, interest_paid, interestpaid]
+    aliases: ['InterestPaid', 'interest_paid', 'interestpaid']
     required: false
     dtype: float
 
   emi_amount:
-    aliases: [EMI Amount, emi_amount, emi, installment_amount, emiamount]
+    aliases: ['EMI Amount', 'emi_amount', 'emi', 'installment_amount', 'emiamount']
     required: false
     dtype: float
 
   written_off:
-    aliases: [WrittenOff, written_off, writtenoff, write_off_amount]
+    aliases: ['WrittenOff', 'written_off', 'writtenoff', 'write_off_amount']
     required: false
     dtype: float
 
   otr_flag:
-    aliases: [otr_flag, is_otr, restructured, rescheduled, one_time_restructured]
+    aliases: ['otr_flag', 'is_otr', 'restructured', 'rescheduled', 'one_time_restructured', 'OTR_IDENTIFIER']
     required: false
     dtype: str
 
   onan_flag:
-    aliases: [onan_flag, is_onan, once_npa_always_npa, onan]
+    aliases: ['onan_flag', 'is_onan', 'once_npa_always_npa', 'onan']
     required: false
     dtype: str
 
-  # ── Added for the Loan Analytics exception checks (quick mortality,
-  # sanction-to-disbursal delay, product tagging, tenure/maturity checks,
-  # NPA/writeoff cross-checks) ──────────────────────────────────────────
   npa_flag_date:
-    aliases: [NPAFlagDate, npa_flag_date, npaflagdate]
+    aliases: ['NPAFlagDate', 'npa_flag_date', 'npaflagdate']
     required: false
     dtype: str
 
   sanction_date:
-    aliases: [SANCTIONED_DATE, sanction_date, sanctioned_date]
+    aliases: ['SANCTIONED_DATE', 'sanction_date', 'sanctioned_date']
     required: false
     dtype: str
 
   system:
-    aliases: [System, system]
+    aliases: ['System', 'system']
     required: false
     dtype: str
 
   business_date:
-    aliases: [BusinessDate, business_date, businessdate]
+    aliases: ['BusinessDate', 'business_date', 'businessdate']
     required: false
     dtype: str
 
   zero_90_days_interest:
-    aliases: [zero_90_days_interest]
+    aliases: ['zero_90_days_interest']
     required: false
     dtype: float
 
   zero_90_int_final:
-    aliases: [zero_90_int_Final, zero_90_int_final]
+    aliases: ['zero_90_int_Final', 'zero_90_int_final']
     required: false
     dtype: float
 
   financial_irr:
-    aliases: [FinancialIRR, financial_irr]
+    aliases: ['FinancialIRR', 'financial_irr']
     required: false
     dtype: float
 
   original_tenure:
-    aliases: [ORIGINAL_TENURE, original_tenure]
+    aliases: ['ORIGINAL_TENURE', 'original_tenure']
     required: false
     dtype: int
 
   maturity_date:
-    aliases: [MATURITY_DATE, maturity_date]
+    aliases: ['MATURITY_DATE', 'maturity_date']
     required: false
     dtype: str
 
   ucid:
-    aliases: [UCID, ucid]
+    aliases: ['UCID', 'ucid']
     required: false
     dtype: str
 
   customer_id:
-    aliases: [CustomerID, customer_id, customerid]
+    aliases: ['CustomerID', 'customer_id', 'customerid']
     required: false
     dtype: str
+
+  write_off_secu_selldown:
+    aliases: ['WriteOffSecuSelldown']
+    required: false
+    dtype: str
+
+  fvtpl:
+    aliases: ['FVTPL']
+    required: false
+    dtype: str
+
+  customer_name:
+    aliases: ['CustomerName']
+    required: false
+    dtype: str
+
+  prepaid:
+    aliases: ['Prepaid']
+    required: false
+    dtype: float
+
+  debtors_redmeption_premium:
+    aliases: ['Debtors_Redmeption_Premium']
+    required: false
+    dtype: float
+
+  accrued_redemption_premium:
+    aliases: ['AccruedRedemptionPremium']
+    required: false
+    dtype: float
+
+  others_on_accrual_basis:
+    aliases: ['Others_On_accrual_basis']
+    required: false
+    dtype: float
+
+  total_debtors:
+    aliases: ['TotalDebtors']
+    required: false
+    dtype: float
+
+  seasoning_dpd:
+    aliases: ['SeasoningDPD']
+    required: false
+    dtype: float
+
+  max_dpd_group:
+    aliases: ['MaxDPDGroup']
+    required: false
+    dtype: float
+
+  max_dpd_entity:
+    aliases: ['MaxDPDEntity']
+    required: false
+    dtype: float
+
+  max_dpd_final:
+    aliases: ['MaxDPDFinal']
+    required: false
+    dtype: float
+
+  max_dpd_risk:
+    aliases: ['MaxDPDRisk']
+    required: false
+    dtype: float
+
+  zero_90_days_interest_hist:
+    aliases: ['zero_90_days_interest_Hist']
+    required: false
+    dtype: float
+
+  stage3date:
+    aliases: ['Stage3date']
+    required: false
+    dtype: str
+
+  accounting_irr:
+    aliases: ['AccountingIRR']
+    required: false
+    dtype: float
+
+  asset_category:
+    aliases: ['AssetCategory']
+    required: false
+    dtype: str
+
+  npa_category:
+    aliases: ['NPACategory']
+    required: false
+    dtype: str
+
+  financial_grouping:
+    aliases: ['FinancialGrouping']
+    required: false
+    dtype: str
+
+  indas_grouping:
+    aliases: ['INDASGrouping']
+    required: false
+    dtype: str
+
+  security_type:
+    aliases: ['SecurityType']
+    required: false
+    dtype: str
+
+  de_focussed:
+    aliases: ['DeFocussed']
+    required: false
+    dtype: str
+
+  future_po_s_gl_id:
+    aliases: ['FuturePoS_GL_ID']
+    required: false
+    dtype: str
+
+  future_pos_gl_des:
+    aliases: ['FuturePOS_GL_Des']
+    required: false
+    dtype: str
+
+  principle_drs_gl_id:
+    aliases: ['Principle_DRS_GL_ID']
+    required: false
+    dtype: str
+
+  principle_drs_gl_des:
+    aliases: ['Principle_DRS_GL_Des']
+    required: false
+    dtype: str
+
+  int_drs_gl_id:
+    aliases: ['INT_DRS_GL_ID']
+    required: false
+    dtype: str
+
+  int_drs_gl_desc:
+    aliases: ['INT_DRS_GL_DESC']
+    required: false
+    dtype: str
+
+  accrued_interest_gl_id:
+    aliases: ['Accrued_Interest_GL_ID']
+    required: false
+    dtype: str
+
+  accrued_interest_gl_desc:
+    aliases: ['Accrued_Interest_GL_DESC']
+    required: false
+    dtype: str
+
+  redemption_premium_debtors_gl_id:
+    aliases: ['Redemption_Premium_Debtors_GL_ID']
+    required: false
+    dtype: str
+
+  redemption_premium_debtors_gl_desc:
+    aliases: ['Redemption_Premium_Debtors_GL_DESC']
+    required: false
+    dtype: str
+
+  accrued_redemption_premium_gl_id:
+    aliases: ['Accrued_Redemption_Premium_GL_ID']
+    required: false
+    dtype: str
+
+  accrued_redemption_premium_gl_desc:
+    aliases: ['Accrued_Redemption_Premium_GL_DESC']
+    required: false
+    dtype: str
+
+  prepaid_gl_id:
+    aliases: ['Prepaid_GL_ID']
+    required: false
+    dtype: str
+
+  prepaid_gl_desc:
+    aliases: ['Prepaid_GL_DESC']
+    required: false
+    dtype: str
+
+  final_product:
+    aliases: ['FinalProduct']
+    required: false
+    dtype: str
+
+  investor_product:
+    aliases: ['InvestorProduct']
+    required: false
+    dtype: str
+
+  platform:
+    aliases: ['Platform']
+    required: false
+    dtype: str
+
+  npa_flag_removal_date:
+    aliases: ['NPAFlagRemovalDate']
+    required: false
+    dtype: str
+
+  sma_classification:
+    aliases: ['SMAClassification']
+    required: false
+    dtype: str
+
+  seasoning_dpd_latest:
+    aliases: ['SeasoningDPDLatest']
+    required: false
+    dtype: float
+
+  eclgs_cases:
+    aliases: ['ECLGS_CASES']
+    required: false
+    dtype: str
+
+  sector:
+    aliases: ['SECTOR']
+    required: false
+    dtype: str
+
+  ecl_product:
+    aliases: ['ECL_PRODUCT']
+    required: false
+    dtype: str
+
+  district:
+    aliases: ['DISTRICT']
+    required: false
+    dtype: str
+
+  tw_ta:
+    aliases: ['TW_TA']
+    required: false
+    dtype: str
+
+  emi_frequency:
+    aliases: ['EMI_FREQUENCY']
+    required: false
+    dtype: str
+
+  repo:
+    aliases: ['REPO']
+    required: false
+    dtype: str
+
+  balance_tenure:
+    aliases: ['BALANCE_TENURE']
+    required: false
+    dtype: float
+

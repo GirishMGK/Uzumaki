@@ -1,0 +1,238 @@
+report_type: disbursement_addl_columns
+
+columns:
+  loan_id:
+    aliases: ['AGREEMENTNO']
+    required: false
+    dtype: str
+
+  scheme_name:
+    aliases: ['PRODUCT', 'Scheme Name']
+    required: false
+    dtype: str
+
+  center_creation_date:
+    aliases: ['Center Creation Date']
+    required: false
+    dtype: str
+
+  village_name:
+    aliases: ['Village Name']
+    required: false
+    dtype: str
+
+  business_rule_engine_type:
+    aliases: ['Business rule engine type']
+    required: false
+    dtype: str
+
+  business_rule_engine_elegibility:
+    aliases: ['Business rule engine elegibility']
+    required: false
+    dtype: str
+
+  business_rule_engine_date:
+    aliases: ['Business rule engine date']
+    required: false
+    dtype: str
+
+  value_date:
+    aliases: ['Value Date']
+    required: false
+    dtype: str
+
+  submission_date:
+    aliases: ['SubmissionDate']
+    required: false
+    dtype: str
+
+  submitted_by:
+    aliases: ['Submitted By']
+    required: false
+    dtype: str
+
+  mode_of_disbursement:
+    aliases: ['Mode of Disbursement']
+    required: false
+    dtype: str
+
+  disbursement_done_by:
+    aliases: ['Disbursement Done By']
+    required: false
+    dtype: str
+
+  loan_amount_applied:
+    aliases: ['Loan Amount Applied']
+    required: false
+    dtype: float
+
+  loan_amount_approved:
+    aliases: ['Loan Amount Approved']
+    required: false
+    dtype: float
+
+  loan_amount_disbursed:
+    aliases: ['Loan Amount Disbursed']
+    required: false
+    dtype: float
+
+  emi_amount:
+    aliases: ['EMI Amount']
+    required: false
+    dtype: float
+
+  beneficiary_check_charges:
+    aliases: ['Beneficiary Check Charges']
+    required: false
+    dtype: float
+
+  insurance_premium_cli:
+    aliases: ['Insurance Premium - CLI']
+    required: false
+    dtype: float
+
+  insurance_premium_subraksha:
+    aliases: ['Insurance Premium - Subraksha']
+    required: false
+    dtype: float
+
+  insurance_premium_hospi_cash:
+    aliases: ['Insurance Premium - Hospi Cash']
+    required: false
+    dtype: float
+
+  insurance_premium_others:
+    aliases: ['Insurance Premium - Others']
+    required: false
+    dtype: float
+
+  old_loan_account_id:
+    aliases: ['Old Loan AccountID']
+    required: false
+    dtype: str
+
+  outstanding_principal:
+    aliases: ['Principal Outstanding']
+    required: false
+    dtype: float
+
+  outstanding_interest:
+    aliases: ['Interest Outstanding']
+    required: false
+    dtype: float
+
+  net_of_interest_paid_reversal:
+    aliases: ['Net of Interest Paid Reversal']
+    required: false
+    dtype: float
+
+  total_outstanding:
+    aliases: ['Total Outstanding']
+    required: false
+    dtype: float
+
+  net_payable_amount:
+    aliases: ['Net Payable Amount']
+    required: false
+    dtype: float
+
+  utr_number:
+    aliases: ['UTR Number']
+    required: false
+    dtype: str
+
+  is_existing_client:
+    aliases: ['IsExistingClient']
+    required: false
+    dtype: str
+
+  e_sign_status:
+    aliases: ['E-Sign Status']
+    required: false
+    dtype: str
+
+  e_sign_error:
+    aliases: ['E-Sign Error']
+    required: false
+    dtype: str
+
+  d_sign_stage:
+    aliases: ['D-Sign Stage']
+    required: false
+    dtype: str
+
+  d_sign_stage_status_id:
+    aliases: ['D-Sign Stage Status ID']
+    required: false
+    dtype: str
+
+  d_sign_error:
+    aliases: ['D-Sign Error']
+    required: false
+    dtype: str
+
+  processingfees:
+    aliases: ['Processing Fees']
+    required: false
+    dtype: float
+
+  occupation:
+    aliases: ['Occupation']
+    required: false
+    dtype: str
+
+  customer_classification:
+    aliases: ['Customer Classification']
+    required: false
+    dtype: str
+
+  emp_disburse_id:
+    aliases: ['Emp_Disburse_Id']
+    required: false
+    dtype: str
+
+  emp_disburse_name:
+    aliases: ['Emp_Disburse_Name']
+    required: false
+    dtype: str
+
+  emp_approval:
+    aliases: ['Emp_Approval']
+    required: false
+    dtype: str
+
+  dealer_commission:
+    aliases: ['Dealer_Commission']
+    required: false
+    dtype: str
+
+  employee_incentive:
+    aliases: ['Employee_Incentive']
+    required: false
+    dtype: str
+
+  application_number:
+    aliases: ['Application Number']
+    required: false
+    dtype: str
+
+  collateral_value:
+    aliases: ['Asset Value']
+    required: false
+    dtype: float
+
+  land_holding_owned_area:
+    aliases: ['Land Holding Owned Area']
+    required: false
+    dtype: str
+
+  land_holding_leased_area:
+    aliases: ['Land Holding Leased Area']
+    required: false
+    dtype: str
+
+  monthly_income:
+    aliases: ['Monthly Income']
+    required: false
+    dtype: float
+

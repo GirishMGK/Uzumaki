@@ -2,41 +2,502 @@ report_type: disbursement_report
 
 columns:
   loan_account_no:
-    aliases: [loan_account_no, lan, loan_id]
+    aliases: ['loan_account_no', 'lan', 'loan_id', 'AGREEMENTNO']
     required: true
     dtype: str
 
   disbursement_date:
-    aliases: [disbursement_date, disbursal_date, disb_date]
+    aliases: ['disbursement_date', 'disbursal_date', 'disb_date', 'DISBURSALDATE']
     required: true
     dtype: str
 
   disbursed_amount:
-    aliases: [disbursed_amount, disbursement_amount, amount, loan_amount]
+    aliases: ['disbursed_amount', 'disbursement_amount', 'amount', 'loan_amount']
     required: false
     dtype: float
 
   beneficiary_name:
-    aliases: [beneficiary_name, borrower_name, customer_name]
+    aliases: ['beneficiary_name', 'borrower_name', 'customer_name', 'CUSTOMERNAME']
     required: false
     dtype: str
 
   beneficiary_account:
-    aliases: [beneficiary_account, bank_account, account_no]
+    aliases: ['beneficiary_account', 'bank_account', 'account_no']
     required: false
     dtype: str
 
   ifsc:
-    aliases: [ifsc, ifsc_code]
+    aliases: ['ifsc', 'ifsc_code']
     required: false
     dtype: str
 
   mode:
-    aliases: [mode, disbursement_mode, payment_mode]
+    aliases: ['mode', 'disbursement_mode', 'payment_mode', 'PAYMENTMODE']
     required: false
     dtype: str
 
   branch:
-    aliases: [branch, branch_name, branch_code]
+    aliases: ['branch', 'branch_name', 'branch_code', 'BRANCHNAME']
     required: false
     dtype: str
+
+  entity:
+    aliases: ['ENTITY']
+    required: false
+    dtype: str
+
+  mainsbu:
+    aliases: ['MAINSBU']
+    required: false
+    dtype: str
+
+  sbu:
+    aliases: ['SBU']
+    required: false
+    dtype: str
+
+  subsbu:
+    aliases: ['SUBSBU']
+    required: false
+    dtype: str
+
+  sourcesystemid:
+    aliases: ['SOURCESYSTEMID']
+    required: false
+    dtype: str
+
+  sourcesystemname:
+    aliases: ['SOURCESYSTEMNAME']
+    required: false
+    dtype: str
+
+  productid:
+    aliases: ['PRODUCTID']
+    required: false
+    dtype: str
+
+  agreementid:
+    aliases: ['AGREEMENTID']
+    required: false
+    dtype: str
+
+  finalproduct:
+    aliases: ['FINALPRODUCT']
+    required: false
+    dtype: str
+
+  platform:
+    aliases: ['PLATFORM']
+    required: false
+    dtype: str
+
+  productname:
+    aliases: ['PRODUCTNAME']
+    required: false
+    dtype: str
+
+  tranch_no:
+    aliases: ['TRANCH_NO']
+    required: false
+    dtype: str
+
+  city:
+    aliases: ['CITY']
+    required: false
+    dtype: str
+
+  schemename:
+    aliases: ['SCHEMENAME']
+    required: false
+    dtype: str
+
+  agreementdate:
+    aliases: ['AGREEMENTDATE']
+    required: false
+    dtype: str
+
+  ucid:
+    aliases: ['UCID']
+    required: false
+    dtype: str
+
+  customerid:
+    aliases: ['CUSTOMERID']
+    required: false
+    dtype: str
+
+  customercategory:
+    aliases: ['CUSTOMERCATEGORY']
+    required: false
+    dtype: str
+
+  tenure:
+    aliases: ['TENURE']
+    required: false
+    dtype: float
+
+  assettype:
+    aliases: ['ASSETTYPE']
+    required: false
+    dtype: str
+
+  maturitydate:
+    aliases: ['MATURITYDATE']
+    required: false
+    dtype: str
+
+  frequency:
+    aliases: ['FREQUENCY']
+    required: false
+    dtype: str
+
+  region:
+    aliases: ['REGION']
+    required: false
+    dtype: str
+
+  zone:
+    aliases: ['ZONE']
+    required: false
+    dtype: str
+
+  state:
+    aliases: ['STATE']
+    required: false
+    dtype: str
+
+  branchid:
+    aliases: ['BRANCHID']
+    required: false
+    dtype: str
+
+  sanctionedamt:
+    aliases: ['SANCTIONEDAMT']
+    required: false
+    dtype: float
+
+  processingfees:
+    aliases: ['PROCESSINGFEES']
+    required: false
+    dtype: float
+
+  sapbranchcode:
+    aliases: ['SAPBRANCHCODE']
+    required: false
+    dtype: str
+
+  sapbranchname:
+    aliases: ['SAPBRANCHNAME']
+    required: false
+    dtype: str
+
+  instalstartdate:
+    aliases: ['INSTALSTARTDATE']
+    required: false
+    dtype: str
+
+  business:
+    aliases: ['BUSINESS']
+    required: false
+    dtype: str
+
+  business_crs:
+    aliases: ['BUSINESS_CRS']
+    required: false
+    dtype: str
+
+  accountingirr:
+    aliases: ['ACCOUNTINGIRR']
+    required: false
+    dtype: float
+
+  financialirr:
+    aliases: ['FINANCIALIRR']
+    required: false
+    dtype: float
+
+  effrate:
+    aliases: ['EFFRATE']
+    required: false
+    dtype: float
+
+  overall_interest:
+    aliases: ['OVERALL_INTEREST']
+    required: false
+    dtype: float
+
+  assetcost:
+    aliases: ['ASSETCOST']
+    required: false
+    dtype: float
+
+  loanstatus:
+    aliases: ['LOANSTATUS']
+    required: false
+    dtype: str
+
+  business_date:
+    aliases: ['BUSINESS_DATE']
+    required: false
+    dtype: str
+
+  final_product_mis:
+    aliases: ['FINAL_PRODUCT_MIS']
+    required: false
+    dtype: str
+
+  zone_mis:
+    aliases: ['ZONE_MIS']
+    required: false
+    dtype: str
+
+  cheq_handover_flag:
+    aliases: ['CHEQ_HANDOVER_FLAG']
+    required: false
+    dtype: str
+
+  pmnt_clearance_date:
+    aliases: ['PMNT_CLEARANCE_DATE']
+    required: false
+    dtype: str
+
+  sub_product:
+    aliases: ['SUB_PRODUCT']
+    required: false
+    dtype: str
+
+  sourcing_channel:
+    aliases: ['SOURCING_CHANNEL']
+    required: false
+    dtype: str
+
+  investor_product:
+    aliases: ['INVESTOR_PRODUCT']
+    required: false
+    dtype: str
+
+  channelcode:
+    aliases: ['CHANNELCODE']
+    required: false
+    dtype: str
+
+  channelcodedesc:
+    aliases: ['CHANNELCODEDESC']
+    required: false
+    dtype: str
+
+  issecuritized:
+    aliases: ['ISSECURITIZED']
+    required: false
+    dtype: str
+
+  dob:
+    aliases: ['DOB']
+    required: false
+    dtype: str
+
+  district:
+    aliases: ['DISTRICT']
+    required: false
+    dtype: str
+
+  address:
+    aliases: ['ADDRESS']
+    required: false
+    dtype: str
+
+  associateid:
+    aliases: ['ASSOCIATEID']
+    required: false
+    dtype: str
+
+  associatename:
+    aliases: ['ASSOCIATENAME']
+    required: false
+    dtype: str
+
+  dme_extracted:
+    aliases: ['DME_EXTRACTED']
+    required: false
+    dtype: str
+
+  dealno:
+    aliases: ['DEALNO']
+    required: false
+    dtype: str
+
+  asset:
+    aliases: ['ASSET']
+    required: false
+    dtype: str
+
+  occupation:
+    aliases: ['OCCUPATION']
+    required: false
+    dtype: str
+
+  imauthdate:
+    aliases: ['IMAUTHDATE']
+    required: false
+    dtype: str
+
+  authdate:
+    aliases: ['AUTHDATE']
+    required: false
+    dtype: str
+
+  suppliername:
+    aliases: ['SUPPLIERNAME']
+    required: false
+    dtype: str
+
+  dealdate:
+    aliases: ['DEALDATE']
+    required: false
+    dtype: str
+
+  dealsantiondate:
+    aliases: ['DEALSANTIONDATE']
+    required: false
+    dtype: str
+
+  make:
+    aliases: ['MAKE']
+    required: false
+    dtype: str
+
+  modelno:
+    aliases: ['MODELNO']
+    required: false
+    dtype: str
+
+  maker:
+    aliases: ['MAKER']
+    required: false
+    dtype: str
+
+  authdecby:
+    aliases: ['AUTHDECBY']
+    required: false
+    dtype: str
+
+  promotionscheme:
+    aliases: ['PROMOTIONSCHEME']
+    required: false
+    dtype: str
+
+  sourcecode:
+    aliases: ['SOURCECODE']
+    required: false
+    dtype: str
+
+  appformno:
+    aliases: ['APPFORMNO']
+    required: false
+    dtype: str
+
+  credit_customer_category:
+    aliases: ['CREDIT_CUSTOMER_CATEGORY']
+    required: false
+    dtype: str
+
+  creditexceptiondesc:
+    aliases: ['CREDITEXCEPTIONDESC']
+    required: false
+    dtype: str
+
+  area:
+    aliases: ['AREA']
+    required: false
+    dtype: str
+
+  cluster:
+    aliases: ['CLUSTER']
+    required: false
+    dtype: str
+
+  division:
+    aliases: ['DIVISION']
+    required: false
+    dtype: str
+
+  businesssegment:
+    aliases: ['BUSINESSSEGMENT']
+    required: false
+    dtype: str
+
+  manufacturername:
+    aliases: ['MANUFACTURERNAME']
+    required: false
+    dtype: str
+
+  afc_status:
+    aliases: ['AFC_STATUS']
+    required: false
+    dtype: str
+
+  glaccountno:
+    aliases: ['GLACCOUNTNO']
+    required: false
+    dtype: float
+
+  related_party:
+    aliases: ['RELATED_PARTY']
+    required: false
+    dtype: str
+
+  secured_unsecured:
+    aliases: ['SECURED_UNSECURED']
+    required: false
+    dtype: str
+
+  security_type:
+    aliases: ['SECURITY_TYPE']
+    required: false
+    dtype: str
+
+  assetcategory:
+    aliases: ['ASSETCATEGORY']
+    required: false
+    dtype: str
+
+  policynumber:
+    aliases: ['POLICYNUMBER']
+    required: false
+    dtype: float
+
+  insurecompany:
+    aliases: ['INSURECOMPANY']
+    required: false
+    dtype: str
+
+  ac_wavg_amt:
+    aliases: ['AC_WAVG_AMT']
+    required: false
+    dtype: float
+
+  fin_wavg_amt:
+    aliases: ['FIN_WAVG_AMT']
+    required: false
+    dtype: float
+
+  eff_weight:
+    aliases: ['EFF_WEIGHT']
+    required: false
+    dtype: float
+
+  effrate_yield_percentage:
+    aliases: ['EFFRATE_YIELD_PERCENTAGE']
+    required: false
+    dtype: float
+
+  rcflag:
+    aliases: ['RCFLAG']
+    required: false
+    dtype: str
+
+  tcstransfercase:
+    aliases: ['TCSTRANSFERCASE']
+    required: false
+    dtype: str
+

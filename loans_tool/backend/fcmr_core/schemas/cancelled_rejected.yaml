@@ -1,0 +1,118 @@
+report_type: cancelled_rejected
+
+columns:
+  greementno:
+    aliases: ['GREEMENTNO']
+    required: false
+    dtype: str
+
+  scheme_name:
+    aliases: ['PRODUCT']
+    required: false
+    dtype: str
+
+  ucid:
+    aliases: ['UCID']
+    required: false
+    dtype: str
+
+  logindate:
+    aliases: ['LOGINDATE']
+    required: false
+    dtype: str
+
+  flsid:
+    aliases: ['FLSID']
+    required: false
+    dtype: str
+
+  sub_sbu:
+    aliases: ['SUB_SBU']
+    required: false
+    dtype: str
+
+  loan_status:
+    aliases: ['LOANSTATUS']
+    required: false
+    dtype: str
+
+  sanction_date:
+    aliases: ['SANCTIONDATE']
+    required: false
+    dtype: str
+
+  reason1:
+    aliases: ['REASON1']
+    required: false
+    dtype: str
+
+  reason2:
+    aliases: ['REASON2']
+    required: false
+    dtype: str
+
+  reason3:
+    aliases: ['REASON3']
+    required: false
+    dtype: str
+
+  rejection_reason:
+    aliases: ['REJECTION_REASON']
+    required: false
+    dtype: str
+
+  bre_rejection_reason_c:
+    aliases: ['BRE_Rejection_Reason__c']
+    required: false
+    dtype: str
+
+  disbursement_date:
+    aliases: ['DISBURSALDATE']
+    required: false
+    dtype: str
+
+  penny_result:
+    aliases: ['PENNY_RESULT']
+    required: false
+    dtype: str
+
+  fuzzy_result:
+    aliases: ['FUZZY_RESULT']
+    required: false
+    dtype: str
+
+  penny_remarks:
+    aliases: ['PENNY_REMARKS']
+    required: false
+    dtype: str
+
+  fuzzy_remarks:
+    aliases: ['FUZZY_REMARKS']
+    required: false
+    dtype: str
+
+  rev_feed_name:
+    aliases: ['REV_FEED_NAME']
+    required: false
+    dtype: str
+
+  bankaccno:
+    aliases: ['BANKACCNO']
+    required: false
+    dtype: str
+
+  bankname:
+    aliases: ['BANKNAME']
+    required: false
+    dtype: str
+
+  ifsc:
+    aliases: ['IFSC_CODE']
+    required: false
+    dtype: str
+
+  rejection_reason_desc:
+    aliases: ['REJECTION_REASON_DESC']
+    required: false
+    dtype: str
+

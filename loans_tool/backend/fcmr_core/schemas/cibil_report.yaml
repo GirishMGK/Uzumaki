@@ -1,0 +1,88 @@
+report_type: cibil_report
+
+columns:
+  loan_id:
+    aliases: ['AGREEMENTNO']
+    required: false
+    dtype: str
+
+  ucid:
+    aliases: ['UCID']
+    required: false
+    dtype: str
+
+  scheme_name:
+    aliases: ['PRODUCT']
+    required: false
+    dtype: str
+
+  sub_sbu:
+    aliases: ['SUB_SBU']
+    required: false
+    dtype: str
+
+  disbursement_date:
+    aliases: ['DISBURSALDATE']
+    required: false
+    dtype: str
+
+  firstname:
+    aliases: ['FIRSTNAME']
+    required: false
+    dtype: str
+
+  lastname:
+    aliases: ['LASTNAME']
+    required: false
+    dtype: str
+
+  pan:
+    aliases: ['PAN']
+    required: false
+    dtype: str
+
+  bureauid:
+    aliases: ['BUREAUID']
+    required: false
+    dtype: str
+
+  full_name:
+    aliases: ['NAME']
+    required: false
+    dtype: str
+
+  createdon:
+    aliases: ['CREATEDON']
+    required: false
+    dtype: str
+
+  value:
+    aliases: ['VALUE']
+    required: false
+    dtype: str
+
+  other_agreementno:
+    aliases: ['OTHER_AGREEMENTNO']
+    required: false
+    dtype: str
+
+  other_product:
+    aliases: ['OTHER_PRODUCT']
+    required: false
+    dtype: str
+
+  other_sub_sbu:
+    aliases: ['OTHER_SUB_SBU']
+    required: false
+    dtype: str
+
+  other_product_disbursaldate:
+    aliases: ['OTHER_PRODUCT_DISBURSALDATE']
+    required: false
+    dtype: str
+
+  other_product_outstanding:
+    aliases: ['OTHER_PRODUCT_OUTSTANDING']
+    required: false
+    dtype: float
+
