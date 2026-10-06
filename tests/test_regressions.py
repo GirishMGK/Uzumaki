@@ -1734,6 +1734,26 @@ def test_consolidate_parquet_download_round_trips_for_any_report_type():
         catalog_store.build_consolidated_df = lambda engagement_id, report_type: (
             expected if report_type == "technical_writeoff" else pl.DataFrame()
         )
+        # The CSV/Parquet download routes no longer go through
+        # build_consolidated_df -- they stream straight from DuckDB to
+        # disk via export_consolidated_to_file() (see its docstring: a
+        # full in-memory consolidation was exactly what OOM-crashed the
+        # packaged .exe on a real production-sized file). Fake it the
+        # same way, writing `expected` to out_path and returning its row
+        # count, so this test still exercises the real route/middleware
+        # without a real upload pipeline.
+        real_export = catalog_store.export_consolidated_to_file
+
+        def fake_export(engagement_id, report_type, out_path, file_format):
+            if report_type != "technical_writeoff":
+                return 0
+            if file_format == "csv":
+                expected.write_csv(out_path)
+            else:
+                expected.write_parquet(out_path)
+            return expected.height
+
+        catalog_store.export_consolidated_to_file = fake_export
 
         try:
             with TestClient(loan_main.app) as client:
@@ -1755,6 +1775,7 @@ def test_consolidate_parquet_download_round_trips_for_any_report_type():
                 assert resp.status_code == 404
         finally:
             catalog_store.build_consolidated_df = real_build
+            catalog_store.export_consolidated_to_file = real_export
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
@@ -1812,6 +1833,21 @@ def test_consolidate_download_routes_still_set_content_length_via_file_response(
         expected = pl.DataFrame({"loan_id": ["L1"], "notes": [newline_heavy]})
         real_build = catalog_store.build_consolidated_df
         catalog_store.build_consolidated_df = lambda engagement_id, report_type: expected
+        # CSV/Parquet go through export_consolidated_to_file() now (see
+        # that function's docstring), not build_consolidated_df -- only
+        # Excel still builds an in-memory DataFrame (openpyxl has no
+        # streaming-write API). Fake both so all three formats are still
+        # covered by this Content-Length check.
+        real_export = catalog_store.export_consolidated_to_file
+
+        def fake_export(engagement_id, report_type, out_path, file_format):
+            if file_format == "csv":
+                expected.write_csv(out_path)
+            else:
+                expected.write_parquet(out_path)
+            return expected.height
+
+        catalog_store.export_consolidated_to_file = fake_export
 
         try:
             with TestClient(loan_main.app) as client:
@@ -1824,6 +1860,7 @@ def test_consolidate_download_routes_still_set_content_length_via_file_response(
                     assert int(resp.headers["content-length"]) == len(resp.content)
         finally:
             catalog_store.build_consolidated_df = real_build
+            catalog_store.export_consolidated_to_file = real_export
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
@@ -3788,6 +3825,126 @@ def test_build_consolidated_df_reuses_one_connection_not_one_per_file():
 
             assert call_count == 1, f"expected 1 shared connection, got {call_count}"
             assert sorted(df["loan_id"].to_list()) == ["LN0000", "LN0001", "LN0002"]
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_export_consolidated_to_file_matches_build_consolidated_df():
+    """Regression guard for a real report: clicking "Download Parquet" in
+    Consolidate & Download crashed the whole packaged .exe on a real
+    production-sized file. Root cause: the CSV/Parquet download routes
+    called build_consolidated_df() (every ready upload read into its own
+    full Polars DataFrame, then pl.concat-ed) and then wrote the result to
+    disk -- holding the whole consolidated dataset in memory twice over
+    (every individual upload's frame plus the concatenated one) before
+    ever starting to write. Since this backend runs in-process with the
+    Streamlit UI (see loans.py), an OOM there kills the entire app window,
+    not just the request.
+
+    export_consolidated_to_file() instead pushes the rename+stack into one
+    DuckDB query and streams the result straight to disk via COPY, never
+    materializing it as a Polars object. This verifies it against 3 ready
+    uploads with deliberately mismatched columns (one missing a column the
+    others have) and confirms the output is identical to
+    build_consolidated_df()'s -- same null-filling, same _source_file
+    tagging, same row/column content -- just without the extra in-memory
+    copy.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import tempfile
+        from pathlib import Path
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        import polars as pl
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        with TestClient(loan_main.app):
+            engagement_id = catalog_store.create_engagement("export-vs-build-test")
+
+            # 3 files: the 3rd is missing DrsPOS (-> null-filled, same as
+            # build_consolidated_df's diagonal_relaxed concat), exercising
+            # the UNION ALL BY NAME path's missing-column handling.
+            rows = [
+                ("LN100", "1000"),
+                ("LN101", "2000"),
+            ]
+            for i, (loan_id, pos) in enumerate(rows):
+                csv_bytes = f"loan_id,DrsPOS\n{loan_id},{pos}\n".encode()
+                upload_id = catalog_store.create_upload("ead_files", f"export_test_{i}.csv", engagement_id=engagement_id)
+                from fcmr_core.ingestion.pipeline import ingest_csv
+
+                tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+                tmp_csv.write_bytes(csv_bytes)
+                result = ingest_csv(
+                    tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id", "DrsPOS": "outstanding_principal"}
+                )
+                catalog_store.store_upload_data(upload_id, result.parquet_path)
+                catalog_store.set_upload_ready(
+                    upload_id,
+                    parquet_path=result.parquet_path,
+                    row_count=result.accepted_rows,
+                    column_mapping=result.column_mapping,
+                )
+                tmp_csv.unlink(missing_ok=True)
+
+            upload_id = catalog_store.create_upload("ead_files", "export_test_no_pos.csv", engagement_id=engagement_id)
+            tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+            tmp_csv.write_bytes(b"loan_id\nLN102\n")
+            from fcmr_core.ingestion.pipeline import ingest_csv
+
+            result = ingest_csv(tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id"})
+            catalog_store.store_upload_data(upload_id, result.parquet_path)
+            catalog_store.set_upload_ready(
+                upload_id,
+                parquet_path=result.parquet_path,
+                row_count=result.accepted_rows,
+                column_mapping=result.column_mapping,
+            )
+            tmp_csv.unlink(missing_ok=True)
+
+            built = catalog_store.build_consolidated_df(engagement_id, "ead_files")
+
+            fd, tmp_name = tempfile.mkstemp(suffix=".parquet")
+            os.close(fd)
+            out_path = Path(tmp_name)
+            row_count = catalog_store.export_consolidated_to_file(engagement_id, "ead_files", out_path, "parquet")
+            exported = pl.read_parquet(out_path)
+            out_path.unlink(missing_ok=True)
+
+            assert row_count == 3 == built.height == exported.height
+            assert sorted(exported["loan_id"].to_list()) == sorted(built["loan_id"].to_list()) == ["LN100", "LN101", "LN102"]
+            # LN102's upload never had outstanding_principal -- both paths
+            # must null-fill it rather than erroring or dropping the row.
+            exported_by_loan = {r["loan_id"]: r for r in exported.to_dicts()}
+            built_by_loan = {r["loan_id"]: r for r in built.to_dicts()}
+            assert exported_by_loan["LN102"]["outstanding_principal"] is None
+            assert built_by_loan["LN102"]["outstanding_principal"] is None
+            assert exported_by_loan["LN100"]["outstanding_principal"] == built_by_loan["LN100"]["outstanding_principal"]
+            assert exported_by_loan["LN100"]["_source_file"] == built_by_loan["LN100"]["_source_file"] == "export_test_0.csv"
+
+            # Nothing ready for an unused report type -> 0 rows written, no crash.
+            fd, tmp_name2 = tempfile.mkstemp(suffix=".parquet")
+            os.close(fd)
+            empty_out = Path(tmp_name2)
+            empty_count = catalog_store.export_consolidated_to_file(engagement_id, "collection_report", empty_out, "parquet")
+            assert empty_count == 0
+            empty_out.unlink(missing_ok=True)
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)

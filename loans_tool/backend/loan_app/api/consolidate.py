@@ -69,21 +69,22 @@ async def consolidate_page(request: Request, report_type: str):
 async def consolidate_download_csv(request: Request, report_type: str):
     _require_known_report_type(report_type)
     engagement_id = request.session.get("engagement_id")
-    df = _consolidated_df(engagement_id, report_type)
-    if df.is_empty():
-        raise HTTPException(status_code=404, detail="No ready files found to consolidate.")
 
-    # Written straight to a temp file and served via FileResponse (streamed
-    # by Starlette) rather than building the whole CSV as a Python string,
-    # then again as bytes, then handing that one in-memory blob to
-    # Response() as the entire body -- same fix as the SQL Analytics
-    # export and EAD summary downloads, applied here for consistency (this
-    # is exactly the "large data" case that matters most: a full
-    # consolidated dataset, not a small aggregated summary).
+    # Streamed straight from DuckDB to disk via COPY (store.
+    # export_consolidated_to_file) rather than materializing the
+    # consolidated dataset as a Polars DataFrame first: holding a full
+    # multi-million-row, ~100-column consolidation in memory (on top of
+    # Streamlit's own footprint, since this backend runs in-process with
+    # it) is exactly what was OOM-crashing the whole packaged .exe on a
+    # real production-sized file -- see export_consolidated_to_file's
+    # docstring.
     fd, tmp_name = tempfile.mkstemp(suffix=".csv")
     os.close(fd)
     tmp_path = Path(tmp_name)
-    df.write_csv(tmp_path)
+    row_count = store.export_consolidated_to_file(engagement_id, report_type, tmp_path, "csv")
+    if row_count == 0:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=404, detail="No ready files found to consolidate.")
 
     return FileResponse(
         tmp_path,
@@ -97,14 +98,14 @@ async def consolidate_download_csv(request: Request, report_type: str):
 async def consolidate_download_parquet(request: Request, report_type: str):
     _require_known_report_type(report_type)
     engagement_id = request.session.get("engagement_id")
-    df = _consolidated_df(engagement_id, report_type)
-    if df.is_empty():
-        raise HTTPException(status_code=404, detail="No ready files found to consolidate.")
 
     fd, tmp_name = tempfile.mkstemp(suffix=".parquet")
     os.close(fd)
     tmp_path = Path(tmp_name)
-    df.write_parquet(tmp_path)
+    row_count = store.export_consolidated_to_file(engagement_id, report_type, tmp_path, "parquet")
+    if row_count == 0:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=404, detail="No ready files found to consolidate.")
 
     return FileResponse(
         tmp_path,
