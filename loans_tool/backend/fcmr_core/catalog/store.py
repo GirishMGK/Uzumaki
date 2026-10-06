@@ -510,32 +510,92 @@ def list_uploads(engagement_id: str | None = None) -> list[dict]:
     return [dict(zip(cols, r)) for r in rows]
 
 
+def _quote_ident(name: str) -> str:
+    return f'"{name.replace(chr(34), chr(34) * 2)}"'
+
+
+def _quote_literal(value: str) -> str:
+    return f"'{value.replace(chr(39), chr(39) * 2)}'"
+
+
+def _consolidation_select_sql(upload: dict, con: duckdb.DuckDBPyConnection) -> str:
+    """One upload's SELECT for the UNION ALL BY NAME below: every existing
+    column, with any still-raw header renamed to its canonical name per
+    the upload's saved mapping (same ``raw in df.columns`` guard the old
+    Python-level ``df.rename()`` used -- most uploads are already
+    canonical-named by ingest time, so this is usually a no-op), plus a
+    literal _source_file column.
+    """
+    table = f"data_{upload['upload_id'].replace('-', '_')}"
+    table_columns = {row[0] for row in con.execute(f"DESCRIBE {table}").fetchall()}
+    mapping: dict[str, str] = json.loads(upload.get("column_mapping") or "{}")
+    rename = {raw: canonical for raw, canonical in mapping.items() if raw in table_columns}
+
+    fname_sql = _quote_literal(upload["filename"]) + " AS _source_file"
+    if not rename:
+        return f"SELECT *, {fname_sql} FROM {table}"
+
+    exclude_sql = ", ".join(_quote_ident(raw) for raw in rename)
+    alias_sql = ", ".join(f"{_quote_ident(raw)} AS {_quote_ident(canonical)}" for raw, canonical in rename.items())
+    return f"SELECT * EXCLUDE ({exclude_sql}), {alias_sql}, {fname_sql} FROM {table}"
+
+
+def _consolidation_union_sql(engagement_id: str | None, report_type: str, con: duckdb.DuckDBPyConnection) -> str | None:
+    uploads = list_uploads(engagement_id=engagement_id)
+    ready = [u for u in uploads if u["report_type"] == report_type and u["status"] == "ready"]
+    if not ready:
+        return None
+    selects = [_consolidation_select_sql(u, con) for u in ready]
+    return " UNION ALL BY NAME ".join(selects)
+
+
 def build_consolidated_df(engagement_id: str | None, report_type: str) -> pl.DataFrame:
     """Stack every ready upload of one report type for an engagement into a
     single DataFrame, renamed to canonical columns per each upload's saved
     mapping. Column sets don't have to match exactly across uploads --
-    ``diagonal_relaxed`` fills anything missing with nulls rather than
-    erroring, since consecutive months' exports rarely have identical
-    columns. Originally EAD-Consolidation-specific; generalized so the same
-    logic backs SQL Analytics' per-report-type tables too.
+    DuckDB's ``UNION ALL BY NAME`` fills anything missing with nulls rather
+    than erroring, since consecutive months' exports rarely have identical
+    columns (and auto-coerces a column to a common type if two uploads
+    disagree, e.g. VARCHAR vs BIGINT for the same canonical field).
+    Originally EAD-Consolidation-specific; generalized so the same logic
+    backs SQL Analytics' per-report-type tables too.
+
+    Pushed entirely into one DuckDB query (rename + stack) rather than
+    reading every upload into its own full Polars DataFrame and
+    `pl.concat`-ing them in Python: that held every individual upload's
+    DataFrame *and* the final concatenated one in memory simultaneously,
+    roughly doubling peak memory. Still materializes the final result as
+    one Polars DataFrame, though -- callers that only want a file on disk
+    (CSV/Parquet downloads) should use export_consolidated_to_file()
+    instead, which never creates that Python-side object at all.
     """
-    uploads = list_uploads(engagement_id=engagement_id)
-    ready = [u for u in uploads if u["report_type"] == report_type and u["status"] == "ready"]
-    if not ready:
-        return pl.DataFrame()
-
-    frames: list[pl.DataFrame] = []
     with open_connection() as con:
-        for upload in ready:
-            df = get_upload_df(upload["upload_id"], con=con)
-            mapping: dict[str, str] = json.loads(upload.get("column_mapping") or "{}")
-            rename = {raw: canonical for raw, canonical in mapping.items() if raw in df.columns}
-            if rename:
-                df = df.rename(rename)
-            df = df.with_columns(pl.lit(upload["filename"]).alias("_source_file"))
-            frames.append(df)
+        union_sql = _consolidation_union_sql(engagement_id, report_type, con)
+        if union_sql is None:
+            return pl.DataFrame()
+        return con.execute(union_sql).pl()
 
-    return pl.concat(frames, how="diagonal_relaxed")
+
+def export_consolidated_to_file(
+    engagement_id: str | None, report_type: str, out_path: Path, file_format: str
+) -> int:
+    """Same consolidation as build_consolidated_df(), but streamed straight
+    from DuckDB to a file on disk via COPY -- the consolidated dataset is
+    never materialized as a Python/Polars object at all. For CSV/Parquet
+    downloads of a wide, multi-million-row consolidation (years of monthly
+    EAD snapshots, now a ~100-column schema) that's the difference between
+    fitting in memory and OOM-crashing the whole app: this backend runs
+    in-process with the Streamlit UI, so a crash here takes down the
+    entire packaged .exe, not just this one request. Returns the row count
+    written (0 if there was nothing ready to consolidate).
+    """
+    fmt = {"csv": "CSV", "parquet": "PARQUET"}[file_format]
+    with open_connection() as con:
+        union_sql = _consolidation_union_sql(engagement_id, report_type, con)
+        if union_sql is None:
+            return 0
+        result = con.execute(f"COPY ({union_sql}) TO {_quote_literal(str(out_path))} (FORMAT {fmt})").fetchone()
+        return int(result[0]) if result else 0
 
 
 def save_mapping_profile(
