@@ -8,8 +8,11 @@ as a CSV download.
 from __future__ import annotations
 
 from datetime import date
+from typing import Callable
 
 import polars as pl
+
+from fcmr_core.schemas.loader import get_schema
 
 _FY_MONTH_ORDER = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
 
@@ -231,3 +234,84 @@ def npa_flag_date_change_report(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("_npa_dt").alias("to_npa_flag_date"),
         ]
     ).sort(["loan_id", "to_business_date"])
+
+
+# ── User-driven pivot ────────────────────────────────────────────────────
+# Unlike the fixed reports above, this one's row/column/value fields are
+# chosen by whoever is running it, from any of the ~100 canonical EAD
+# fields -- not just the handful _REPORT_COLUMNS lists. Dtypes for the
+# null-fill-if-missing path below come straight from the ead_files schema
+# itself rather than that fixed dict.
+PIVOT_AGGREGATIONS: dict[str, Callable[[pl.Expr], pl.Expr]] = {
+    "sum": lambda e: e.sum(),
+    "count": lambda e: e.count(),
+    "count_distinct": lambda e: e.n_unique(),
+    "avg": lambda e: e.mean(),
+    "min": lambda e: e.min(),
+    "max": lambda e: e.max(),
+}
+_PIVOT_NUMERIC_ONLY_AGGS = {"sum", "avg", "min", "max"}
+
+# A free-text/high-cardinality field picked as the "Columns" dimension
+# would otherwise cross-tab into one output column per distinct value --
+# unbounded, and the whole point of this feature is that the person
+# picking the field isn't constrained to a known-safe curated list.
+_MAX_PIVOT_COLUMN_VALUES = 200
+
+
+def _ead_canonical_dtype(field: str) -> pl.PolarsDataType:
+    schema = get_schema("ead_files")
+    dtype_str = schema.dtype_for(field) if schema else "str"
+    return {"int": pl.Int64, "float": pl.Float64}.get(dtype_str, pl.Utf8)
+
+
+def custom_pivot_report(
+    df: pl.DataFrame, rows: list[str], columns: str | None, value_field: str, agg: str
+) -> pl.DataFrame:
+    """Group by 1+ row fields, optionally cross-tabbed by a second
+    "columns" field (same pl.pivot() shape month_wise_disbursal_summary
+    above uses for its month columns), aggregating one value field.
+
+    Any canonical EAD field can be used for rows/columns/value, including
+    one the engagement's uploaded files never actually populated -- that's
+    null-filled (at the field's schema dtype, not just blindly Utf8, so a
+    numeric aggregation over it still runs rather than type-erroring) and
+    so simply produces an all-null/empty result instead of a confusing
+    KeyError.
+    """
+    if agg not in PIVOT_AGGREGATIONS:
+        raise ValueError(f"Unknown aggregation: {agg}")
+    if not rows:
+        raise ValueError("At least one row field is required.")
+
+    needed = list(dict.fromkeys([*rows, *([columns] if columns else []), value_field]))
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        df = df.with_columns([pl.lit(None, dtype=_ead_canonical_dtype(c)).alias(c) for c in missing])
+
+    # Checked against the dataframe's actual resulting dtype, not just the
+    # schema's declared one: a real file can ingest a nominally-numeric
+    # field as Utf8 (e.g. every value failed numeric parsing), and the
+    # schema lookup alone would wrongly pass or fail a field based on what
+    # it's SUPPOSED to be rather than what it actually is here.
+    if agg in _PIVOT_NUMERIC_ONLY_AGGS and not df.schema[value_field].is_numeric():
+        raise ValueError(f'"{agg}" needs a numeric value field -- pick count or count distinct instead.')
+
+    if columns:
+        distinct = df.select(pl.col(columns).n_unique()).item()
+        if distinct and distinct > _MAX_PIVOT_COLUMN_VALUES:
+            raise ValueError(
+                f'"{columns}" has {distinct:,} distinct values -- too many to use as the Columns field '
+                f"(max {_MAX_PIVOT_COLUMN_VALUES}). Pick a lower-cardinality field, or leave Columns blank."
+            )
+
+        agg_expr = PIVOT_AGGREGATIONS[agg](pl.col(value_field)).alias("_value")
+        grouped = df.group_by([*rows, columns]).agg(agg_expr)
+        pivoted = grouped.pivot(values="_value", index=rows, on=columns)
+        if agg in ("sum", "count", "count_distinct"):
+            fill_cols = [c for c in pivoted.columns if c not in rows]
+            pivoted = pivoted.with_columns([pl.col(c).fill_null(0) for c in fill_cols])
+        return pivoted.sort(rows)
+
+    agg_expr = PIVOT_AGGREGATIONS[agg](pl.col(value_field)).alias(f"{value_field}_{agg}")
+    return df.group_by(rows).agg(agg_expr).sort(rows)

@@ -4387,6 +4387,185 @@ def test_ead_reports_compute_expected_summaries():
         sys.path.remove(backend_dir)
 
 
+def test_custom_pivot_report_group_by_crosstab_and_guardrails():
+    """Unit-level guard for the user-driven EAD "Pivot" feature: pick any
+    row/column/value fields rather than running one of the fixed summary
+    reports above. Covers: plain group-by (no Columns field), a real
+    cross-tab (Columns field spreads into separate output columns, same
+    pl.pivot() shape month_wise_disbursal_summary already uses), the
+    "count"/"count_distinct" aggregations working on non-numeric fields,
+    a numeric-only aggregation (sum/avg/min/max) correctly rejecting a
+    non-numeric value field based on the DATAFRAME's actual dtype (not
+    just the schema's nominal one -- a real file can ingest a
+    nominally-numeric field as Utf8 if every value failed to parse), a
+    field the uploaded data never actually has being null-filled instead
+    of KeyError-ing, and the Columns-field cardinality cap that exists so
+    picking a free-text field by mistake can't cross-tab into thousands of
+    output columns.
+    """
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import polars as pl
+
+        from fcmr_core.rules.ead_reports import custom_pivot_report
+
+        df = pl.DataFrame(
+            {
+                "system": ["OneLMS_TW", "OneLMS_TW", "SCF", "SCF"],
+                "stage": ["Stage 1", "Stage 2", "Stage 1", "Stage 1"],
+                "ead": [100.0, 200.0, 50.0, 25.0],
+                "loan_id": ["L1", "L2", "L3", "L4"],
+            }
+        )
+
+        # Plain group-by: one row per distinct "system", summed ead.
+        simple = custom_pivot_report(df, ["system"], None, "ead", "sum")
+        by_system = {r["system"]: r["ead_sum"] for r in simple.to_dicts()}
+        assert by_system == {"OneLMS_TW": 300.0, "SCF": 75.0}
+
+        # Cross-tab: Stage spreads into its own output columns, with a
+        # combination that has no matching rows (SCF x Stage 2) filled 0
+        # rather than left out or null, since "sum" is in the zero-fill set.
+        crosstab = custom_pivot_report(df, ["system"], "stage", "ead", "sum")
+        by_system = {r["system"]: r for r in crosstab.to_dicts()}
+        assert by_system["OneLMS_TW"]["Stage 1"] == 100.0
+        assert by_system["OneLMS_TW"]["Stage 2"] == 200.0
+        assert by_system["SCF"]["Stage 1"] == 75.0
+        assert by_system["SCF"]["Stage 2"] == 0.0
+
+        # count/count_distinct work on a non-numeric value field.
+        counted = custom_pivot_report(df, ["system"], None, "stage", "count")
+        assert {r["system"]: r["stage_count"] for r in counted.to_dicts()} == {"OneLMS_TW": 2, "SCF": 2}
+        distinct = custom_pivot_report(df, ["system"], None, "stage", "count_distinct")
+        assert {r["system"]: r["stage_count_distinct"] for r in distinct.to_dicts()} == {"OneLMS_TW": 2, "SCF": 1}
+
+        # A numeric-only aggregation (sum) on a real but non-numeric
+        # dataframe column must be rejected -- checked against the actual
+        # dtype in `df`, not a schema lookup, so this also covers a field
+        # that ingested as Utf8 despite nominally being numeric.
+        with pytest.raises(ValueError, match="needs a numeric value field"):
+            custom_pivot_report(df, ["system"], None, "stage", "sum")
+
+        # A field the data never has at all -> null-filled, not a KeyError.
+        # ("npa_flag_date" is a real ead_files schema field, just absent
+        # from this particular synthetic frame.)
+        missing_field = custom_pivot_report(df, ["system"], None, "npa_flag_date", "count")
+        assert {r["system"]: r["npa_flag_date_count"] for r in missing_field.to_dicts()} == {
+            "OneLMS_TW": 0,
+            "SCF": 0,
+        }
+
+        # Columns-field cardinality cap: a high-cardinality field picked as
+        # Columns must be rejected up front rather than silently producing
+        # a huge cross-tab.
+        wide_df = pl.DataFrame(
+            {
+                "system": ["OneLMS_TW"] * 300,
+                "scheme_name": [str(i) for i in range(300)],
+                "ead": [1.0] * 300,
+            }
+        )
+        with pytest.raises(ValueError, match="too many to use as the Columns field"):
+            custom_pivot_report(wide_df, ["system"], "scheme_name", "ead", "sum")
+
+        # No row fields at all -> clear error, not an unguarded group_by([]).
+        with pytest.raises(ValueError, match="At least one row field"):
+            custom_pivot_report(df, [], None, "ead", "sum")
+    finally:
+        sys.path.remove(backend_dir)
+
+
+def test_ead_pivot_route_runs_and_downloads_through_real_app():
+    """Functional test of the EAD Analytics "Pivot" form through the real
+    route/middleware: upload + map a real EAD file, run a cross-tab pivot
+    (System rows x Stage columns, sum of EAD), and confirm the download
+    route recomputes the identical result from the same query-string
+    config it round-trips through (no persisted run_id for this feature,
+    same "recompute on demand" shape as the fixed summary reports).
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("polars")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        csv_bytes = (
+            b"loan_id,system,stage,ead\n"
+            b"L1,OneLMS_TW,Stage 1,100.0\n"
+            b"L2,OneLMS_TW,Stage 2,200.0\n"
+            b"L3,SCF,Stage 1,50.0\n"
+        )
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("pivot_test.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+            upload_id = next(
+                u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "pivot_test.csv"
+            )
+
+            resp = client.post(
+                f"/dashboard/uploads/{upload_id}/map-columns",
+                data={"map_loan_id": "loan_id", "map_system": "system", "map_stage": "stage", "map_ead": "ead"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            resp = client.post(
+                "/dashboard/analytics/ead/pivot",
+                data={"rows": ["system"], "columns": "stage", "value_field": "ead", "agg": "sum"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 200
+            assert "Stage 1" in resp.text
+            assert "100" in resp.text and "200" in resp.text
+
+            import html
+            import re
+
+            match = re.search(r'href="(/dashboard/analytics/ead/pivot/download[^"]*)"', resp.text)
+            assert match, "no pivot download link found in the result page"
+            # Jinja2 HTML-escapes "&" to "&amp;" in the rendered href (correct,
+            # standards-compliant markup -- a real browser decodes it back when
+            # reading the attribute), so unescape before using it as a URL.
+            download_url = html.unescape(match.group(1))
+            dl_resp = client.get(download_url)
+            assert dl_resp.status_code == 200
+            assert "Stage 1" in dl_resp.text
+            assert "100.0" in dl_resp.text
+
+            # Missing required Row field -> clean 400, not a 500.
+            resp = client.post(
+                "/dashboard/analytics/ead/pivot",
+                data={"rows": [""], "columns": "", "value_field": "ead", "agg": "sum"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 400
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
     """Functional test of the new EAD Analytics screen through the real app:
     upload + map a real EAD file (going through DuckDB-backed ingestion, so
