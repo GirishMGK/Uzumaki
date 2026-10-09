@@ -2984,7 +2984,7 @@ def test_launcher_and_streamlit_config_allow_2gb_uploads():
     assert "maxUploadSize" in config_src and "2048" in config_src
 
 
-# ── loan_app/api/uploads.py: accept Excel/Parquet, not just CSV, up to 5GB ──
+# ── loan_app/api/uploads.py: accept Excel/Parquet, not just CSV, no size cap ──
 def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
     """
     Regression guard: the main Loan Analytics upload screen only accepted
@@ -2992,8 +2992,11 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
     .parquet directly. Both get converted to CSV internally (so the rest
     of the pipeline -- column mapping, ingestion, Product Helper tagging
     -- is unchanged) and end up ingestible exactly like a native CSV
-    upload of the same data would. Also checks the 5 GB limit (up from
-    2 GB) is what's actually configured, not just claimed in the UI copy.
+    upload of the same data would. Also covers a parquet file packed
+    inside a zip (_stream_parquet_to_csv_path's second call site -- the
+    extracted-file branch, not just the direct-upload one), since a
+    parquet->CSV conversion bug specific to one of those two call sites
+    wouldn't be caught by exercising only the other.
     """
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
@@ -3012,14 +3015,12 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
 
         import io
         import json as json_mod
+        import zipfile
 
         import openpyxl
         import polars as pl
         from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
-        from fcmr_core.config import settings as fcmr_settings
-
-        assert fcmr_settings.max_upload_bytes == 5 * 1024**3
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -3030,6 +3031,12 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
 
         parquet_buf = io.BytesIO()
         pl.DataFrame({"loan_id": ["LN0002"], "DrsPOS": [2000]}).write_parquet(parquet_buf)
+
+        zip_parquet_buf = io.BytesIO()
+        zip_parquet_bytes = io.BytesIO()
+        pl.DataFrame({"loan_id": ["LN0003"], "DrsPOS": [3000]}).write_parquet(zip_parquet_bytes)
+        with zipfile.ZipFile(zip_parquet_buf, "w") as zf:
+            zf.writestr("batch_c.parquet", zip_parquet_bytes.getvalue())
 
         with TestClient(loan_main.app) as client:
             resp = client.post(
@@ -3045,16 +3052,19 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
                         ),
                     ),
                     ("files", ("batch_b.parquet", parquet_buf.getvalue(), "application/octet-stream")),
+                    ("files", ("batch_c.zip", zip_parquet_buf.getvalue(), "application/zip")),
                 ],
                 follow_redirects=False,
             )
             assert resp.status_code == 303
 
             uploads = {u["filename"]: u for u in catalog_store.list_uploads()}
-            # Converted to CSV filenames, and both landed as real, mappable uploads.
+            # Converted to CSV filenames, and all three landed as real, mappable uploads.
             assert uploads["batch_a.csv"]["status"] == "mapping_pending"
             assert uploads["batch_b.csv"]["status"] == "mapping_pending"
+            assert uploads["batch_c.csv"]["status"] == "mapping_pending"
             assert json_mod.loads(uploads["batch_a.csv"]["sniffed_headers"]) == ["loan_id", "DrsPOS"]
+            assert json_mod.loads(uploads["batch_c.csv"]["sniffed_headers"]) == ["loan_id", "DrsPOS"]
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
@@ -3322,12 +3332,18 @@ def test_do_upload_streams_csv_and_zipped_csv_without_corrupting_content():
                 del sys.modules[mod]
 
 
-def test_do_upload_enforces_size_cap_while_streaming_direct_and_zipped_files():
-    """The 5 GB cap has to still be enforced with the streaming rewrite --
-    both for a direct CSV upload (checked as chunks arrive, not after a
-    full `await file.read()`) and for a CSV extracted from a zip (checked
-    against its on-disk extracted size). Lowers the cap via monkeypatch
-    rather than actually uploading gigabytes in a test."""
+def test_do_upload_has_no_size_cap_for_direct_and_zipped_files():
+    """The upload size cap (previously a hard 5 GB, enforced via
+    _check_size) was removed entirely per explicit request -- there's no
+    fixed ceiling on how large a real EAD/portfolio export can
+    legitimately be, and the streaming upload path (a direct CSV copied
+    chunk-by-chunk, or one extracted from a zip) never needed the file in
+    memory at once regardless of size. This is a regression guard against
+    the cap silently coming back: uploads a file spanning several of
+    _stream_to_path's 256 KB chunks (both directly and inside a zip) and
+    confirms neither is rejected, and that the dead settings knob isn't
+    sitting around unused (which would invite re-adding the check against
+    a setting nothing else reads, the exact state that caused this gap)."""
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
 
@@ -3346,46 +3362,34 @@ def test_do_upload_enforces_size_cap_while_streaming_direct_and_zipped_files():
         from fastapi.testclient import TestClient
         from fcmr_core.config import settings as fcmr_settings
 
-        real_cap = fcmr_settings.max_upload_bytes
-        fcmr_settings.max_upload_bytes = 200  # tiny, deliberately below the test payloads
+        assert not hasattr(fcmr_settings, "max_upload_bytes")
 
-        oversized_csv = ("loan_id,disbursed_amount\n" + "\n".join(f"L{i},{i}" for i in range(50))).encode()
-        assert len(oversized_csv) > fcmr_settings.max_upload_bytes
+        # Several times _stream_to_path's 256 KB chunk size, so this
+        # genuinely exercises the chunked-copy loop more than once, not
+        # just a single-chunk file that happens to pass either way.
+        large_csv = ("loan_id,disbursed_amount\n" + "\n".join(f"L{i},{i}" for i in range(90_000))).encode()
+        assert len(large_csv) > 4 * (256 * 1024)
 
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w") as zf:
-            zf.writestr("oversized_in_zip.csv", oversized_csv)
+            zf.writestr("large_in_zip.csv", large_csv)
 
-        try:
-            with TestClient(loan_main.app) as client:
-                resp = client.post(
-                    "/dashboard/upload",
-                    data={"report_type": "ead_files"},
-                    files=[("files", ("direct_oversized.csv", oversized_csv, "text/csv"))],
-                    follow_redirects=False,
-                )
-                assert resp.status_code == 413
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("direct_large.csv", large_csv, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
 
-                resp = client.post(
-                    "/dashboard/upload",
-                    data={"report_type": "ead_files"},
-                    files=[("files", ("oversized.zip", zip_buf.getvalue(), "application/zip"))],
-                    follow_redirects=False,
-                )
-                assert resp.status_code == 413
-
-                # A file genuinely under the (lowered) cap still succeeds.
-                small_csv = b"loan_id,disbursed_amount\nL1,100\n"
-                assert len(small_csv) <= fcmr_settings.max_upload_bytes
-                resp = client.post(
-                    "/dashboard/upload",
-                    data={"report_type": "ead_files"},
-                    files=[("files", ("small.csv", small_csv, "text/csv"))],
-                    follow_redirects=False,
-                )
-                assert resp.status_code == 303
-        finally:
-            fcmr_settings.max_upload_bytes = real_cap
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("large.zip", zip_buf.getvalue(), "application/zip"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)

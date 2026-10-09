@@ -47,7 +47,7 @@
           <div class="file-drop-label">
             <span class="file-icon">📄</span>
             <span style="font-size:13.5px;">Drop files here or <strong>click to browse</strong></span>
-            <span class="file-hint">Max 5 GB per file · CSV, Excel, Parquet, or ZIP format</span>
+            <span class="file-hint">No file size limit · CSV, Excel, Parquet, or ZIP format</span>
           </div>
         </div>
         <p class="file-selected" id="files-selected"></p>
@@ -176,9 +176,9 @@
         return;
       }
       // The server returns {"detail": "..."} on both the intentional 4xx
-      // raises (e.g. 413 over the 5GB limit) and any unhandled exception
-      // (main.py's global handler) -- show that instead of a bare status
-      // code, which was a dead end for diagnosing anything.
+      // raises (e.g. 400 for no files provided) and any unhandled
+      // exception (main.py's global handler) -- show that instead of a
+      // bare status code, which was a dead end for diagnosing anything.
       let detail = "";
       try {
         detail = JSON.parse(xhr.responseText).detail || "";
