@@ -106,23 +106,43 @@ _SUPPORTED_UPLOAD_EXTENSIONS = (".csv", ".xlsx", ".xls", ".parquet")
 
 
 def _as_csv_bytes(filename: str, content: bytes) -> tuple[str, bytes] | None:
-    """Normalise one uploaded file to (csv_filename, csv_bytes) so the rest
-    of the pipeline (sniff_headers, ingest_csv, ...) only ever deals with
-    CSV -- Excel and Parquet are just alternate source formats for the
-    exact same EAD-style data, converted here rather than teaching every
-    downstream step three different formats. Returns None for anything
-    else (caller skips it)."""
+    """Normalise one uploaded Excel file to (csv_filename, csv_bytes) so the
+    rest of the pipeline (sniff_headers, ingest_csv, ...) only ever deals
+    with CSV. Excel genuinely has no streaming option -- calamine needs the
+    whole file available to parse its structure -- so this still takes the
+    already-fully-read bytes and holds the converted CSV in memory too.
+    Parquet uploads go through _stream_parquet_to_csv_path instead (disk to
+    disk via DuckDB, no Python-side materialization); this function no
+    longer handles parquet. Returns None for anything else (caller skips
+    it)."""
     lower = filename.lower()
     if lower.endswith(".csv"):
         return filename, content
     if lower.endswith((".xlsx", ".xls")):
         df = pl.read_excel(io.BytesIO(content), engine="calamine")
-    elif lower.endswith(".parquet"):
-        df = pl.read_parquet(io.BytesIO(content))
     else:
         return None
     csv_name = str(Path(filename).with_suffix(".csv"))
     return csv_name, df.write_csv().encode("utf-8")
+
+
+def _stream_parquet_to_csv_path(src_path: Path, dest_path: Path) -> None:
+    """Convert a parquet file to CSV disk-to-disk via DuckDB, never
+    materializing the dataset as a Python object. Parquet's columnar
+    compression means a multi-GB file can unpack to many times that much
+    CSV data -- the old path (read the whole file into memory, parse with
+    polars, serialize the whole DataFrame back out as one CSV-bytes
+    object) held the compressed bytes, the decompressed DataFrame, and the
+    re-serialized CSV bytes all at once, multiplying an already-risky
+    full-file read into something far worse. Same COPY-to-file pattern as
+    store.export_consolidated_to_file (see its docstring for the same
+    reasoning applied to downloads instead of uploads).
+    """
+    with duckdb.connect() as con:
+        con.execute(
+            f"COPY (SELECT * FROM read_parquet('{src_path.as_posix()}')) "
+            f"TO '{dest_path.as_posix()}' (FORMAT CSV, HEADER TRUE)"
+        )
 
 
 def _tag_product_helper(parquet_path: Path) -> None:
@@ -290,24 +310,20 @@ async def download_schema(report_type: str):
     )
 
 
-def _check_size(size: int, filename: str) -> None:
-    if size > settings.max_upload_bytes:
-        raise HTTPException(status_code=413, detail=f"File {filename} exceeds 5 GB limit.")
-
-
 async def _stream_to_path(file: UploadFile, dest: Path, chunk_size: int = 256 * 1024) -> int:
-    """Copy an UploadFile straight to disk in fixed-size chunks, checking
-    the running total against the upload cap as data arrives. Never holds
+    """Copy an UploadFile straight to disk in fixed-size chunks. Never holds
     more than one chunk of the file in memory at a time -- unlike a plain
-    `await file.read()` (the whole file, up to the 5 GB cap, as one Python
-    bytes object) followed by a chunked *re*-write of that same in-memory
-    buffer, which is what this replaces. Returns the total bytes written.
+    `await file.read()` (the whole file as one Python bytes object)
+    followed by a chunked *re*-write of that same in-memory buffer, which
+    is what this replaces. No size cap: there's no fixed ceiling on how
+    large a real EAD/portfolio export can legitimately be, and this path
+    is already disk-streamed regardless of size. Returns the total bytes
+    written.
     """
     total = 0
     with dest.open("wb") as out:
         while chunk := await file.read(chunk_size):
             total += len(chunk)
-            _check_size(total, file.filename or dest.name)
             out.write(chunk)
     return total
 
@@ -396,14 +412,20 @@ async def do_upload(
                             # Already on disk in the format we want --
                             # queue it to be moved into place directly,
                             # never read fully into memory.
-                            _check_size(full_path.stat().st_size, fname)
                             processed_files.append((fname, full_path))
+                        elif fname.lower().endswith(".parquet"):
+                            # Disk-to-disk via DuckDB -- see
+                            # _stream_parquet_to_csv_path's docstring for
+                            # why this avoids the Excel branch's in-memory
+                            # approach specifically for parquet.
+                            csv_name = str(Path(fname).with_suffix(".csv"))
+                            staged_path = Path(td.name) / f"{uuid.uuid4()}.csv"
+                            _stream_parquet_to_csv_path(full_path, staged_path)
+                            processed_files.append((csv_name, staged_path))
                         else:
                             raw = full_path.read_bytes()
-                            _check_size(len(raw), fname)
                             converted = _as_csv_bytes(fname, raw)
                             if converted:
-                                _check_size(len(converted[1]), fname)
                                 processed_files.append(converted)
 
             elif fname_lower.endswith(".csv"):
@@ -417,16 +439,33 @@ async def do_upload(
                 logger.info("Streamed %s (%d bytes)", file.filename, total)
                 processed_files.append((file.filename, staged_path))
 
+            elif fname_lower.endswith(".parquet"):
+                # Disk-to-disk via DuckDB, same as the zip-extracted case
+                # above -- stream the upload to disk first, then let
+                # DuckDB do the actual parquet->CSV conversion without
+                # ever materializing the (possibly much larger, once
+                # decompressed) dataset as a Python object.
+                logger.info("Streaming uploaded parquet to disk: %s", file.filename)
+                td = _ensure_temp_dir()
+                raw_path = Path(td.name) / f"{uuid.uuid4()}.parquet"
+                total = await _stream_to_path(file, raw_path)
+                logger.info("Streamed %s (%d bytes); converting to CSV", file.filename, total)
+                csv_name = str(Path(file.filename).with_suffix(".csv"))
+                staged_path = Path(td.name) / f"{uuid.uuid4()}.csv"
+                _stream_parquet_to_csv_path(raw_path, staged_path)
+                raw_path.unlink(missing_ok=True)
+                processed_files.append((csv_name, staged_path))
+
             elif fname_lower.endswith(_SUPPORTED_UPLOAD_EXTENSIONS):
-                # Excel/Parquet: no streaming path -- polars needs the
-                # whole file available to parse either format's structure.
+                # Excel: no streaming path -- calamine needs the whole file
+                # available to parse its structure. In practice this stays
+                # bounded by Excel's own per-sheet row ceiling (1,048,576
+                # rows), unlike CSV/Parquet exports which have no such cap.
                 logger.info("Reading uploaded file: %s", file.filename)
                 content = await file.read()
                 logger.info("Read %s (%d bytes)", file.filename, len(content))
-                _check_size(len(content), file.filename)
                 converted = _as_csv_bytes(file.filename, content)
                 if converted:
-                    _check_size(len(converted[1]), file.filename)
                     processed_files.append(converted)
 
         if not processed_files:
