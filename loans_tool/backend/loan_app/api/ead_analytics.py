@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import os
 import tempfile
+import urllib.parse
 import uuid
 from pathlib import Path
 
 import polars as pl
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
@@ -38,12 +39,15 @@ from fcmr_core.rules.ead_cross_dataset import (
     written_off_customer_fresh_disbursal_report,
 )
 from fcmr_core.rules.ead_reports import (
+    PIVOT_AGGREGATIONS,
+    custom_pivot_report,
     month_wise_disbursal_summary,
     npa_flag_date_change_report,
     product_ead_reconciliation_summary,
     system_product_minmax_summary,
 )
 from fcmr_core.rules.ead_rules import list_ead_row_rules, run_ead_row_rules
+from fcmr_core.schemas.loader import get_canonical_fields
 
 router = APIRouter()
 _templates_dir = Path(__file__).parent.parent / "web" / "templates"
@@ -75,6 +79,19 @@ async def ead_analytics_page(request: Request):
     overrides, default_days = store.get_ead_sanction_disbursal_thresholds()
     product_types = sorted(set(store.get_system_type_map().values()))
 
+    # product_helper isn't a schema-declared canonical field (ead_files.yaml
+    # has no such column) -- it's tagged onto every consolidated EAD row at
+    # ingest time from the System -> Product Type mapping (see uploads.py's
+    # _tag_product_helper). It's also the single most-used grouping field
+    # in the fixed reports above ("System x Product Name Min/Max", etc.),
+    # so it's added here explicitly rather than left out just because it's
+    # not in the YAML.
+    pivot_canonicals = [c.canonical for c in get_canonical_fields("ead_files")] + ["product_helper"]
+    pivot_fields = sorted(
+        ({"canonical": c, "label": c.replace("_", " ").title()} for c in pivot_canonicals),
+        key=lambda f: f["label"],
+    )
+
     return templates.TemplateResponse(
         request=request,
         name="ead_analytics.html",
@@ -86,6 +103,8 @@ async def ead_analytics_page(request: Request):
             "default_days": default_days,
             "type_thresholds": [{"type": t, "days": overrides.get(t, default_days)} for t in product_types],
             "current_year": _current_fy_start_year(),
+            "pivot_fields": pivot_fields,
+            "pivot_aggs": list(PIVOT_AGGREGATIONS.keys()),
         },
     )
 
@@ -276,6 +295,101 @@ async def ead_summary_download(
         tmp_path,
         media_type="text/csv",
         filename=filename,
+        background=BackgroundTask(tmp_path.unlink, missing_ok=True),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Pivot — same "cheap, recomputed on every request" shape as the fixed
+# summary reports above, except the row/column/value fields are picked by
+# whoever's running it (any of the ~100 canonical EAD fields) instead of
+# being hardcoded. The chosen config round-trips through the download
+# URL's query string so the CSV download recomputes the same pivot rather
+# than needing its own persisted run_id.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def _pivot_title(rows: list[str], columns: str | None, value_field: str, agg: str) -> str:
+    rows_label = " + ".join(r.replace("_", " ").title() for r in rows)
+    agg_label = agg.replace("_", " ").title()
+    title = f"Pivot: {rows_label}"
+    if columns:
+        title += f" x {columns.replace('_', ' ').title()}"
+    return f"{title} — {agg_label} of {value_field.replace('_', ' ').title()}"
+
+
+@router.post("/dashboard/analytics/ead/pivot", response_class=HTMLResponse)
+async def ead_pivot_run(
+    request: Request,
+    rows: list[str] = Form(...),
+    columns: str = Form(""),
+    value_field: str = Form(...),
+    agg: str = Form(...),
+):
+    engagement_id = request.session.get("engagement_id")
+    df = _consolidated_ead_df(engagement_id)
+    if df.is_empty():
+        raise HTTPException(status_code=400, detail="No ready EAD files found for this engagement.")
+
+    clean_rows = [r for r in rows if r]
+    if not clean_rows:
+        raise HTTPException(status_code=400, detail="Pick at least one Row field.")
+    clean_columns = columns or None
+
+    try:
+        result = custom_pivot_report(df, clean_rows, clean_columns, value_field, agg)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    params = urllib.parse.urlencode(
+        [("rows", r) for r in clean_rows] + [("columns", clean_columns or ""), ("value_field", value_field), ("agg", agg)]
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="ead_summary_result.html",
+        context={
+            "title": _pivot_title(clean_rows, clean_columns, value_field, agg),
+            "columns": result.columns,
+            "rows": result.to_dicts(),
+            "row_count": len(result),
+            "download_url": f"/dashboard/analytics/ead/pivot/download?{params}",
+        },
+    )
+
+
+@router.get("/dashboard/analytics/ead/pivot/download")
+async def ead_pivot_download(
+    request: Request,
+    rows: list[str] = Query(...),
+    columns: str = Query(""),
+    value_field: str = Query(...),
+    agg: str = Query(...),
+):
+    engagement_id = request.session.get("engagement_id")
+    df = _consolidated_ead_df(engagement_id)
+    if df.is_empty():
+        raise HTTPException(status_code=400, detail="No ready EAD files found for this engagement.")
+
+    clean_rows = [r for r in rows if r]
+    if not clean_rows:
+        raise HTTPException(status_code=400, detail="Pick at least one Row field.")
+    clean_columns = columns or None
+
+    try:
+        result = custom_pivot_report(df, clean_rows, clean_columns, value_field, agg)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    result.write_csv(tmp_path)
+
+    return FileResponse(
+        tmp_path,
+        media_type="text/csv",
+        filename="EAD_Pivot.csv",
         background=BackgroundTask(tmp_path.unlink, missing_ok=True),
     )
 
