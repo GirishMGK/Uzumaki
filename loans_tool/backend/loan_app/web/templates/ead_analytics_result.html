@@ -77,8 +77,10 @@
 
 <div class="card">
   <div class="card-title">Download Results</div>
+  <div class="card-sub">Excel: one sheet per exception type (plus a Summary sheet with counts and jump links). CSV: everything in one flat file.</div>
   <div class="form-actions" style="margin-top:8px; gap:12px;">
-    <a href="/dashboard/analytics/ead/run/{{ run_id }}/download/wide" class="btn btn-primary">⬇ Download Wide CSV</a>
+    <a href="/dashboard/analytics/ead/run/{{ run_id }}/download/excel" class="btn btn-primary">⬇ Download Excel (by Exception Type)</a>
+    <a href="/dashboard/analytics/ead/run/{{ run_id }}/download/wide" class="btn btn-ghost">⬇ Download Wide CSV</a>
     <a href="/dashboard/analytics/ead/run/{{ run_id }}/download/long" class="btn btn-ghost">⬇ Download Long CSV</a>
   </div>
 </div>
