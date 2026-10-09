@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}EAD Analytics Running — Loan Analytics{% endblock %}
+{% block page_title %}EAD Analytics{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/dashboard/analytics/ead" class="btn btn-ghost" style="margin-left:auto;">← Back</a>
+{% endblock %}
+
+{% block content %}
+
+{% if error %}
+<div class="card card-error">
+  <div class="card-title">EAD Analytics Run Failed</div>
+  <p style="margin-top:8px; font-size:13.5px;">{{ error }}</p>
+  <div class="card-actions" style="margin-top:14px;">
+    <a href="/dashboard/analytics/ead" class="btn btn-ghost">← Back to EAD Analytics</a>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <div class="running-indicator">
+    <div class="spinner"></div>
+    <div style="flex:1;">
+      <strong style="font-size:14px;">Running EAD checks…</strong>
+      <p class="help-text" style="margin-top:4px; margin-bottom:16px;">
+        Processing every ready EAD row through the selected exception checks.
+      </p>
+
+      <div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+          <span id="step-label" style="font-size:12.5px; color:var(--fg); font-weight:500;">Starting…</span>
+          <span id="pct-label" style="font-size:12.5px; color:var(--muted); font-weight:600;">0%</span>
+        </div>
+        <div style="background:var(--border,#e5e7eb); border-radius:6px; height:10px; overflow:hidden;">
+          <div id="progress-bar"
+               style="height:100%; width:0%; background:var(--accent); border-radius:6px;
+                      transition:width 0.4s ease;">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var RUN_ID = "{{ run_id }}";
+  var KNOWN_TOTAL = {{ total | default(0) }};
+
+  function poll() {
+    fetch('/dashboard/analytics/ead/run/' + RUN_ID + '/progress')
+      .then(function (r) {
+        if (!r.ok) { throw new Error('progress lookup failed'); }
+        return r.json();
+      })
+      .then(function (data) {
+        var total = data.total || KNOWN_TOTAL;
+        var pct = total > 0 ? Math.round((data.completed / total) * 100) : 0;
+        var bar = document.getElementById('progress-bar');
+        var pctEl = document.getElementById('pct-label');
+        var lblEl = document.getElementById('step-label');
+        if (bar) { bar.style.width = pct + '%'; }
+        if (pctEl) { pctEl.textContent = pct + '%'; }
+        if (lblEl) {
+          if (data.step) {
+            // Post-rule-execution phase (building CSV/Excel reports) --
+            // every rule already ran, so show what's happening now rather
+            // than a stale "checked N/N" that looks frozen.
+            lblEl.textContent = data.step + '…';
+          } else if (data.rule_id) {
+            lblEl.textContent = 'Checked ' + data.completed + '/' + total + ': ' + data.rule_id.replace(/_/g, ' ');
+          }
+        }
+        if (data.status === 'running') {
+          setTimeout(poll, 400);
+        } else {
+          window.location.reload();
+        }
+      })
+      .catch(function () {
+        // Progress entry no longer tracked (run finished) -- reload to pick
+        // up the final result/error page.
+        window.location.reload();
+      });
+  }
+
+  poll();
+})();
+</script>
+{% endif %}
+
+{% endblock %}

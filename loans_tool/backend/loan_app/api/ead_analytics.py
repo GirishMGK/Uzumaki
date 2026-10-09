@@ -8,26 +8,38 @@ so their wide/long CSVs can be downloaded without recomputing. Summary
 reports (product EAD reconciliation, System x Product min/max, month-wise
 disbursal, NPA Flag Date changes) are cheap aggregations recomputed on
 every request/download -- no persistence needed.
+
+Row-rule runs execute in a FastAPI BackgroundTask rather than inline in
+the POST handler: the Customer Master KYC flow (loan_app/api/runs.py) has
+its own equivalent, DB-persisted (store.create_run/update_run) progress
+tracking already, but its `runs` table requires a single upload_id (a
+NOT NULL foreign key) -- EAD's "run" is against every ready upload
+consolidated together, not one single upload, so reusing that table would
+mean attributing the run to one arbitrary file. Progress here is instead
+tracked in a small in-memory registry (_PROGRESS below), deliberately not
+persisted: it only needs to answer "is my just-started run still going"
+while a browser tab is actively polling it, not survive an app restart.
 """
 
 from __future__ import annotations
 
 import os
 import tempfile
+import threading
 import urllib.parse
 import uuid
 from pathlib import Path
 
 import polars as pl
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.background import BackgroundTask
 
 from fcmr_core.catalog import store
 from fcmr_core.config import settings
 from fcmr_core.reporting.aggregation import aggregate_exception_codes, aggregate_status_counts
-from fcmr_core.reporting.builder import build_exception_csvs
+from fcmr_core.reporting.builder import build_exception_csvs, build_exception_excel_by_rule
 from fcmr_core.reporting.charts import build_bar_chart, build_donut_svg
 from fcmr_core.rules.ead_brs_linking import (
     ead_vs_brs_collection_report,
@@ -64,6 +76,25 @@ def _run_outputs_dir(run_id: str) -> Path:
 
 def _brs_link_outputs_dir(run_id: str) -> Path:
     return settings.outputs_dir / f"ead_brs_{run_id}"
+
+
+# run_id -> {"status": "running"|"completed"|"failed", "completed": int,
+# "total": int, "rule_id": str, "error": str|None}. See module docstring
+# for why this is a plain in-memory dict rather than the persisted `runs`
+# table Customer Master's analytics use.
+_PROGRESS: dict[str, dict] = {}
+_PROGRESS_LOCK = threading.Lock()
+
+
+def _set_progress(run_id: str, **fields) -> None:
+    with _PROGRESS_LOCK:
+        _PROGRESS.setdefault(run_id, {}).update(fields)
+
+
+def _get_progress(run_id: str) -> dict | None:
+    with _PROGRESS_LOCK:
+        entry = _PROGRESS.get(run_id)
+        return dict(entry) if entry is not None else None
 
 
 @router.get("/dashboard/analytics/ead", response_class=HTMLResponse)
@@ -116,9 +147,43 @@ def _current_fy_start_year() -> int:
     return now.year if now.month >= 4 else now.year - 1
 
 
-@router.post("/dashboard/analytics/ead/run", response_class=HTMLResponse)
+def _execute_ead_run(
+    run_id: str,
+    df: pl.DataFrame,
+    selected: list[str] | None,
+    overrides: dict[str, int],
+    default_days: int,
+) -> None:
+    def on_progress(completed: int, total: int, rule_id: str) -> None:
+        _set_progress(run_id, completed=completed, total=total, rule_id=rule_id)
+
+    try:
+        annotated = run_ead_row_rules(
+            df,
+            selected,
+            sanction_delay_thresholds=overrides,
+            sanction_delay_default_days=default_days,
+            on_progress=on_progress,
+        )
+        out_dir = _run_outputs_dir(run_id)
+        _set_progress(run_id, step="Building CSV reports")
+        build_exception_csvs(annotated, run_id, out_dir)
+        # The Excel-by-rule export is the one step here whose cost scales
+        # with how much a rule flagged, not just row count (see its own
+        # docstring/_MAX_EXCEL_SHEET_ROWS) -- it's the only phase that can
+        # meaningfully still be running once every rule itself is done, so
+        # it gets its own distinct step label rather than looking frozen.
+        _set_progress(run_id, step="Building Excel (by exception type)")
+        build_exception_excel_by_rule(annotated, run_id, out_dir)
+        _set_progress(run_id, status="completed", step="Done")
+    except Exception as exc:
+        _set_progress(run_id, status="failed", error=str(exc))
+
+
+@router.post("/dashboard/analytics/ead/run")
 async def ead_analytics_run(
     request: Request,
+    background_tasks: BackgroundTasks,
     rules: list[str] | None = Form(None),
     default_days: int = Form(30),
     type_names: list[str] | None = Form(None),
@@ -131,6 +196,7 @@ async def ead_analytics_run(
 
     valid_ids = {m.rule_id for m in list_ead_row_rules()}
     selected = [r for r in (rules or []) if r in valid_ids] or None
+    total_rules = len(selected) if selected is not None else len(list_ead_row_rules())
 
     store.set_ead_sanction_disbursal_threshold(None, default_days)
     overrides: dict[str, int] = {}
@@ -142,19 +208,30 @@ async def ead_analytics_run(
         overrides[name] = days
         store.set_ead_sanction_disbursal_threshold(name, days)
 
-    annotated = run_ead_row_rules(
-        df, selected, sanction_delay_thresholds=overrides, sanction_delay_default_days=default_days
-    )
-
     run_id = str(uuid.uuid4())
-    out_dir = _run_outputs_dir(run_id)
-    build_exception_csvs(annotated, run_id, out_dir)
+    _set_progress(run_id, status="running", completed=0, total=total_rules, rule_id="", step="", error=None)
+    background_tasks.add_task(_execute_ead_run, run_id, df, selected, overrides, default_days)
 
-    return await ead_analytics_run_detail(request, run_id)
+    return RedirectResponse(url=f"/dashboard/analytics/ead/run/{run_id}", status_code=303)
 
 
 @router.get("/dashboard/analytics/ead/run/{run_id}", response_class=HTMLResponse)
 async def ead_analytics_run_detail(request: Request, run_id: str):
+    progress = _get_progress(run_id)
+
+    if progress and progress.get("status") == "running":
+        return templates.TemplateResponse(
+            request=request,
+            name="ead_analytics_running.html",
+            context={"run_id": run_id, "total": progress.get("total", 0), "error": None},
+        )
+    if progress and progress.get("status") == "failed":
+        return templates.TemplateResponse(
+            request=request,
+            name="ead_analytics_running.html",
+            context={"run_id": run_id, "total": 0, "error": progress.get("error") or "Unknown error"},
+        )
+
     wide_path = _run_outputs_dir(run_id) / f"{run_id}_wide.csv"
     if not wide_path.exists():
         raise HTTPException(status_code=404, detail="Run not found")
@@ -180,14 +257,39 @@ async def ead_analytics_run_detail(request: Request, run_id: str):
     )
 
 
+@router.get("/dashboard/analytics/ead/run/{run_id}/progress")
+async def ead_analytics_run_progress(run_id: str):
+    progress = _get_progress(run_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Unknown run")
+    return JSONResponse(
+        {
+            "status": progress.get("status", "running"),
+            "completed": progress.get("completed", 0),
+            "total": progress.get("total", 0),
+            "rule_id": progress.get("rule_id", ""),
+            "step": progress.get("step", ""),
+            "error": progress.get("error"),
+        }
+    )
+
+
 @router.get("/dashboard/analytics/ead/run/{run_id}/download/{kind}")
 async def ead_analytics_run_download(run_id: str, kind: str):
-    if kind not in ("wide", "long"):
+    if kind not in ("wide", "long", "excel"):
         raise HTTPException(status_code=404, detail="Unknown download kind")
-    path = _run_outputs_dir(run_id) / f"{run_id}_{kind}.csv"
+    out_dir = _run_outputs_dir(run_id)
+    if kind == "excel":
+        path = out_dir / f"{run_id}_by_exception.xlsx"
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = f"EAD_Analytics_By_Exception_{run_id[:8]}.xlsx"
+    else:
+        path = out_dir / f"{run_id}_{kind}.csv"
+        media_type = "text/csv"
+        filename = f"EAD_Analytics_{kind}_{run_id[:8]}.csv"
     if not path.exists():
         raise HTTPException(status_code=404, detail="Run not found")
-    return FileResponse(path, media_type="text/csv", filename=f"EAD_Analytics_{kind}_{run_id[:8]}.csv")
+    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

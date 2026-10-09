@@ -4566,6 +4566,69 @@ def test_ead_pivot_route_runs_and_downloads_through_real_app():
                 del sys.modules[mod]
 
 
+def test_build_exception_excel_by_rule_caps_rows_per_sheet():
+    """Regression guard for a real performance problem found while building
+    this feature: xlsx is a per-cell-styled format, and xlsxwriter (which
+    polars' write_excel() hands whole columns to, not a Python per-cell
+    loop) still costs roughly constant time per cell -- a rule that flags
+    a large fraction of a large dataset reproduces a sheet close to the
+    full dataset's size, and this file can have up to eleven such sheets
+    (one per rule). A synthetic worst case (two rules each flagging all
+    400,000 rows of a 13-column frame) took over two minutes before the
+    _MAX_EXCEL_SHEET_ROWS cap below existed -- CSV/Parquet have no such
+    cost and stay uncapped, but this Excel-specific format's overhead
+    needed a hard bound. This test exercises the cap directly on a
+    pre-built annotated frame (bypassing run_ead_row_rules/upload
+    plumbing -- irrelevant to what's being guarded here) with one rule
+    flagging more rows than the cap and one flagging fewer, and confirms
+    the oversized sheet is truncated with a visible note, while the
+    Summary sheet still reports the TRUE total count, not the truncated one.
+    """
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    try:
+        import tempfile
+        from pathlib import Path
+
+        import openpyxl
+        import polars as pl
+
+        from fcmr_core.reporting.builder import _MAX_EXCEL_SHEET_ROWS, build_exception_excel_by_rule
+
+        n_over = _MAX_EXCEL_SHEET_ROWS + 500
+        n_under = 3
+        annotated = pl.DataFrame(
+            {
+                "loan_id": [f"OVER{i}" for i in range(n_over)] + [f"UNDER{i}" for i in range(n_under)],
+                "_exc_widely_flagged_status": ["ERROR"] * n_over + ["OK"] * n_under,
+                "_exc_widely_flagged_code": ["WIDE"] * n_over + [""] * n_under,
+                "_exc_widely_flagged_desc": ["desc"] * n_over + [""] * n_under,
+                "_exc_rarely_flagged_status": ["OK"] * n_over + ["ERROR"] * n_under,
+                "_exc_rarely_flagged_code": [""] * n_over + ["RARE"] * n_under,
+                "_exc_rarely_flagged_desc": [""] * n_over + ["desc"] * n_under,
+            }
+        )
+
+        out_dir = Path(tempfile.mkdtemp())
+        path = build_exception_excel_by_rule(annotated, "cap-test", out_dir)
+        wb = openpyxl.load_workbook(path)
+
+        widely_rows = list(wb["widely_flagged"].iter_rows(values_only=True))
+        assert len(widely_rows) - 1 == _MAX_EXCEL_SHEET_ROWS  # header + capped rows, not n_over
+
+        rarely_rows = list(wb["rarely_flagged"].iter_rows(values_only=True))
+        assert len(rarely_rows) - 1 == n_under  # well under the cap -- untouched
+
+        summary_rows = {row[0]: row for row in wb["Summary"].iter_rows(values_only=True)}
+        assert summary_rows["Widely Flagged"][1] == n_over  # true total, not the truncated 50,000
+        assert "Showing first" in (summary_rows["Widely Flagged"][2] or "")
+        assert summary_rows["Rarely Flagged"][1] == n_under
+        assert not summary_rows["Rarely Flagged"][2]  # no truncation note needed
+    finally:
+        sys.path.remove(backend_dir)
+
+
 def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
     """Functional test of the new EAD Analytics screen through the real app:
     upload + map a real EAD file (going through DuckDB-backed ingestion, so
@@ -4661,6 +4724,30 @@ def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
             long_csv = client.get(f"/dashboard/analytics/ead/run/{run_id}/download/long")
             assert long_csv.status_code == 200
 
+            # Excel-by-exception-type: one sheet per rule, each holding only
+            # that rule's own flagged rows.
+            excel_resp = client.get(f"/dashboard/analytics/ead/run/{run_id}/download/excel")
+            assert excel_resp.status_code == 200
+            assert excel_resp.headers["content-type"] == (
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            import io
+
+            import openpyxl
+
+            wb = openpyxl.load_workbook(io.BytesIO(excel_resp.content))
+            assert "Summary" in wb.sheetnames
+            assert "negative_ead" in wb.sheetnames
+            assert "quick_mortality" in wb.sheetnames
+            neg_ead_rows = list(wb["negative_ead"].iter_rows(values_only=True))
+            assert neg_ead_rows[0][-2:] == ("Exception Code", "Exception Description")
+            # Column order isn't guaranteed (DuckDB's UNION ALL BY NAME-based
+            # consolidation doesn't preserve the original CSV's header order),
+            # so look "Loan Id" up by name rather than assuming position 0.
+            loan_id_idx = neg_ead_rows[0].index("Loan Id")
+            flagged_loan_ids = {row[loan_id_idx] for row in neg_ead_rows[1:]}
+            assert flagged_loan_ids == {"L2"}  # only L2's EAD (-5.0) is negative
+
             # Revisiting the same run_id later re-renders without recomputing.
             resp = client.get(f"/dashboard/analytics/ead/run/{run_id}")
             assert resp.status_code == 200
@@ -4689,6 +4776,95 @@ def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
 
             resp = client.post("/dashboard/analytics/ead/summary/npa-flag-changes", data={})
             assert resp.status_code == 200
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_ead_analytics_progress_endpoint_and_running_failed_states():
+    """Regression guard for a real UX report: clicking "Run Selected Checks"
+    on EAD Analytics gave no feedback that anything was happening until the
+    full result page eventually appeared, with nothing to distinguish a
+    slow-but-working run from a stuck/crashed one on a large real file.
+
+    The run now executes in a FastAPI BackgroundTask (fire-and-forget after
+    an immediate redirect) with progress tracked in a small in-memory
+    registry (ead_analytics._PROGRESS), polled via a JSON endpoint by the
+    running-state page's JS. TestClient's BackgroundTasks run to completion
+    before the test's own request returns (confirmed separately), so the
+    real end-to-end test above can never actually observe a mid-flight
+    "running" state through plain HTTP calls -- this test instead sets the
+    progress registry directly (same thing the background task itself
+    does) to exercise the progress endpoint and the running/failed page
+    states deterministically.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import uuid as uuid_module
+
+        import loan_app.main as loan_main
+
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from loan_app.api import ead_analytics
+
+        with TestClient(loan_main.app) as client:
+            run_id = str(uuid_module.uuid4())
+
+            # Simulate a run that's mid-flight: 3 of 11 rules done.
+            ead_analytics._set_progress(
+                run_id, status="running", completed=3, total=11, rule_id="negative_ead", error=None
+            )
+
+            progress_resp = client.get(f"/dashboard/analytics/ead/run/{run_id}/progress")
+            assert progress_resp.status_code == 200
+            assert progress_resp.json() == {
+                "status": "running",
+                "completed": 3,
+                "total": 11,
+                "rule_id": "negative_ead",
+                "step": "",
+                "error": None,
+            }
+
+            # The post-rule-execution phase (building CSV/Excel reports)
+            # surfaces its own step label instead of looking frozen at
+            # "11/11" once every rule has already run.
+            ead_analytics._set_progress(run_id, step="Building Excel (by exception type)")
+            step_resp = client.get(f"/dashboard/analytics/ead/run/{run_id}/progress").json()
+            assert step_resp["step"] == "Building Excel (by exception type)"
+            ead_analytics._set_progress(run_id, step="")
+
+            page = client.get(f"/dashboard/analytics/ead/run/{run_id}")
+            assert page.status_code == 200
+            assert "Running EAD checks" in page.text
+            assert run_id in page.text  # embedded as the JS poller's RUN_ID
+            assert "/progress'" in page.text  # the poller's fetch URL suffix
+
+            # Mark it failed -- the same GET route must show the error state,
+            # not a 404 (the wide CSV never got written) or a stale running view.
+            ead_analytics._set_progress(run_id, status="failed", error="disk full")
+            page = client.get(f"/dashboard/analytics/ead/run/{run_id}")
+            assert page.status_code == 200
+            assert "EAD Analytics Run Failed" in page.text
+            assert "disk full" in page.text
+
+            # A run_id the registry has never heard of -> clean 404 on the
+            # progress endpoint, not a KeyError/500.
+            unknown_run = str(uuid_module.uuid4())
+            missing_resp = client.get(f"/dashboard/analytics/ead/run/{unknown_run}/progress")
+            assert missing_resp.status_code == 404
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)
