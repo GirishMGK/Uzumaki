@@ -3741,8 +3741,70 @@ def test_map_columns_page_suggests_exact_match_not_near_duplicate():
             # The exact-match option for the zero_90_days_interest row is
             # the one marked selected -- not the "_Hist" variant.
             row_start = resp.text.index('data-canonical="zero_90_days_interest"')
-            row_html = resp.text[row_start : row_start + 800]
+            row_html = resp.text[row_start : row_start + 1000]
             assert '<option value="zero_90_days_interest" data-header="zero_90_days_interest" selected>' in row_html
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_map_columns_page_shows_each_field_s_data_type():
+    """Feature request: the column-mapping screen only showed the
+    canonical field name, whether it's required, and the raw-column
+    dropdown -- with ~100 fields per report type, telling at a glance
+    whether a field expects text, a whole number, or a decimal makes it
+    much faster to sanity-check a mapping (e.g. catching a numeric field
+    accidentally mapped to an obviously-textual raw column). Verifies the
+    real route renders a "Type" column with the ColumnSpec.dtype already
+    available in the template context, surfaced as a friendly label
+    ("String"/"Integer"/"Decimal") rather than the raw "str"/"int"/"float"
+    schema value -- for a known string field (loan_id), a known integer
+    field (original_tenure), and a known decimal field (ead).
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+
+        csv_bytes = b"loan_id,original_tenure,ead\nL1,60,100.0\n"
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("dtype_check.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            upload_id = next(
+                u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "dtype_check.csv"
+            )
+            resp = client.get(f"/dashboard/uploads/{upload_id}/map-columns")
+            assert resp.status_code == 200
+            assert "<th" in resp.text and ">Type</th>" in resp.text
+
+            def _row(canonical: str) -> str:
+                start = resp.text.index(f'data-canonical="{canonical}"')
+                return resp.text[start : start + 400]
+
+            assert 'badge-dtype-str">String</span>' in _row("loan_id")
+            assert 'badge-dtype-int">Integer</span>' in _row("original_tenure")
+            assert 'badge-dtype-float">Decimal</span>' in _row("ead")
     finally:
         os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
         sys.path.remove(backend_dir)

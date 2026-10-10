@@ -452,6 +452,9 @@ body {
 .badge-auto   { background: var(--blue-bg);   color: var(--blue-text); }
 .badge-manual { background: var(--accent-light); color: var(--accent-text); }
 .badge-skip   { background: oklch(93% 0.015 72); color: var(--faint); }
+.badge-dtype-str   { background: oklch(93% 0.015 72); color: var(--faint); }
+.badge-dtype-int   { background: var(--blue-bg); color: var(--blue-text); }
+.badge-dtype-float { background: var(--ok-bg);   color: var(--ok-text); }
 
 /* ── Empty state ─────────────────────────────────────────── */
 .empty-state {
