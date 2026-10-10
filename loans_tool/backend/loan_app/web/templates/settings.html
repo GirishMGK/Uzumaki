@@ -175,6 +175,56 @@
     </form>
   </div>
 
+  <div class="card" id="schema-overrides">
+    <div class="card-title">Column Mapping Overrides</div>
+    <div class="card-sub">
+      Teach the app new raw-header spellings (or, rarely, a brand-new field) for an existing report type by
+      uploading an Excel sheet shaped like the master schema file: columns <code class="mono">Nature</code>,
+      <code class="mono">Source Column</code>, <code class="mono">Output Name</code>, and optionally
+      <code class="mono">Include</code>, <code class="mono">Type</code>, <code class="mono">Nullable</code>.
+      Takes effect immediately, no restart needed.
+    </div>
+
+    <form method="POST" action="/settings/schema-overrides/preview" enctype="multipart/form-data" style="margin-top:12px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input type="file" name="file" accept=".xlsx,.xls" required class="input" style="flex:1;">
+        <button type="submit" class="btn btn-primary btn-sm">Preview Import</button>
+      </div>
+    </form>
+
+    {% if column_overrides_by_type %}
+    <div style="margin-top:18px; display:flex; flex-direction:column; gap:14px;">
+      {% for group in column_overrides_by_type %}
+      <div>
+        <div style="font-size:13px; font-weight:600; margin-bottom:6px;">{{ group.label }}</div>
+        <table class="data-table" style="margin-bottom:0;">
+          <thead>
+            <tr><th>Canonical Field</th><th>Alias</th><th style="width:70px;">New Field</th><th style="width:60px;"></th></tr>
+          </thead>
+          <tbody>
+            {% for ov in group.rows %}
+            <tr>
+              <td class="mono">{{ ov.canonical }}</td>
+              <td class="mono">{{ ov.alias }}</td>
+              <td style="text-align:center;">{% if ov.is_new_field %}<span class="badge badge-auto">Yes</span>{% else %}<span style="color:var(--faint); font-size:12px;">—</span>{% endif %}</td>
+              <td style="text-align:right;">
+                <form method="POST" action="/settings/schema-overrides/{{ ov.override_id }}/delete" style="display:inline;">
+                  <button type="submit" class="btn btn-sm btn-ghost" style="color:var(--error-text);"
+                          onclick="return confirm('Remove this override?');">Remove</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="help-text" style="margin-top:12px;">No overrides added yet.</p>
+    {% endif %}
+  </div>
+
   <div class="card">
     <div class="card-title">Data Backup</div>
     <div class="card-sub">Download a backup of your catalog and generated reports</div>

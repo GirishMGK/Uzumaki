@@ -207,9 +207,50 @@ def _load_yaml(path: Path) -> SchemaMap:
 
 
 def get_schema(report_type: str) -> SchemaMap | None:
+    """The report type's effective schema: its base YAML definition with
+    any column-alias overrides (Settings' Excel import, see
+    fcmr_core.schema_import) merged on top. Overrides are read fresh on
+    every call -- deliberately not cached alongside the YAML-backed
+    _REGISTRY -- so a newly-committed override is picked up by the very
+    next mapping page load or ingest, with no app restart or cache
+    invalidation needed.
+    """
     if not _REGISTRY:
         _reload()
-    return _REGISTRY.get(report_type)
+    base = _REGISTRY.get(report_type)
+    if base is None:
+        return None
+    overrides = catalog_store.list_column_alias_overrides(report_type)
+    if not overrides:
+        return base
+    return _apply_overrides(base, overrides)
+
+
+def _apply_overrides(base: SchemaMap, overrides: list[dict]) -> SchemaMap:
+    by_canonical: dict[str, ColumnSpec] = {}
+    order: list[str] = []
+    for col in base.columns:
+        by_canonical[col.canonical] = ColumnSpec(
+            canonical=col.canonical, aliases=list(col.aliases), required=col.required, dtype=col.dtype
+        )
+        order.append(col.canonical)
+
+    for ov in overrides:
+        canonical = ov["canonical"]
+        if canonical in by_canonical:
+            spec = by_canonical[canonical]
+            if ov["alias"] not in spec.aliases:
+                spec.aliases.append(ov["alias"])
+        else:
+            by_canonical[canonical] = ColumnSpec(
+                canonical=canonical,
+                aliases=[ov["alias"]],
+                required=bool(ov.get("required") or False),
+                dtype=ov.get("dtype") or "str",
+            )
+            order.append(canonical)
+
+    return SchemaMap(report_type=base.report_type, columns=[by_canonical[c] for c in order])
 
 
 def available_report_types() -> list[str]:

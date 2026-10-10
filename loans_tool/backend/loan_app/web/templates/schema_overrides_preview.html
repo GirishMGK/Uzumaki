@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Review Import — Settings — Loan Analytics{% endblock %}
+{% block page_title %}Column Mapping Overrides — Review Import{% endblock %}
+
+{% block topbar_actions %}
+  <a href="/settings#schema-overrides" class="btn btn-ghost" style="margin-left:auto;">← Cancel</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:920px; margin:0 auto;">
+
+  <div class="card" style="margin-bottom:16px;">
+    <div class="card-sub">
+      <strong>{{ filename }}</strong> &nbsp;·&nbsp; {{ total_rows }} row(s) read &nbsp;·&nbsp;
+      {{ already_known_count }} already recognized (skipped) &nbsp;·&nbsp;
+      {{ actionable | length }} new
+    </div>
+  </div>
+
+  {% if unresolved_count > 0 %}
+  <div class="notice notice-warn" style="margin-bottom:16px;">
+    <strong>{{ unresolved_count }} row(s) skipped</strong> — Nature value not recognized:
+    {% for n in unresolved_natures %}<code class="mono">{{ n }}</code>{% if not loop.last %}, {% endif %}{% endfor %}.
+    Check the spelling against the master schema file, or these rows can't be routed to a report type.
+  </div>
+  {% endif %}
+
+  {% if not actionable %}
+  <div class="card empty-state">
+    <h2>Nothing new to add</h2>
+    <p>Every included row in this sheet is already recognized.</p>
+  </div>
+  {% else %}
+  <form method="POST" action="/settings/schema-overrides/commit">
+    <input type="hidden" name="import_id" value="{{ import_id }}">
+    <div class="card" style="padding:0; overflow:hidden;">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th style="width:28px;"><input type="checkbox" id="select-all-rows" checked></th>
+            <th>Report Type</th>
+            <th>Source Column</th>
+            <th>Canonical Field</th>
+            <th style="width:90px;">Action</th>
+            <th style="width:70px;">Type</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in actionable %}
+          <tr>
+            <td><input type="checkbox" name="row_num" value="{{ row.row_num }}" class="override-row-checkbox" checked></td>
+            <td class="mono">{{ row.report_type }}</td>
+            <td class="mono">{{ row.source_column }}</td>
+            <td class="mono">{{ row.canonical }}</td>
+            <td>
+              {% if row.status == "new_field" %}
+              <span class="badge badge-auto">New field</span>
+              {% else %}
+              <span class="badge badge-skip">New alias</span>
+              {% endif %}
+            </td>
+            <td class="mono">{{ row.dtype }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="form-actions" style="margin-top:12px;">
+      <a href="/settings#schema-overrides" class="btn btn-ghost">Cancel</a>
+      <button type="submit" class="btn btn-primary">Confirm &amp; Add Selected</button>
+    </div>
+  </form>
+
+  <script>
+    document.getElementById("select-all-rows").addEventListener("change", function () {
+      var checked = this.checked;
+      document.querySelectorAll(".override-row-checkbox").forEach(function (cb) {
+        cb.checked = checked;
+      });
+    });
+  </script>
+  {% endif %}
+
+</div>
+{% endblock %}
