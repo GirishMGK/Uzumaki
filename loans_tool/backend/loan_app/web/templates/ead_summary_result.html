@@ -25,7 +25,7 @@
       <thead style="position:sticky; top:0; background:var(--bg); z-index:1;">
         <tr>
           {% for col in columns %}
-          <th>{{ col.replace("_", " ").title() }}</th>
+          <th>{{ col.replace("_", " ") | smart_title }}</th>
           {% endfor %}
         </tr>
       </thead>

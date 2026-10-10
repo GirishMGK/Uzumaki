@@ -115,29 +115,23 @@
   {# ── Pivot ── #}
   <div class="card">
     <div class="card-title">Pivot</div>
-    <div class="card-sub">Build your own summary from any EAD field: group by 1-2 row fields (optionally cross-tabbed by a second "Columns" field), aggregating one value field.</div>
+    <div class="card-sub">Build your own summary from any EAD field: group by any number of row fields (optionally cross-tabbed by any number of "Columns" fields), aggregating one value field.</div>
 
     <form method="post" action="/dashboard/analytics/ead/pivot" style="margin-top:14px;">
-      <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">
+      <div style="display:flex; gap:12px; flex-wrap:wrap;">
         <label style="font-size:12.5px; display:flex; flex-direction:column; gap:4px;">
-          Row 1
-          <select name="rows" class="input" style="width:190px;" required>
+          Rows
+          <select name="rows" class="input" style="width:200px; height:140px;" multiple required>
             {% for f in pivot_fields %}<option value="{{ f.canonical }}" {% if f.canonical == "product_helper" %}selected{% endif %}>{{ f.label }}</option>{% endfor %}
           </select>
-        </label>
-        <label style="font-size:12.5px; display:flex; flex-direction:column; gap:4px;">
-          Row 2 (optional)
-          <select name="rows" class="input" style="width:190px;">
-            <option value="">— none —</option>
-            {% for f in pivot_fields %}<option value="{{ f.canonical }}">{{ f.label }}</option>{% endfor %}
-          </select>
+          <span style="font-size:11px; color:var(--muted);">Ctrl/Cmd-click to select multiple</span>
         </label>
         <label style="font-size:12.5px; display:flex; flex-direction:column; gap:4px;">
           Columns (optional, cross-tab)
-          <select name="columns" class="input" style="width:190px;">
-            <option value="">— none —</option>
+          <select name="columns" class="input" style="width:200px; height:140px;" multiple>
             {% for f in pivot_fields %}<option value="{{ f.canonical }}">{{ f.label }}</option>{% endfor %}
           </select>
+          <span style="font-size:11px; color:var(--muted);">Ctrl/Cmd-click to select multiple; leave empty for none</span>
         </label>
         <label style="font-size:12.5px; display:flex; flex-direction:column; gap:4px;">
           Value field
@@ -148,9 +142,11 @@
         <label style="font-size:12.5px; display:flex; flex-direction:column; gap:4px;">
           Aggregation
           <select name="agg" class="input" style="width:150px;" required>
-            {% for a in pivot_aggs %}<option value="{{ a }}" {% if a == "sum" %}selected{% endif %}>{{ a.replace("_", " ").title() }}</option>{% endfor %}
+            {% for a in pivot_aggs %}<option value="{{ a }}" {% if a == "sum" %}selected{% endif %}>{{ a.replace("_", " ") | smart_title }}</option>{% endfor %}
           </select>
         </label>
+      </div>
+      <div style="margin-top:12px;">
         <button type="submit" class="btn btn-primary btn-sm">▶ Run Pivot</button>
       </div>
     </form>
