@@ -154,15 +154,49 @@ def _tag_product_helper(parquet_path: Path) -> None:
     unmapped value first), but a secondary file batch-applied via "apply
     to matching" isn't re-checked individually, so it can still happen
     there.
+
+    Rewritten disk-to-disk via DuckDB (read_parquet -> COPY to a sibling
+    temp file -> atomic replace), not polars' read_parquet/write_parquet:
+    this runs right after _stream_to_parquet's own DuckDB-COPY-based
+    ingestion, which is already disk-to-disk precisely so a large file is
+    never materialized in Python memory -- the old pl.read_parquet(...)
+    here undid that by loading the whole just-ingested dataset back into
+    memory anyway, immediately after. With no upload size cap anymore
+    (see the no-size-limit change), that's exactly the shape of crash
+    seen live: the one still-unbounded step in an otherwise fully
+    streamed pipeline.
     """
-    df = pl.read_parquet(parquet_path)
-    if _SYSTEM_CANONICAL not in df.columns:
-        return
-    mapping = store.get_system_type_map()
-    df = df.with_columns(
-        pl.col(_SYSTEM_CANONICAL).replace_strict(mapping, default=None).alias("product_helper")
-    )
-    df.write_parquet(parquet_path)
+    with duckdb.connect() as con:
+        columns = {
+            row[0] for row in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{parquet_path.as_posix()}')").fetchall()
+        }
+        if _SYSTEM_CANONICAL not in columns:
+            return
+
+        mapping = store.get_system_type_map()
+        if mapping:
+            whens = " ".join(
+                f"WHEN {_sql_literal(system_value)} THEN {_sql_literal(product_type)}"
+                for system_value, product_type in mapping.items()
+            )
+            # Exact match only, unmapped values -> NULL -- same semantics
+            # as the old pl.col(...).replace_strict(mapping, default=None).
+            product_helper_expr = f'CASE "{_SYSTEM_CANONICAL}" {whens} ELSE NULL END'
+        else:
+            product_helper_expr = "NULL"
+
+        tmp_path = parquet_path.with_name(f"{parquet_path.stem}.tmp{parquet_path.suffix}")
+        con.execute(f"""
+            COPY (
+                SELECT *, {product_helper_expr} AS product_helper
+                FROM read_parquet('{parquet_path.as_posix()}')
+            ) TO '{tmp_path.as_posix()}' (FORMAT PARQUET, COMPRESSION ZSTD)
+        """)
+    tmp_path.replace(parquet_path)
+
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
 
 
 def _ingest_and_mark_ready(
