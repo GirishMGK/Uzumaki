@@ -88,10 +88,11 @@ def _run_query_to_csv(tables: dict[str, pl.DataFrame], sql: str, dest: Path) -> 
 @router.get("/dashboard/analytics/sql", response_class=HTMLResponse)
 async def sql_analytics_page(request: Request):
     engagement_id = request.session.get("engagement_id")
-    tables = _load_tables(engagement_id)
-    table_info = [
-        {"name": name, "rows": len(df), "columns": df.columns} for name, df in tables.items()
-    ]
+    table_info = []
+    for report_type in available_report_types():
+        info = store.get_consolidated_table_info(engagement_id, report_type)
+        if info is not None:
+            table_info.append({"name": report_type, **info})
     default_sql = f"SELECT * FROM {table_info[0]['name']} LIMIT 100" if table_info else ""
     return templates.TemplateResponse(
         request=request,

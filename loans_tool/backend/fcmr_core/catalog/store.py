@@ -576,6 +576,27 @@ def build_consolidated_df(engagement_id: str | None, report_type: str) -> pl.Dat
         return con.execute(union_sql).pl()
 
 
+def get_consolidated_table_info(engagement_id: str | None, report_type: str) -> dict | None:
+    """Row count + column names for one report type's consolidation,
+    without materializing it as a DataFrame. For callers that only need
+    to describe the table (e.g. SQL Analytics' page load, listing what's
+    queryable) -- building the full build_consolidated_df() just to read
+    len(df) and df.columns means re-reading and re-stacking every ready
+    upload's full width on every page load, which scales with the
+    engagement's upload count/size for no reason the page actually needs.
+    DESCRIBE only inspects the query's schema, and COUNT(*) lets DuckDB
+    push the row count down to each parquet file's own metadata instead
+    of materializing any column data at all.
+    """
+    with open_connection() as con:
+        union_sql = _consolidation_union_sql(engagement_id, report_type, con)
+        if union_sql is None:
+            return None
+        columns = [row[0] for row in con.execute(f"DESCRIBE {union_sql}").fetchall()]
+        row_count = con.execute(f"SELECT COUNT(*) FROM ({union_sql})").fetchone()[0]
+        return {"rows": row_count, "columns": columns}
+
+
 def export_consolidated_to_file(
     engagement_id: str | None, report_type: str, out_path: Path, file_format: str
 ) -> int:
