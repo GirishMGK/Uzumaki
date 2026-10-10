@@ -7,6 +7,7 @@ as a CSV download.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Callable
 
@@ -265,12 +266,28 @@ def _ead_canonical_dtype(field: str) -> pl.PolarsDataType:
     return {"int": pl.Int64, "float": pl.Float64}.get(dtype_str, pl.Utf8)
 
 
+_PIVOT_MULTI_COL_NAME_RE = re.compile(r'"([^"]*)"')
+
+
+def _clean_pivot_column_name(name: str) -> str:
+    """pl.pivot() with multiple "on" fields names each output column
+    '{"val1","val2"}' (one quoted value per on-field, in on-field order).
+    A single "on" field instead gets the plain value with no braces at
+    all, so this only has work to do in the multi-field case."""
+    if name.startswith("{") and name.endswith("}"):
+        parts = _PIVOT_MULTI_COL_NAME_RE.findall(name)
+        if parts:
+            return " / ".join(parts)
+    return name
+
+
 def custom_pivot_report(
-    df: pl.DataFrame, rows: list[str], columns: str | None, value_field: str, agg: str
+    df: pl.DataFrame, rows: list[str], columns: list[str] | None, value_field: str, agg: str
 ) -> pl.DataFrame:
-    """Group by 1+ row fields, optionally cross-tabbed by a second
-    "columns" field (same pl.pivot() shape month_wise_disbursal_summary
-    above uses for its month columns), aggregating one value field.
+    """Group by 1+ row fields, optionally cross-tabbed by 1+ "columns"
+    fields (same pl.pivot() shape month_wise_disbursal_summary above uses
+    for its month columns -- "on" takes either a single column or a list
+    of them), aggregating one value field.
 
     Any canonical EAD field can be used for rows/columns/value, including
     one the engagement's uploaded files never actually populated -- that's
@@ -283,8 +300,9 @@ def custom_pivot_report(
         raise ValueError(f"Unknown aggregation: {agg}")
     if not rows:
         raise ValueError("At least one row field is required.")
+    columns = columns or []
 
-    needed = list(dict.fromkeys([*rows, *([columns] if columns else []), value_field]))
+    needed = list(dict.fromkeys([*rows, *columns, value_field]))
     missing = [c for c in needed if c not in df.columns]
     if missing:
         df = df.with_columns([pl.lit(None, dtype=_ead_canonical_dtype(c)).alias(c) for c in missing])
@@ -298,16 +316,22 @@ def custom_pivot_report(
         raise ValueError(f'"{agg}" needs a numeric value field -- pick count or count distinct instead.')
 
     if columns:
-        distinct = df.select(pl.col(columns).n_unique()).item()
-        if distinct and distinct > _MAX_PIVOT_COLUMN_VALUES:
+        # Cardinality of the CROSS-TAB, i.e. distinct combinations across
+        # every columns field together, not each field's own distinct
+        # count -- two low-cardinality fields can still combine into an
+        # unusably wide table.
+        distinct = df.select(columns).unique().height
+        if distinct > _MAX_PIVOT_COLUMN_VALUES:
+            label = " + ".join(columns)
             raise ValueError(
-                f'"{columns}" has {distinct:,} distinct values -- too many to use as the Columns field '
-                f"(max {_MAX_PIVOT_COLUMN_VALUES}). Pick a lower-cardinality field, or leave Columns blank."
+                f'"{label}" has {distinct:,} distinct combinations -- too many to use as the Columns field(s) '
+                f"(max {_MAX_PIVOT_COLUMN_VALUES}). Pick lower-cardinality field(s), or leave Columns blank."
             )
 
         agg_expr = PIVOT_AGGREGATIONS[agg](pl.col(value_field)).alias("_value")
-        grouped = df.group_by([*rows, columns]).agg(agg_expr)
+        grouped = df.group_by([*rows, *columns]).agg(agg_expr)
         pivoted = grouped.pivot(values="_value", index=rows, on=columns)
+        pivoted = pivoted.rename({c: _clean_pivot_column_name(c) for c in pivoted.columns if c not in rows})
         if agg in ("sum", "count", "count_distinct"):
             fill_cols = [c for c in pivoted.columns if c not in rows]
             pivoted = pivoted.with_columns([pl.col(c).fill_null(0) for c in fill_cols])

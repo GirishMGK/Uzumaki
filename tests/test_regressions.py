@@ -4558,7 +4558,7 @@ def test_custom_pivot_report_group_by_crosstab_and_guardrails():
         # Cross-tab: Stage spreads into its own output columns, with a
         # combination that has no matching rows (SCF x Stage 2) filled 0
         # rather than left out or null, since "sum" is in the zero-fill set.
-        crosstab = custom_pivot_report(df, ["system"], "stage", "ead", "sum")
+        crosstab = custom_pivot_report(df, ["system"], ["stage"], "ead", "sum")
         by_system = {r["system"]: r for r in crosstab.to_dicts()}
         assert by_system["OneLMS_TW"]["Stage 1"] == 100.0
         assert by_system["OneLMS_TW"]["Stage 2"] == 200.0
@@ -4587,9 +4587,37 @@ def test_custom_pivot_report_group_by_crosstab_and_guardrails():
             "SCF": 0,
         }
 
-        # Columns-field cardinality cap: a high-cardinality field picked as
-        # Columns must be rejected up front rather than silently producing
-        # a huge cross-tab.
+        # Multiple Rows fields (not capped at 2 -- the old UI's "Row 1"/
+        # "Row 2" pair was purely a template limit, the backend always
+        # accepted an arbitrary-length rows list).
+        multi_row_df = pl.DataFrame(
+            {
+                "system": ["OneLMS_TW", "OneLMS_TW", "SCF"],
+                "stage": ["Stage 1", "Stage 2", "Stage 1"],
+                "state": ["MH", "MH", "GJ"],
+                "ead": [10.0, 20.0, 30.0],
+            }
+        )
+        multi_row = custom_pivot_report(multi_row_df, ["system", "stage", "state"], None, "ead", "sum")
+        assert multi_row.height == 3
+        assert set(multi_row.columns) == {"system", "stage", "state", "ead_sum"}
+
+        # Multiple Columns fields: cross-tabs on the COMBINATION of both
+        # fields, with each output column cleanly named "val1 / val2"
+        # rather than polars' own '{"val1","val2"}' pivot() column-name
+        # format.
+        multi_col = custom_pivot_report(multi_row_df, ["system"], ["stage", "state"], "ead", "sum")
+        by_system = {r["system"]: r for r in multi_col.to_dicts()}
+        assert by_system["OneLMS_TW"]["Stage 1 / MH"] == 10.0
+        assert by_system["OneLMS_TW"]["Stage 2 / MH"] == 20.0
+        assert by_system["SCF"]["Stage 1 / GJ"] == 30.0
+
+        # Columns-field cardinality cap: checked against the COMBINED
+        # cross-tab (distinct combinations across every Columns field
+        # together), not each field's own distinct count -- two
+        # individually-low-cardinality fields can still combine into an
+        # unusably wide table. Also covers a single high-cardinality field
+        # the same way it always did.
         wide_df = pl.DataFrame(
             {
                 "system": ["OneLMS_TW"] * 300,
@@ -4598,7 +4626,18 @@ def test_custom_pivot_report_group_by_crosstab_and_guardrails():
             }
         )
         with pytest.raises(ValueError, match="too many to use as the Columns field"):
-            custom_pivot_report(wide_df, ["system"], "scheme_name", "ead", "sum")
+            custom_pivot_report(wide_df, ["system"], ["scheme_name"], "ead", "sum")
+
+        wide_combo_df = pl.DataFrame(
+            {
+                "system": ["OneLMS_TW"] * 300,
+                "stage": [f"S{i % 20}" for i in range(300)],
+                "state": [f"ST{i}" for i in range(300)],  # 300 distinct, forces 300 combos
+                "ead": [1.0] * 300,
+            }
+        )
+        with pytest.raises(ValueError, match="too many to use as the Columns field"):
+            custom_pivot_report(wide_combo_df, ["system"], ["stage", "state"], "ead", "sum")
 
         # No row fields at all -> clear error, not an unguarded group_by([]).
         with pytest.raises(ValueError, match="At least one row field"):
@@ -4610,10 +4649,14 @@ def test_custom_pivot_report_group_by_crosstab_and_guardrails():
 def test_ead_pivot_route_runs_and_downloads_through_real_app():
     """Functional test of the EAD Analytics "Pivot" form through the real
     route/middleware: upload + map a real EAD file, run a cross-tab pivot
-    (System rows x Stage columns, sum of EAD), and confirm the download
-    route recomputes the identical result from the same query-string
-    config it round-trips through (no persisted run_id for this feature,
-    same "recompute on demand" shape as the fixed summary reports).
+    with MULTIPLE Rows fields and MULTIPLE Columns fields (System + State
+    rows, cross-tabbed by Stage + Scheme Name, sum of EAD) -- covering the
+    multi-select UI change (rows/columns are now <select multiple>, so
+    the form posts several same-named fields for each), and confirm the
+    download route recomputes the identical result from the same
+    query-string config it round-trips through (no persisted run_id for
+    this feature, same "recompute on demand" shape as the fixed summary
+    reports).
     """
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
@@ -4634,10 +4677,10 @@ def test_ead_pivot_route_runs_and_downloads_through_real_app():
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = (
-            b"loan_id,system,stage,ead\n"
-            b"L1,OneLMS_TW,Stage 1,100.0\n"
-            b"L2,OneLMS_TW,Stage 2,200.0\n"
-            b"L3,SCF,Stage 1,50.0\n"
+            b"loan_id,system,stage,scheme_name,state,ead\n"
+            b"L1,OneLMS_TW,Stage 1,ProdA,MH,100.0\n"
+            b"L2,OneLMS_TW,Stage 2,ProdB,MH,200.0\n"
+            b"L3,SCF,Stage 1,ProdA,GJ,50.0\n"
         )
         with TestClient(loan_main.app) as client:
             resp = client.post(
@@ -4653,18 +4696,30 @@ def test_ead_pivot_route_runs_and_downloads_through_real_app():
 
             resp = client.post(
                 f"/dashboard/uploads/{upload_id}/map-columns",
-                data={"map_loan_id": "loan_id", "map_system": "system", "map_stage": "stage", "map_ead": "ead"},
+                data={
+                    "map_loan_id": "loan_id",
+                    "map_system": "system",
+                    "map_stage": "stage",
+                    "map_scheme_name": "scheme_name",
+                    "map_state": "state",
+                    "map_ead": "ead",
+                },
                 follow_redirects=False,
             )
             assert resp.status_code == 303
 
             resp = client.post(
                 "/dashboard/analytics/ead/pivot",
-                data={"rows": ["system"], "columns": "stage", "value_field": "ead", "agg": "sum"},
+                data={
+                    "rows": ["system", "state"],
+                    "columns": ["stage", "scheme_name"],
+                    "value_field": "ead",
+                    "agg": "sum",
+                },
                 follow_redirects=False,
             )
             assert resp.status_code == 200
-            assert "Stage 1" in resp.text
+            assert "Stage 1 / ProdA" in resp.text
             assert "100" in resp.text and "200" in resp.text
 
             import html
@@ -4678,7 +4733,7 @@ def test_ead_pivot_route_runs_and_downloads_through_real_app():
             download_url = html.unescape(match.group(1))
             dl_resp = client.get(download_url)
             assert dl_resp.status_code == 200
-            assert "Stage 1" in dl_resp.text
+            assert "Stage 1 / ProdA" in dl_resp.text
             assert "100.0" in dl_resp.text
 
             # Missing required Row field -> clean 400, not a 500.

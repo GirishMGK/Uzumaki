@@ -66,6 +66,17 @@ _templates_dir = Path(__file__).parent.parent / "web" / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
 
 
+def _smart_title(text: str) -> str:
+    """Capitalize each word's first letter without lowercasing the rest,
+    so mixed-case values like "ProdA" survive unlike str.title()."""
+    return "".join(
+        c.upper() if c.isalpha() and (i == 0 or not text[i - 1].isalpha()) else c for i, c in enumerate(text)
+    )
+
+
+templates.env.filters["smart_title"] = _smart_title
+
+
 def _consolidated_ead_df(engagement_id: str | None) -> pl.DataFrame:
     return store.build_consolidated_df(engagement_id, "ead_files")
 
@@ -411,12 +422,12 @@ async def ead_summary_download(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def _pivot_title(rows: list[str], columns: str | None, value_field: str, agg: str) -> str:
+def _pivot_title(rows: list[str], columns: list[str], value_field: str, agg: str) -> str:
     rows_label = " + ".join(r.replace("_", " ").title() for r in rows)
     agg_label = agg.replace("_", " ").title()
     title = f"Pivot: {rows_label}"
     if columns:
-        title += f" x {columns.replace('_', ' ').title()}"
+        title += " x " + " + ".join(c.replace("_", " ").title() for c in columns)
     return f"{title} — {agg_label} of {value_field.replace('_', ' ').title()}"
 
 
@@ -424,7 +435,7 @@ def _pivot_title(rows: list[str], columns: str | None, value_field: str, agg: st
 async def ead_pivot_run(
     request: Request,
     rows: list[str] = Form(...),
-    columns: str = Form(""),
+    columns: list[str] = Form(default=[]),
     value_field: str = Form(...),
     agg: str = Form(...),
 ):
@@ -436,7 +447,7 @@ async def ead_pivot_run(
     clean_rows = [r for r in rows if r]
     if not clean_rows:
         raise HTTPException(status_code=400, detail="Pick at least one Row field.")
-    clean_columns = columns or None
+    clean_columns = [c for c in columns if c]
 
     try:
         result = custom_pivot_report(df, clean_rows, clean_columns, value_field, agg)
@@ -444,7 +455,9 @@ async def ead_pivot_run(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     params = urllib.parse.urlencode(
-        [("rows", r) for r in clean_rows] + [("columns", clean_columns or ""), ("value_field", value_field), ("agg", agg)]
+        [("rows", r) for r in clean_rows]
+        + [("columns", c) for c in clean_columns]
+        + [("value_field", value_field), ("agg", agg)]
     )
 
     return templates.TemplateResponse(
@@ -464,7 +477,7 @@ async def ead_pivot_run(
 async def ead_pivot_download(
     request: Request,
     rows: list[str] = Query(...),
-    columns: str = Query(""),
+    columns: list[str] = Query(default=[]),
     value_field: str = Query(...),
     agg: str = Query(...),
 ):
@@ -476,7 +489,7 @@ async def ead_pivot_download(
     clean_rows = [r for r in rows if r]
     if not clean_rows:
         raise HTTPException(status_code=400, detail="Pick at least one Row field.")
-    clean_columns = columns or None
+    clean_columns = [c for c in columns if c]
 
     try:
         result = custom_pivot_report(df, clean_rows, clean_columns, value_field, agg)
