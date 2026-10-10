@@ -3639,6 +3639,220 @@ def test_map_columns_form_computes_fuzzy_scores_only_once():
                 del sys.modules[mod]
 
 
+# ── fcmr_core/schema_import.py + Settings "Column Mapping Overrides" ───────
+def test_schema_import_classifies_rows_against_the_live_schema():
+    """Unit test of parse_mapping_workbook()'s classification against a
+    real report type's current schema (ead_files), covering every status
+    it can produce: a row whose raw header is already a known alias
+    ("already_known"), a row whose Output Name is already a known
+    canonical/alias but under a new raw spelling ("new_alias"), a row
+    recognising neither side at all ("new_field", canonical slugified
+    from Output Name), a row with Include=FALSE (dropped entirely), and
+    a row whose Nature string doesn't resolve to any report type
+    ("unresolved_nature") -- the exact shape of the client's own master
+    schema file (DataSet/Nature/Include/Source Column/Output Name/Type/
+    Nullable/Date Format).
+    """
+    pytest.importorskip("openpyxl")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        import io
+
+        import openpyxl
+
+        from fcmr_core.catalog import store as catalog_store
+        from fcmr_core.schema_import import parse_mapping_workbook
+
+        catalog_store.init_catalog()
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["DataSet", "Nature", "Include", "Source Column", "Output Name", "Type", "Nullable", "Date Format"])
+        # Already a known alias of ead_files' loan_id (see ead_files.yaml).
+        ws.append(["EAD", "EAD", "TRUE", "AgreementNo", "AgreementNo", "String", "FALSE", None])
+        # New raw spelling of a known field (entity) -- teaches a new alias.
+        ws.append(["EAD", "EAD", "TRUE", "Entity Code", "Entity", "String", "TRUE", None])
+        # Recognised by neither side -- a genuinely new field.
+        ws.append(["EAD", "EAD", "TRUE", "Risk Grade Code", "Risk Grade", "String", "TRUE", None])
+        # Include=FALSE -- dropped entirely, shouldn't appear in results at all.
+        ws.append(["EAD", "EAD", "FALSE", "Internal Notes", "Internal Notes", "String", "TRUE", None])
+        # Unrecognized Nature.
+        ws.append(["XYZ", "Some Unknown Nature", "TRUE", "Foo", "Bar", "String", "TRUE", None])
+        xlsx_buf = io.BytesIO()
+        wb.save(xlsx_buf)
+        xlsx_buf.seek(0)
+
+        rows = parse_mapping_workbook(xlsx_buf)
+
+        by_source = {r.source_column: r for r in rows}
+        assert "Internal Notes" not in by_source, "Include=FALSE row should be dropped, not just flagged"
+
+        assert by_source["AgreementNo"].status == "already_known"
+        assert by_source["AgreementNo"].report_type == "ead_files"
+        assert by_source["AgreementNo"].canonical == "loan_id"
+
+        assert by_source["Entity Code"].status == "new_alias"
+        assert by_source["Entity Code"].canonical == "entity"
+        assert by_source["Entity Code"].required is False  # Nullable=TRUE in this row
+
+        assert by_source["AgreementNo"].required is True  # Nullable=FALSE in that row
+
+        assert by_source["Risk Grade Code"].status == "new_field"
+        assert by_source["Risk Grade Code"].canonical == "risk_grade"
+
+        assert by_source["Foo"].status == "unresolved_nature"
+        assert by_source["Foo"].report_type is None
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_column_alias_override_store_roundtrip_dedup_and_schema_merge():
+    """fcmr_core.catalog.store's column_alias_overrides CRUD, plus the
+    schemas.loader.get_schema() merge that makes a committed override
+    actually usable: a new alias for an existing canonical becomes an
+    exact (score 1.0) match via map_headers_with_scores(), and a
+    brand-new field shows up in get_canonical_fields() like any
+    YAML-defined one -- with no app restart or cache invalidation, since
+    get_schema() re-reads overrides from the DB on every call.
+    """
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        from fcmr_core.catalog import store as catalog_store
+        from fcmr_core.schemas.loader import get_canonical_fields, get_schema
+
+        catalog_store.init_catalog()
+
+        rows = [
+            {"report_type": "ead_files", "canonical": "entity", "alias": "Entity Code Override", "is_new_field": False},
+            {"report_type": "ead_files", "canonical": "risk_grade_test", "alias": "Risk Grade Code Override",
+             "is_new_field": True, "dtype": "str", "required": False},
+        ]
+        inserted = catalog_store.add_column_alias_overrides_batch(rows, created_by="test-admin")
+        assert inserted == 2
+
+        # Re-inserting the exact same rows is a no-op, not an error.
+        inserted_again = catalog_store.add_column_alias_overrides_batch(rows, created_by="test-admin")
+        assert inserted_again == 0
+
+        listed = catalog_store.list_column_alias_overrides("ead_files")
+        assert {r["alias"] for r in listed} == {"Entity Code Override", "Risk Grade Code Override"}
+
+        schema = get_schema("ead_files")
+        scored = schema.map_headers_with_scores(["Entity Code Override", "Risk Grade Code Override"])
+        assert scored["Entity Code Override"] == ("entity", 1.0)
+        assert scored["Risk Grade Code Override"] == ("risk_grade_test", 1.0)
+
+        canonical_names = {c.canonical for c in get_canonical_fields("ead_files")}
+        assert "risk_grade_test" in canonical_names  # the new field is visible like any YAML-defined one
+
+        for ov in listed:
+            catalog_store.delete_column_alias_override(ov["override_id"])
+        assert catalog_store.list_column_alias_overrides("ead_files") == []
+        # Deleted -- the merge falls back to the base YAML schema again.
+        assert "risk_grade_test" not in {c.canonical for c in get_canonical_fields("ead_files")}
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
+def test_settings_schema_overrides_preview_and_commit_through_real_routes():
+    """Functional test of the Settings "Column Mapping Overrides" Excel
+    import through the real app: upload a sheet with one new-alias row
+    and one new-field row, confirm the preview page correctly diffs them
+    against the live schema, commit the selection, then confirm a
+    brand-new upload's Column Mapping page immediately auto-matches the
+    newly-taught alias -- no restart, no re-ingest of anything else.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    pytest.importorskip("openpyxl")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+        import io
+        import re as re_mod
+
+        import openpyxl
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["DataSet", "Nature", "Include", "Source Column", "Output Name", "Type", "Nullable", "Date Format"])
+        ws.append(["EAD", "EAD", "TRUE", "Entity Code New", "Entity", "String", "TRUE", None])
+        xlsx_buf = io.BytesIO()
+        wb.save(xlsx_buf)
+
+        with TestClient(loan_main.app) as client:
+            resp = client.post(
+                "/settings/schema-overrides/preview",
+                files=[("file", ("overrides.xlsx", xlsx_buf.getvalue(),
+                                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))],
+            )
+            assert resp.status_code == 200
+            assert "Entity Code New" in resp.text
+            assert "ead_files" in resp.text
+            match = re_mod.search(r'name="import_id" value="([^"]+)"', resp.text)
+            assert match, "preview page did not carry an import_id to commit"
+            import_id = match.group(1)
+
+            resp = client.post(
+                "/settings/schema-overrides/commit",
+                data={"import_id": import_id, "row_num": ["2"]},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 200
+            assert "Added 1 column mapping override" in resp.text
+            assert "Entity Code New" in resp.text  # now listed on the settings page itself
+
+            # A fresh upload's mapping page should now auto-match it.
+            csv_bytes = b"Entity Code New,AgreementNo\nACME Corp,AG-100\n"
+            resp = client.post(
+                "/dashboard/upload",
+                data={"report_type": "ead_files"},
+                files=[("files", ("override_check.csv", csv_bytes, "text/csv"))],
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303
+
+            from fcmr_core.catalog import store as catalog_store
+            upload_id = next(
+                u["upload_id"] for u in catalog_store.list_uploads() if u["filename"] == "override_check.csv"
+            )
+            resp = client.get(f"/dashboard/uploads/{upload_id}/map-columns")
+            assert resp.status_code == 200
+            assert 'data-canonical="entity"' in resp.text
+            # The auto-selected option for the "entity" row's dropdown must be the new header.
+            entity_row = resp.text[resp.text.index('data-canonical="entity"'):]
+            select_block = entity_row[: entity_row.index("</select>")]
+            assert 'value="Entity Code New" data-header="Entity Code New" selected' in select_block.replace("\n", " ")
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── ead_consolidator.py: colliding rename no longer crashes ─────────────────
 def test_ead_consolidator_rejects_a_rename_that_would_duplicate_a_column():
     """

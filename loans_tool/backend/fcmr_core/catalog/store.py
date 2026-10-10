@@ -201,6 +201,29 @@ def init_catalog() -> None:
             except Exception:
                 pass  # Already seeded
 
+        # Column-alias overrides -- Settings' "Column Mapping Overrides"
+        # Excel import (fcmr_core.schema_import). Lets a new raw-header
+        # spelling (or, rarely, a brand-new canonical field) be taught to
+        # an existing report type's schema without a code change: picked
+        # up live by schemas.loader.get_schema(), merged on top of that
+        # report type's base YAML. Global, not engagement-scoped, like
+        # system_type_map above -- a source system's header spelling for
+        # "Agreement No" doesn't vary by engagement.
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS column_alias_overrides (
+                override_id   TEXT PRIMARY KEY,
+                report_type   TEXT NOT NULL,
+                canonical     TEXT NOT NULL,
+                alias         TEXT NOT NULL,
+                is_new_field  BOOLEAN NOT NULL DEFAULT FALSE,
+                dtype         TEXT,
+                required      BOOLEAN,
+                created_by    TEXT,
+                created_at    TEXT NOT NULL,
+                UNIQUE (report_type, canonical, alias)
+            )
+        """)
+
         # Create a default engagement for existing uploads
         try:
             con.execute(
@@ -760,6 +783,68 @@ def set_system_type(system_value: str, type_value: str) -> None:
             "ON CONFLICT(system_value) DO UPDATE SET type_value=?, created_at=?",
             [system_value, type_value, _now(), type_value, _now()],
         )
+
+
+_OVERRIDE_COLUMNS = (
+    "override_id", "report_type", "canonical", "alias", "is_new_field", "dtype", "required", "created_by", "created_at",
+)
+
+
+def list_column_alias_overrides(report_type: str | None = None) -> list[dict]:
+    """All committed column-alias overrides, optionally filtered to one
+    report type. Used both by schemas.loader.get_schema() (merges these
+    on top of that report type's base YAML) and by the Settings page
+    (lists what's been added, for review/delete)."""
+    cols_sql = ", ".join(_OVERRIDE_COLUMNS)
+    with _conn() as con:
+        if report_type:
+            rows = con.execute(
+                f"SELECT {cols_sql} FROM column_alias_overrides WHERE report_type=? ORDER BY canonical, alias",
+                [report_type],
+            ).fetchall()
+        else:
+            rows = con.execute(
+                f"SELECT {cols_sql} FROM column_alias_overrides ORDER BY report_type, canonical, alias"
+            ).fetchall()
+    return [dict(zip(_OVERRIDE_COLUMNS, r)) for r in rows]
+
+
+def add_column_alias_overrides_batch(rows: list[dict], created_by: str) -> int:
+    """Insert new (report_type, canonical, alias) override rows, skipping
+    any that already exist (same uniqueness the table enforces) instead
+    of erroring -- re-committing an import preview that overlaps a
+    previous one, or re-uploading the same sheet twice, is a normal
+    workflow, not a conflict to surface. Returns the number actually
+    inserted."""
+    inserted = 0
+    with _conn() as con:
+        for r in rows:
+            try:
+                con.execute(
+                    "INSERT INTO column_alias_overrides "
+                    "(override_id, report_type, canonical, alias, is_new_field, dtype, required, created_by, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [
+                        str(uuid.uuid4()),
+                        r["report_type"],
+                        r["canonical"],
+                        r["alias"],
+                        bool(r.get("is_new_field", False)),
+                        r.get("dtype"),
+                        r.get("required"),
+                        created_by,
+                        _now(),
+                    ],
+                )
+                inserted += 1
+            except duckdb.ConstraintException:
+                pass  # already exists -- not an error
+    return inserted
+
+
+def delete_column_alias_override(override_id: str) -> None:
+    with _conn() as con:
+        con.execute("DELETE FROM column_alias_overrides WHERE override_id=?", [override_id])
 
 
 _EAD_DELAY_DEFAULT_KEY = "ead_sanction_disbursal_default_days"
