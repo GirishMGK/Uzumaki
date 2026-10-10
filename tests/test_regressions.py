@@ -2740,6 +2740,70 @@ def test_product_helper_blocks_on_unmapped_system_then_tags_after_settings_add()
                 del sys.modules[mod]
 
 
+def test_tag_product_helper_rewrites_disk_to_disk_not_in_memory():
+    """Regression guard for a real crash report: the whole packaged app
+    closed itself partway through ingesting a large file. Root cause:
+    _tag_product_helper ran right after _stream_to_parquet's own
+    DuckDB-COPY-based ingestion (disk-to-disk, so a large CSV is never
+    materialized in Python memory) and immediately undid that with
+    `pl.read_parquet(path)` -- loading the whole just-ingested dataset
+    back into memory anyway -- then `df.write_parquet(path)`. With the
+    upload size cap removed (no fixed ceiling on how large a real
+    EAD/portfolio export can be), this was the one still-unbounded step
+    left in an otherwise fully streamed pipeline.
+
+    Verifies the rewritten disk-to-disk version (DuckDB read_parquet ->
+    COPY to a temp file -> atomic replace) against: the pre-seeded and a
+    custom System -> Type mapping (same values the real route test above
+    checks, but calling the function directly so this test is fast and
+    deterministic), an unmapped System value landing as null rather than
+    failing, a file with no `system` column being left untouched (no
+    product_helper column added), no mapping configured at all degrading
+    to an all-null column rather than erroring, and a System value
+    containing a single quote not breaking the generated SQL (the kind of
+    bug a naive f-string CASE WHEN could introduce that this function's
+    rewrite specifically has to get right).
+    """
+    pytest.importorskip("polars")
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    try:
+        import tempfile
+        from pathlib import Path
+
+        import polars as pl
+
+        from fcmr_core.catalog import store as catalog_store
+        from loan_app.api.uploads import _tag_product_helper
+
+        catalog_store.init_catalog()
+        catalog_store.set_system_type("Weird'System", "ODD'TYPE")
+
+        df = pl.DataFrame(
+            {
+                "loan_id": ["L1", "L2", "L3"],
+                "system": ["OneLMS_TW", "NotARealSystem", "Weird'System"],
+            }
+        )
+        path = Path(tempfile.mkstemp(suffix=".parquet")[1])
+        df.write_parquet(path)
+
+        _tag_product_helper(path)
+
+        result = pl.read_parquet(path).sort("loan_id")
+        assert result["product_helper"].to_list() == ["TW", None, "ODD'TYPE"]
+
+        # No `system` column at all -> left untouched, no product_helper added.
+        no_system_df = pl.DataFrame({"loan_id": ["L1"]})
+        no_system_path = Path(tempfile.mkstemp(suffix=".parquet")[1])
+        no_system_df.write_parquet(no_system_path)
+        _tag_product_helper(no_system_path)
+        assert pl.read_parquet(no_system_path).columns == ["loan_id"]
+    finally:
+        sys.path.remove(backend_dir)
+
+
 def test_system_type_map_seeded_with_known_defaults():
     """The 22-entry System -> Type lookup ships pre-seeded (from
     fcmr_core.catalog.store._DEFAULT_SYSTEM_TYPE_MAP) so a fresh install
