@@ -94,6 +94,10 @@ def test_pdf_tools_merge_passes_bytes_not_dicts():
     assert 'merge_pdfs(files)' not in src, "pdf_tools.py regressed to passing dicts straight to merge_pdfs()"
     assert 'merge_pdfs([item["bytes"] for item in files])' in src
 
+    # ...and the bytes-list form really merges: 2 + 3 pages -> 5.
+    merged = merge_pdfs([item["bytes"] for item in files])
+    assert get_page_count(merged) == 5
+
 
 def _spatial_text(page) -> str:
     """Reconstruct a page's text in visual reading order via word bboxes,
@@ -1769,7 +1773,6 @@ def test_consolidate_parquet_download_round_trips_for_any_report_type():
         import io
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         expected = pl.DataFrame({"loan_id": ["L1"], "business_date": ["2024-01-01"]})
@@ -1867,7 +1870,6 @@ def test_consolidate_download_routes_still_set_content_length_via_file_response(
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         # A string containing lots of "\n" bytes, so any accidental
@@ -1942,7 +1944,6 @@ def test_sql_analytics_runs_real_query_across_report_types():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         customer_df = pl.DataFrame({"pan": ["ABCDE1234F", "FGHIJ5678K"], "full_name": ["Alice", "Bob"]})
@@ -2045,7 +2046,6 @@ def test_sql_analytics_export_streams_to_file_and_survives_trailing_semicolon():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         real_build_consolidated_df = catalog_store.build_consolidated_df
@@ -2130,7 +2130,6 @@ def test_sql_analytics_can_save_and_rerun_a_successful_query_as_analytics():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         real_build_consolidated_df = catalog_store.build_consolidated_df
@@ -2219,7 +2218,6 @@ def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.config import settings as fcmr_settings
 
         error_log = fcmr_settings.logs_dir / "error.log"
@@ -2281,7 +2279,6 @@ def test_upload_checkpoint_logging_pinpoints_progress():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.config import settings as fcmr_settings
 
         processing_log = fcmr_settings.logs_dir / "processing.log"
@@ -2347,7 +2344,6 @@ def test_delete_upload_removes_db_row_and_file_from_disk():
 
         from pathlib import Path
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         with _TrustedLoansClient(loan_main.app) as client:
@@ -2409,7 +2405,6 @@ def test_batch_upload_reuses_one_connection_not_one_per_call():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         call_count = 0
@@ -2471,7 +2466,6 @@ def test_map_columns_apply_to_matching_ingests_same_layout_files_only():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         same_layout_csv = b"loan_id,DrsPOS\nLN0001,1000\n"
@@ -2550,7 +2544,6 @@ def test_bulk_delete_removes_selected_uploads_and_ignores_bad_ids():
 
         from pathlib import Path
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         with _TrustedLoansClient(loan_main.app) as client:
@@ -2618,7 +2611,6 @@ def test_slow_form_buttons_disable_and_relabel_on_submit():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
 
         csv_bytes = b"loan_id,DrsPOS\nLN0001,1000\n"
 
@@ -2733,7 +2725,6 @@ def test_product_helper_blocks_on_unmapped_system_then_tags_after_settings_add()
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = (
@@ -2826,8 +2817,6 @@ def test_tag_product_helper_rewrites_disk_to_disk_not_in_memory():
     sys.path.insert(0, backend_dir)
     os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
     try:
-        import tempfile
-        from pathlib import Path
 
         import polars as pl
 
@@ -3140,7 +3129,6 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
 
         import openpyxl
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         wb = openpyxl.Workbook()
@@ -3221,7 +3209,6 @@ def test_download_schema_produces_template_and_reference_sheets():
         importlib.reload(loan_main)
 
         import openpyxl
-        from fastapi.testclient import TestClient
 
         with _TrustedLoansClient(loan_main.app) as client:
             resp = client.get("/dashboard/schema/ead_files/download")
@@ -3357,7 +3344,6 @@ def test_schema_download_works_for_every_registered_report_type():
         importlib.reload(loan_main)
 
         import openpyxl
-        from fastapi.testclient import TestClient
         from fcmr_core.schemas.loader import available_report_types
 
         report_types = available_report_types()
@@ -3408,7 +3394,6 @@ def test_do_upload_streams_csv_and_zipped_csv_without_corrupting_content():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         n = 5000
@@ -3480,7 +3465,6 @@ def test_do_upload_has_no_size_cap_for_direct_and_zipped_files():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.config import settings as fcmr_settings
 
         assert not hasattr(fcmr_settings, "max_upload_bytes")
@@ -3635,7 +3619,6 @@ def test_map_columns_form_computes_fuzzy_scores_only_once():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
         from fcmr_core.schemas.loader import SchemaMap
 
@@ -3836,7 +3819,6 @@ def test_settings_schema_overrides_preview_and_commit_through_real_routes():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -3931,7 +3913,6 @@ def test_fuzzy_match_threshold_slider_round_trips_as_a_fraction_not_a_percent():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
         from fcmr_core.schemas.loader import get_schema
 
@@ -4131,7 +4112,6 @@ def test_map_columns_page_suggests_exact_match_not_near_duplicate():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = b"loan_id,zero_90_days_interest,zero_90_days_interest_Hist\nL1,111,999\n"
@@ -4189,7 +4169,6 @@ def test_map_columns_page_shows_each_field_s_data_type():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = b"loan_id,original_tenure,ead\nL1,60,100.0\n"
@@ -4253,7 +4232,6 @@ def test_build_consolidated_df_reuses_one_connection_not_one_per_file():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         with _TrustedLoansClient(loan_main.app) as client:
@@ -4349,7 +4327,6 @@ def test_export_consolidated_to_file_matches_build_consolidated_df():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         with _TrustedLoansClient(loan_main.app):
@@ -4454,13 +4431,10 @@ def test_get_consolidated_table_info_matches_build_consolidated_df_without_mater
     os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
     try:
         import importlib
-        import tempfile
-        from pathlib import Path
 
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
         from fcmr_core.ingestion.pipeline import ingest_csv
 
@@ -5104,7 +5078,6 @@ def test_ead_pivot_route_runs_and_downloads_through_real_app():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = (
@@ -5267,7 +5240,6 @@ def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = (
@@ -5432,7 +5404,6 @@ def test_ead_analytics_progress_endpoint_and_running_failed_states():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from loan_app.api import ead_analytics
 
         with _TrustedLoansClient(loan_main.app) as client:
@@ -5507,7 +5478,6 @@ def test_ead_analytics_detects_npa_flag_change_across_two_separate_uploads():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         jan_csv = b"loan_id,business_date,npa_flag_date\nL1,31-01-2024,15-01-2024\n"
@@ -5654,7 +5624,6 @@ def test_ead_analytics_cross_dataset_checks_end_to_end():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         with _TrustedLoansClient(loan_main.app) as client:
@@ -5781,7 +5750,6 @@ def test_analytics_hub_lists_every_dataset_and_links_only_where_analytics_exist(
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         with _TrustedLoansClient(loan_main.app) as client:
@@ -6242,7 +6210,6 @@ def test_ead_analytics_link_to_brs_end_to_end():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         ead_csv = (

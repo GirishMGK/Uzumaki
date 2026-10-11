@@ -10,6 +10,17 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Same version as requirements-dev.lock.
+      - run: pip install ruff==0.17.0
+      - run: ruff check .
+
   test:
     # The product ships as a Windows .exe, so Windows is the platform that
     # matters most; Linux stays in the matrix to keep from-source runs honest.

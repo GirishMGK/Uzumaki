@@ -24,9 +24,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import json
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from utils.column_mapper import get_safe_series, get_safe_numeric, safe_str
+from datetime import timedelta
+from utils.column_mapper import get_safe_series, safe_str
 from utils.doc_type_classifier import get_types_for_category
 from utils.duckdb_helper import slim_df, duck_con, fetch_idx
 
@@ -128,12 +127,9 @@ def run_timing_rowlevel(chunk: pd.DataFrame, col_map: dict, params: dict) -> lis
     if entry_date.isna().all():
         entry_date = posting_date.copy()
 
-    narr      = (safe_str(get_safe_series(chunk, "text",               col_map)) + " " +
-                 safe_str(get_safe_series(chunk, "gl_desc",            col_map)))
     reversal  = safe_str(get_safe_series(chunk, "reversal_indicator",  col_map))
     dc        = safe_str(get_safe_series(chunk, "dc_indicator",        col_map))
     doc_type  = safe_str(get_safe_series(chunk, "doc_type",            col_map))
-    abs_amt   = get_safe_numeric(chunk, "amount", col_map).abs()
 
     year_end_raw = params.get("year_end_date") or params.get("end_date")
     sys_lock_raw = params.get("system_lock_date")
@@ -315,7 +311,6 @@ def run_timing_aggregation(df: pd.DataFrame, col_map: dict, params: dict) -> lis
     user_id  = safe_str(get_safe_series(df, "user_id",            col_map))
 
     burst_thresh = int(params.get("burst_posting_threshold", 30))
-    spike_days   = int(params.get("revenue_spike_days", 5))
     year_end_raw = params.get("year_end_date") or params.get("end_date")
     try:
         yed = pd.Timestamp(year_end_raw) if year_end_raw else None

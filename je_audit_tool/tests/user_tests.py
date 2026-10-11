@@ -22,7 +22,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import re
 import json
 import pandas as pd
-import numpy as np
 from utils.column_mapper import get_safe_series, get_safe_numeric, safe_str
 from utils.doc_type_classifier import get_types_for_category
 from utils.duckdb_helper import slim_df, duck_con, fetch_idx
@@ -251,7 +250,6 @@ def run_user_aggregation(df: pd.DataFrame, col_map: dict, params: dict) -> list:
     exceptions: list = []
 
     user_id     = safe_str(get_safe_series(df, "user_id",    col_map))
-    approval_id = safe_str(get_safe_series(df, "approval_id",col_map))
     doc_number  = safe_str(get_safe_series(df, "doc_number", col_map))
     posting_date= pd.to_datetime(get_safe_series(df, "posting_date", col_map), errors="coerce")
     abs_amt     = get_safe_numeric(df, "amount", col_map).abs()

@@ -317,7 +317,6 @@ def bench_and_availability(db: Session, date_from: date, date_to: date, f: Repor
     """RP-06: staff, available from, available days, grade, skills, base office, last engagement."""
     from app.models.capacity import CapacityDaily
 
-    staff_by_id = _staff_lookup(db)
     office_by_id = _office_lookup(db)
 
     stmt = select(Staff).where(Staff.is_active == True)  # noqa: E712

@@ -9,7 +9,6 @@ Features:
 """
 
 import base64
-import io
 import os
 import sys
 
@@ -886,12 +885,6 @@ def build_sidebar() -> None:
         st.markdown("---")
 
         for label, page_key in PAGES.items():
-            active = st.session_state.page == page_key
-            btn_style = (
-                "background:#3a86ff;color:white;border-radius:8px;"
-                if active
-                else ""
-            )
             if st.button(
                 label,
                 key=f"nav_{page_key}",

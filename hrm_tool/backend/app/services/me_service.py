@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 from app.models.allocation import Allocation, NonAvailability, Timesheet
 from app.models.client import Client
 from app.models.engagement import Engagement
-from app.models.enums import AllocationStatus, TimesheetStatus
+from app.models.enums import AllocationStatus
 from app.models.staff import Staff
 
 

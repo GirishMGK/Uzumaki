@@ -21,7 +21,6 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import pandas as pd
-import numpy as np
 from utils.column_mapper import get_safe_series, get_safe_numeric, safe_str
 from utils.doc_type_classifier import get_types_for_category
 from utils.duckdb_helper import slim_df, duck_con, fetch_idx
@@ -64,16 +63,14 @@ def run_amount_rowlevel(chunk: pd.DataFrame, col_map: dict, params: dict) -> lis
 
     amt     = get_safe_numeric(chunk, "amount", col_map)
     abs_amt = amt.abs()
-    narr    = (
-        safe_str(get_safe_series(chunk, "text",    col_map)) + " " +
-        safe_str(get_safe_series(chunk, "gl_desc", col_map))
-    )
 
     materiality    = float(params.get("overall_materiality",     1_000_000))
     perf_mat       = float(params.get("performance_materiality", materiality * 0.75))
     approval_limit = float(params.get("approval_limit",           500_000))
     # _hv_thresh precomputed from full df by app.py; fall back to perf_mat * 0.1
-    hv_thresh      = float(params.get("_hv_thresh", perf_mat * 0.1))
+    # TODO: unused -- check 3 below flags at performance materiality instead.
+    # Decide which threshold is intended before wiring this in or removing it.
+    hv_thresh      = float(params.get("_hv_thresh", perf_mat * 0.1))  # noqa: F841
 
     # ── 3. High-Value Entries (≥ Performance Materiality) ────────────────────
     exceptions.extend(_exc(
@@ -131,8 +128,6 @@ def run_amount_aggregation(df: pd.DataFrame, col_map: dict, params: dict) -> lis
     invoice_ref  = safe_str(get_safe_series(df, "invoice_ref",  col_map))
     doc_type_s   = safe_str(get_safe_series(df, "doc_type",     col_map))
 
-    materiality    = float(params.get("overall_materiality",      1_000_000))
-    overall_mat    = materiality
     approval_limit = float(params.get("approval_limit",            500_000))
 
     dt_map      = params.get("doc_type_map", {})

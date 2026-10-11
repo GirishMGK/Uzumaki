@@ -2,7 +2,7 @@ import uuid
 
 from pydantic import BaseModel
 
-from app.models.enums import DayFraction, NonAvailabilityStatus, NonAvailabilityType
+from app.models.enums import DayFraction, NonAvailabilityType
 
 
 class NonAvailabilityCreate(BaseModel):

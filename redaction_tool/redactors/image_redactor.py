@@ -25,7 +25,7 @@ def redact_image(
 ) -> tuple:
     """Returns (total_count, audit_entries)."""
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
     except ImportError:
         raise ImportError(
             "Pillow is required for image redaction.\n"

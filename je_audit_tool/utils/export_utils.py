@@ -4,10 +4,8 @@ Uses xlsxwriter via pd.ExcelWriter for full formatting control.
 """
 from __future__ import annotations
 import io
-import re
 from datetime import datetime
 import pandas as pd
-import numpy as np
 
 
 # ── Color palette ─────────────────────────────────────────────────────────────

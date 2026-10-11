@@ -17,9 +17,7 @@ from __future__ import annotations
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import re
 import pandas as pd
-import numpy as np
 from utils.column_mapper import get_safe_series, get_safe_numeric, safe_str
 from utils.doc_type_classifier import get_types_for_category
 from utils.vendor_master import (

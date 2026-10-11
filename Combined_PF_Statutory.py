@@ -9,7 +9,6 @@ import streamlit as st
 import pdfplumber
 import pandas as pd
 import re
-import datetime
 import zipfile
 import os
 import sys
@@ -22,7 +21,6 @@ from common.statutory_extractors import (
     read_pdf_text as _read_pdf_text,
     g,
     g_last,
-    period_from_filename,
     detect_statutory_type,
     extract_tds,
     extract_gstr1,
@@ -501,7 +499,6 @@ def extract_pt(fn, text):
             "Grand Total": g_last(r"Grand Total\s+([\d,]+)", text) or g_last(r"Grand Total\s*:\s*([\d,]+)", text)}
 
 def process_statutory_pdf(file_name, file_bytes, state_prefix="stat_"):
-    import traceback
     try:
         text = _read_pdf_text(file_bytes)
         if len(text.strip()) < 50:
@@ -520,7 +517,6 @@ def process_statutory_pdf(file_name, file_bytes, state_prefix="stat_"):
             preview = text.strip()[:200].replace("\n", " ")
             st.session_state[state_prefix + "failed"].append(f"{file_name} — Unrecognised. Preview: «{preview}»")
     except Exception as e:
-        tb = traceback.format_exc().splitlines()
         st.session_state[state_prefix + "failed"].append(f"{file_name} — {type(e).__name__}: {e}")
 
 # ── session state init ────────────────────────────────────────────────────────

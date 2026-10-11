@@ -1,7 +1,7 @@
 """API coverage for POST /engagements/{id}/roll-forward (P10)."""
 from app.models.allocation import Allocation
 from app.models.enums import AllocationRole, AllocationStatus
-from app.models.enums import Designation, StaffCategory, UserRole
+from app.models.enums import UserRole
 from tests.conftest import auth_headers, make_user
 from tests.factories import make_client, make_department, make_engagement, make_staff
 

@@ -114,7 +114,8 @@ def match_statement_to_books(
         candidates = stmt[(~stmt["_matched"]) & ((stmt["Amount"] - brow["Amount"]).abs() <= 0.01)]
         if candidates.empty:
             continue
-        diffs = candidates["Date"].apply(lambda d: abs((d - brow["Date"]).days))
+        # The lambda runs immediately, within this iteration -- no late binding.
+        diffs = candidates["Date"].apply(lambda d: abs((d - brow["Date"]).days))  # noqa: B023
         within = candidates[diffs <= date_tolerance_days]
         if within.empty:
             continue

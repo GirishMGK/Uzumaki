@@ -27,7 +27,7 @@ import tempfile
 from flask import (Flask, request, render_template_string, send_file,
                    Response, jsonify, abort)
 
-from extract_soa import extract_loan, write_workbook, write_portfolio, to_num
+from extract_soa import extract_loan, write_workbook, write_portfolio
 from extract_rps import extract_rps, write_rps_workbook
 from reconcile import classify, reconcile_jobs, write_reconciliation_workbook
 

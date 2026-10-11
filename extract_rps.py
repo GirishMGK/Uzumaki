@@ -18,8 +18,7 @@ import sys
 import pdfplumber
 from openpyxl import Workbook
 
-from extract_soa import (style_header, autosize, to_num, TITLE_FONT,
-                         HDR_FILL, HDR_FONT)
+from extract_soa import (style_header, autosize, to_num)
 
 # ---- header field definitions (label regex must include up to the colon) ----
 CUST_BANK_FIELDS = [

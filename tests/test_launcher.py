@@ -382,7 +382,6 @@ def test_perform_update_and_restart_passes_progress_callback_through(monkeypatch
         return False  # fail fast, don't actually reach os._exit()
 
     with mock.patch.object(updater, "_download", side_effect=_fake_download):
-        marker = object()
         seen = []
         ok, message = updater.perform_update_and_restart(on_progress=lambda d, t: seen.append((d, t)))
 

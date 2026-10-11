@@ -14,7 +14,7 @@ def _setup(session):
 
 def test_self_service_create_submit_approve(client, session):
     _, _, engagement, staff = _setup(session)
-    staff_user = make_user(session, UserRole.STAFF, email="ts1@x.com", staff_id=staff.id)
+    make_user(session, UserRole.STAFF, email="ts1@x.com", staff_id=staff.id)
     staff_headers = auth_headers(client, "ts1@x.com")
 
     created = client.post(

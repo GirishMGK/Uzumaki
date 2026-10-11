@@ -9,11 +9,9 @@ import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 
 import io
-import json
 import math
 import pickle
-import random
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 
 # Path used to persist loaded data across server restarts / code changes
 _SESSION_CACHE = os.path.join(os.path.dirname(__file__), ".je_session_cache.pkl")
@@ -23,15 +21,13 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 from utils.data_loader        import (
-    load_single_file, load_multiple_files, get_file_stats,
-    load_excel_sheet, select_sheet,
+    get_file_stats,
     load_file_bytes, select_sheet_from_bytes,
 )
-from utils.column_mapper      import REQUIRED_FIELDS, auto_map_columns, get_safe_series, get_safe_numeric, safe_str
-from utils.risk_scoring       import calculate_transaction_risk, rank_users, RISK_SCORES, RISK_COLORS
+from utils.column_mapper      import REQUIRED_FIELDS, auto_map_columns
+from utils.risk_scoring       import calculate_transaction_risk, rank_users
 from utils.export_utils       import to_excel_report
 from utils.doc_type_classifier import (
     load_doc_type_master, build_category_map, default_type_df,
@@ -39,12 +35,11 @@ from utils.doc_type_classifier import (
 )
 from utils.vendor_master import (
     load_vendor_master, normalise_vendor_master, vendor_master_summary,
-    find_duplicate_vendors, get_msme_vendors, get_inactive_vendors,
-    get_vendor_created_dates, get_auto_column_mapping,
+    get_auto_column_mapping,
 )
-from tests.amount_tests    import run_amount_tests, run_amount_rowlevel, run_amount_aggregation
-from tests.timing_tests    import run_timing_tests, run_timing_rowlevel, run_timing_aggregation
-from tests.user_tests      import run_user_tests,   run_user_rowlevel,   run_user_aggregation
+from tests.amount_tests    import run_amount_rowlevel, run_amount_aggregation
+from tests.timing_tests    import run_timing_rowlevel, run_timing_aggregation
+from tests.user_tests      import run_user_rowlevel,   run_user_aggregation
 from tests.vendor_tests    import run_vendor_tests
 from tests.benford_test    import run_benford_test
 
@@ -928,7 +923,6 @@ def page_mapping():
     upload_cols = ["— Not Available —"] + df.columns.tolist()
     col_map     = st.session_state.col_map.copy()
 
-    items = list(REQUIRED_FIELDS.items())
     cols_per_row = 3
 
     # Group into sections for clarity
@@ -2024,7 +2018,7 @@ def page_data_explorer():
         _filter_col = _fc1.selectbox("Filter by column", ["(none)"] + all_cols, key="pe_filter_col")
         if _filter_col != "(none)":
             _unique_vals = sorted(work_df[_filter_col].dropna().astype(str).unique().tolist())
-            _sel_vals = _fc2.multiselect(f"Keep values", _unique_vals, default=_unique_vals, key="pe_filter_vals")
+            _sel_vals = _fc2.multiselect("Keep values", _unique_vals, default=_unique_vals, key="pe_filter_vals")
             if _sel_vals:
                 work_df = work_df[work_df[_filter_col].astype(str).isin(_sel_vals)]
         st.caption(f"Rows after filter: **{len(work_df):,}**")
@@ -2076,7 +2070,7 @@ def page_data_explorer():
             )
             # Flatten multi-level column headers if present
             if isinstance(pivot.columns, pd.MultiIndex):
-                pivot.columns = [" | ".join(str(c) for c in col).strip(" | ") for col in pivot.columns]
+                pivot.columns = [" | ".join(str(c) for c in col).strip(" |") for col in pivot.columns]
             pivot = pivot.reset_index()
 
             st.session_state["_pivot_result"] = pivot
