@@ -63,6 +63,33 @@ async def update_setting(request: Request):
     key = form.get("key", "").strip()
     value = form.get("value", "").strip()
 
+    message = f"✓ Setting '{key}' updated"
+    if key == "fuzzy_match_threshold":
+        # The fuzzy-match threshold is compared directly against a 0.0-1.0
+        # similarity score (see schemas/loader.py's map_headers_with_scores):
+        # anything else -- a stray 0-100 integer, say -- means best_score
+        # can never clear it, so every fuzzy suggestion on Column Mapping
+        # silently stops appearing. Reject out-of-range input here rather
+        # than storing it and only noticing from a cryptic downstream
+        # symptom.
+        try:
+            parsed = float(value)
+        except ValueError:
+            parsed = None
+        if parsed is None or not (0.0 <= parsed <= 1.0):
+            return templates.TemplateResponse(
+                request=request,
+                name="settings.html",
+                context={
+                    "settings": store.list_settings(),
+                    "system_type_map": store.list_system_type_map(),
+                    "message": f"✗ Fuzzy match threshold must be between 0.0 and 1.0 (got '{value}')",
+                    **_column_overrides_context(),
+                },
+                status_code=400,
+            )
+        value = str(round(parsed, 2))
+
     if key:
         store.set_setting(key, value)
 
@@ -72,7 +99,7 @@ async def update_setting(request: Request):
         context={
             "settings": store.list_settings(),
             "system_type_map": store.list_system_type_map(),
-            "message": f"✓ Setting '{key}' updated",
+            "message": message,
             **_column_overrides_context(),
         },
     )

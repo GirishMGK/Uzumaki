@@ -111,12 +111,14 @@
     <div class="card-title">Column Mapping</div>
     <div class="card-sub">Fuzzy matching threshold (0.0–1.0)</div>
 
+    {% set threshold_fraction = settings.get('fuzzy_match_threshold', '0.6') | float %}
+    {% set threshold_fraction = 0.6 if not (0.0 <= threshold_fraction <= 1.0) else threshold_fraction %}
     <form method="POST" action="/settings">
       <div class="form-group">
         <label for="threshold">Fuzzy Match Threshold</label>
         <div style="display:flex; gap:12px; align-items:center;">
-          <input type="range" id="threshold" name="value" min="0" max="100" value="{{ (settings.get('fuzzy_match_threshold', '0.6') | float * 100) | int }}" step="5" style="flex:1; max-width:300px;">
-          <span id="threshold-display" style="font-weight:600; min-width:50px; text-align:right;">0.60</span>
+          <input type="range" id="threshold" min="0" max="100" value="{{ (threshold_fraction * 100) | int }}" step="5" style="flex:1; max-width:300px;">
+          <span id="threshold-display" style="font-weight:600; min-width:50px; text-align:right;">{{ "%.2f" | format(threshold_fraction) }}</span>
         </div>
         <p class="help-text" style="margin-top:8px;">
           <strong>Lower = more suggestions</strong> (e.g., 0.5 suggests more fuzzy matches)
@@ -126,6 +128,7 @@
       </div>
 
       <input type="hidden" name="key" value="fuzzy_match_threshold">
+      <input type="hidden" name="value" id="threshold-value" value="{{ '%.2f' | format(threshold_fraction) }}">
 
       <div class="form-actions">
         <button type="submit" class="btn btn-primary">Save Settings</button>
@@ -340,13 +343,20 @@
     updateResourceUsage();
   }
 
-  // Fuzzy match threshold slider
+  // Fuzzy match threshold slider. The slider itself is 0-100 for a
+  // smoother drag, but the form must submit the 0.0-1.0 fraction
+  // map_headers_with_scores() actually compares scores against -- kept
+  // in a separate hidden input, not the slider's own value, so a listener
+  // reading slider.value directly never accidentally posts the raw
+  // 0-100 position instead.
   const slider = document.getElementById('threshold');
   const display = document.getElementById('threshold-display');
+  const hiddenValue = document.getElementById('threshold-value');
 
   function updateDisplay() {
     const val = (slider.value / 100).toFixed(2);
     display.textContent = val;
+    hiddenValue.value = val;
   }
 
   if (slider) {
