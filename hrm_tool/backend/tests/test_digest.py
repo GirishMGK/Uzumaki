@@ -32,7 +32,7 @@ def test_send_weekly_digests_only_counts_staff_with_confirmed_bookings(session):
     cl = make_client(session)
     engagement = make_engagement(session, cl.id, dept.id)
     booked_staff = make_staff(session, official_email="booked@firm.local")
-    idle_staff = make_staff(session, official_email="idle@firm.local")
+    make_staff(session, official_email="idle@firm.local")  # second, unbooked staff member
     no_email_staff = make_staff(session, official_email=None, personal_email=None)
 
     week_from = dt.date(2026, 9, 7)

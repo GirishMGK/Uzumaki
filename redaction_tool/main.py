@@ -13,7 +13,6 @@ Run:  python main.py
 """
 
 import sys
-import os
 import re
 import threading
 from pathlib import Path

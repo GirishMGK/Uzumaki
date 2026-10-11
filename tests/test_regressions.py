@@ -5,11 +5,45 @@ Each test is a minimal reproduction of the failure scenario that was fixed.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 
 import pytest
+
+_LOANS_TEST_HOST_TOKEN = "regression-test-host-token"
+
+
+def _closed_temp_path(suffix: str):
+    """A fresh temp file's Path with mkstemp's OS handle already closed.
+    Path(tempfile.mkstemp()[1]) leaks that handle, and on Windows an open
+    handle blocks the code under test from replacing or deleting the file."""
+    import tempfile
+    from pathlib import Path
+
+    fd, name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return Path(name)
+
+
+def _TrustedLoansClient(app, **kwargs):
+    """A TestClient for the Loan Analytics app in Uzumaki-embedded
+    (LOANS_TRUST_HOST_AUTH=1) mode. That mode only creates a session for a
+    request carrying the per-launch LOANS_HOST_TOKEN, exactly as
+    _pages/loans.py's iframe URL does, so do that handshake on entry."""
+    from fastapi.testclient import TestClient
+
+    class _Client(TestClient):
+        def __enter__(self):
+            client = super().__enter__()
+            if os.environ.get("LOANS_TRUST_HOST_AUTH") == "1":
+                os.environ["LOANS_HOST_TOKEN"] = _LOANS_TEST_HOST_TOKEN
+                resp = client.get(
+                    "/", params={"hub_token": _LOANS_TEST_HOST_TOKEN}, follow_redirects=False
+                )
+                assert resp.status_code != 403, "host-token handshake was refused"
+            return client
+
+    return _Client(app, **kwargs)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -58,6 +92,10 @@ def test_pdf_tools_merge_passes_bytes_not_dicts():
     src = open(os.path.join(REPO_ROOT, "pdf_tools.py"), encoding="utf-8").read()
     assert 'merge_pdfs(files)' not in src, "pdf_tools.py regressed to passing dicts straight to merge_pdfs()"
     assert 'merge_pdfs([item["bytes"] for item in files])' in src
+
+    # ...and the bytes-list form really merges: 2 + 3 pages -> 5.
+    merged = merge_pdfs([item["bytes"] for item in files])
+    assert get_page_count(merged) == 5
 
 
 def _spatial_text(page) -> str:
@@ -197,10 +235,10 @@ def test_rps_dir_mode_skips_corrupt_pdf(tmp_path):
     assert "[SKIP]" in proc.stdout
 
 
-# ── statutory_extractor.py: Grand Total must use the last match ────────────────
+# ── common/statutory_extractors.py: Grand Total must use the last match ────────────────
 def test_grand_total_uses_last_match_not_first():
     pytest.importorskip("fitz")
-    import statutory_extractor as se
+    import common.statutory_extractors as se
 
     text = "Section A\nGrand Total 1000\nSection B\nGrand Total 2500\n"
     assert se.g_last(r"Grand Total\s+([\d,]+)", text) == "2500"
@@ -208,7 +246,7 @@ def test_grand_total_uses_last_match_not_first():
 
 def test_compute_recon_flags_duplicate_gstr3b_keys():
     pytest.importorskip("fitz")
-    import statutory_extractor as se
+    import common.statutory_extractors as se
 
     gstr3b = [
         {"GSTIN": "27ABCDE1234F1Z5", "Tax Period": "Apr-2025", "3.1(a) Taxable Value": "100.00"},
@@ -217,12 +255,6 @@ def test_compute_recon_flags_duplicate_gstr3b_keys():
     gstr1 = [{"GSTIN": "27ABCDE1234F1Z5", "Tax Period": "Apr-2025", "TL Taxable Value": "150.00"}]
     results, dups = se.compute_recon(gstr1, gstr3b)
     assert dups == [("27ABCDE1234F1Z5", "Apr-2025")]
-
-
-# ── app.py (Flask): filename prefix strip must not assume a fixed width ────────
-def test_app_prefix_strip_handles_wide_index():
-    display = re.sub(r"^\d+_", "", "1000_myfile.pdf", count=1)
-    assert display == "myfile.pdf"
 
 
 # ── unified-framework pages: dispatch must call the real tool functions ────────
@@ -316,7 +348,8 @@ def test_firm_rms_removed_and_replaced_by_hrm():
     spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
     assert "firm_rms" not in spec_src.lower()
     assert '_tree("hrm_tool")' in spec_src
-    assert os.path.join("hrm_tool", "backend", "app", "main.py") in spec_src
+    # The spec's own source text, not an evaluated (OS-specific) path.
+    assert 'os.path.join("hrm_tool", "backend", "app", "main.py")' in spec_src
 
 
 # ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────
@@ -1626,10 +1659,16 @@ def test_loans_trust_host_auth_actually_bypasses_login():
             assert resp.status_code == 303
             assert resp.headers["location"] == "/login"
 
-        # Uzumaki-embedded behavior: bypass active, no redirect, real content.
+        # Uzumaki-embedded behavior: no login redirect, but only for a
+        # request carrying the per-launch host token; anything else that
+        # merely reaches the port is refused.
         os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+        os.environ["LOANS_HOST_TOKEN"] = _LOANS_TEST_HOST_TOKEN
         with TestClient(loan_main.app) as client:
-            resp = client.get("/", follow_redirects=False)
+            assert client.get("/", follow_redirects=False).status_code == 403
+            resp = client.get(
+                "/", params={"hub_token": _LOANS_TEST_HOST_TOKEN}, follow_redirects=False
+            )
             assert resp.status_code == 200
             assert "Engagements" in resp.text
     finally:
@@ -1651,7 +1690,8 @@ def test_loans_wired_into_home_spec_and_auth():
 
     spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
     assert '_tree("loans_tool")' in spec_src
-    assert os.path.join("loans_tool", "backend", "loan_app", "main.py") in spec_src
+    # The spec's own source text, not an evaluated (OS-specific) path.
+    assert 'os.path.join("loans_tool", "backend", "loan_app", "main.py")' in spec_src
 
     auth_src = open(os.path.join(REPO_ROOT, "auth.py"), encoding="utf-8").read()
     assert '"Loan Analytics"' in auth_src, (
@@ -1726,7 +1766,6 @@ def test_consolidate_parquet_download_round_trips_for_any_report_type():
         import io
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         expected = pl.DataFrame({"loan_id": ["L1"], "business_date": ["2024-01-01"]})
@@ -1756,7 +1795,7 @@ def test_consolidate_parquet_download_round_trips_for_any_report_type():
         catalog_store.export_consolidated_to_file = fake_export
 
         try:
-            with TestClient(loan_main.app) as client:
+            with _TrustedLoansClient(loan_main.app) as client:
                 resp = client.get("/dashboard/consolidate/technical_writeoff/download/parquet")
                 assert resp.status_code == 200
                 assert resp.headers["content-type"] == "application/octet-stream"
@@ -1824,7 +1863,6 @@ def test_consolidate_download_routes_still_set_content_length_via_file_response(
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         # A string containing lots of "\n" bytes, so any accidental
@@ -1850,7 +1888,7 @@ def test_consolidate_download_routes_still_set_content_length_via_file_response(
         catalog_store.export_consolidated_to_file = fake_export
 
         try:
-            with TestClient(loan_main.app) as client:
+            with _TrustedLoansClient(loan_main.app) as client:
                 for path in ("csv", "parquet", "excel"):
                     resp = client.get(f"/dashboard/consolidate/ead_files/download/{path}")
                     assert resp.status_code == 200
@@ -1899,7 +1937,6 @@ def test_sql_analytics_runs_real_query_across_report_types():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         customer_df = pl.DataFrame({"pan": ["ABCDE1234F", "FGHIJ5678K"], "full_name": ["Alice", "Bob"]})
@@ -1921,7 +1958,7 @@ def test_sql_analytics_runs_real_query_across_report_types():
         catalog_store.build_consolidated_df = fake_build
         catalog_store.get_consolidated_table_info = fake_table_info
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             # Page loads and lists both tables -- via the lightweight
             # get_consolidated_table_info() path (row count + column
             # names only), not a full build_consolidated_df() materialization.
@@ -2002,7 +2039,6 @@ def test_sql_analytics_export_streams_to_file_and_survives_trailing_semicolon():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         real_build_consolidated_df = catalog_store.build_consolidated_df
@@ -2013,7 +2049,7 @@ def test_sql_analytics_export_streams_to_file_and_survives_trailing_semicolon():
         )
 
         try:
-            with TestClient(loan_main.app) as client:
+            with _TrustedLoansClient(loan_main.app) as client:
                 resp = client.post(
                     "/dashboard/analytics/sql/export",
                     data={"sql": "SELECT * FROM ead_files ORDER BY loan_id;"},
@@ -2087,7 +2123,6 @@ def test_sql_analytics_can_save_and_rerun_a_successful_query_as_analytics():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         real_build_consolidated_df = catalog_store.build_consolidated_df
@@ -2101,7 +2136,7 @@ def test_sql_analytics_can_save_and_rerun_a_successful_query_as_analytics():
 
         query_id = None
         try:
-            with TestClient(loan_main.app) as client:
+            with _TrustedLoansClient(loan_main.app) as client:
                 sql = "SELECT COUNT(*) AS n FROM ead_files"
                 resp = client.post("/dashboard/analytics/sql/run", data={"sql": sql})
                 assert resp.status_code == 200 and resp.json()["rows"][0]["n"] == 2
@@ -2176,7 +2211,6 @@ def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.config import settings as fcmr_settings
 
         error_log = fcmr_settings.logs_dir / "error.log"
@@ -2187,7 +2221,7 @@ def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
         def _boom():
             raise ValueError("synthetic failure for the regression test")
 
-        with TestClient(loan_main.app, raise_server_exceptions=False) as client:
+        with _TrustedLoansClient(loan_main.app, raise_server_exceptions=False) as client:
             resp = client.get("/__test_boom")
             assert resp.status_code == 500
             assert resp.json() == {"detail": "ValueError: synthetic failure for the regression test"}
@@ -2199,7 +2233,7 @@ def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
             assert resp.json() == {"detail": "No files provided."}
 
         assert error_log.exists()
-        new_content = error_log.read_text(encoding="utf-8")[before_size:]
+        new_content = error_log.read_bytes()[before_size:].decode("utf-8")  # st_size is bytes
         assert "synthetic failure for the regression test" in new_content
         assert "Traceback" in new_content
     finally:
@@ -2238,14 +2272,13 @@ def test_upload_checkpoint_logging_pinpoints_progress():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.config import settings as fcmr_settings
 
         processing_log = fcmr_settings.logs_dir / "processing.log"
         processing_log.parent.mkdir(parents=True, exist_ok=True)
         before_size = processing_log.stat().st_size if processing_log.exists() else 0
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -2255,7 +2288,7 @@ def test_upload_checkpoint_logging_pinpoints_progress():
             assert resp.status_code == 303
 
         assert processing_log.exists()
-        new_content = processing_log.read_text(encoding="utf-8")[before_size:]
+        new_content = processing_log.read_bytes()[before_size:].decode("utf-8")  # st_size is bytes
         expected_in_order = [
             "Upload request received: 1 file(s)",
             "Streaming uploaded file to disk: checkpoint_test.csv",
@@ -2304,10 +2337,9 @@ def test_delete_upload_removes_db_row_and_file_from_disk():
 
         from pathlib import Path
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -2366,7 +2398,6 @@ def test_batch_upload_reuses_one_connection_not_one_per_call():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         call_count = 0
@@ -2379,7 +2410,7 @@ def test_batch_upload_reuses_one_connection_not_one_per_call():
 
         catalog_store.open_connection = counting_open_connection
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             files = [
                 ("files", (f"batch_{i}.csv", b"PAN,DrsPOS\nABCDE1234F,1000\n", "text/csv"))
                 for i in range(5)
@@ -2428,13 +2459,12 @@ def test_map_columns_apply_to_matching_ingests_same_layout_files_only():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         same_layout_csv = b"loan_id,DrsPOS\nLN0001,1000\n"
         different_layout_csv = b"loan_id,DrsPOS,ExtraColumn\nLN0001,1000,x\n"
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -2507,10 +2537,9 @@ def test_bulk_delete_removes_selected_uploads_and_ignores_bad_ids():
 
         from pathlib import Path
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -2575,11 +2604,10 @@ def test_slow_form_buttons_disable_and_relabel_on_submit():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
 
         csv_bytes = b"loan_id,DrsPOS\nLN0001,1000\n"
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -2690,7 +2718,6 @@ def test_product_helper_blocks_on_unmapped_system_then_tags_after_settings_add()
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = (
@@ -2699,7 +2726,7 @@ def test_product_helper_blocks_on_unmapped_system_then_tags_after_settings_add()
             b"LN0002,MyBrandNewSystem\n"
         )
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -2783,8 +2810,6 @@ def test_tag_product_helper_rewrites_disk_to_disk_not_in_memory():
     sys.path.insert(0, backend_dir)
     os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
     try:
-        import tempfile
-        from pathlib import Path
 
         import polars as pl
 
@@ -2800,7 +2825,7 @@ def test_tag_product_helper_rewrites_disk_to_disk_not_in_memory():
                 "system": ["OneLMS_TW", "NotARealSystem", "Weird'System"],
             }
         )
-        path = Path(tempfile.mkstemp(suffix=".parquet")[1])
+        path = _closed_temp_path(".parquet")
         df.write_parquet(path)
 
         _tag_product_helper(path)
@@ -2810,7 +2835,7 @@ def test_tag_product_helper_rewrites_disk_to_disk_not_in_memory():
 
         # No `system` column at all -> left untouched, no product_helper added.
         no_system_df = pl.DataFrame({"loan_id": ["L1"]})
-        no_system_path = Path(tempfile.mkstemp(suffix=".parquet")[1])
+        no_system_path = _closed_temp_path(".parquet")
         no_system_df.write_parquet(no_system_path)
         _tag_product_helper(no_system_path)
         assert pl.read_parquet(no_system_path).columns == ["loan_id"]
@@ -3097,7 +3122,6 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
 
         import openpyxl
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         wb = openpyxl.Workbook()
@@ -3116,7 +3140,7 @@ def test_loan_app_upload_accepts_excel_and_parquet_not_just_csv():
         with zipfile.ZipFile(zip_parquet_buf, "w") as zf:
             zf.writestr("batch_c.parquet", zip_parquet_bytes.getvalue())
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -3178,9 +3202,8 @@ def test_download_schema_produces_template_and_reference_sheets():
         importlib.reload(loan_main)
 
         import openpyxl
-        from fastapi.testclient import TestClient
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.get("/dashboard/schema/ead_files/download")
             assert resp.status_code == 200
             assert resp.headers["content-type"] == (
@@ -3314,13 +3337,12 @@ def test_schema_download_works_for_every_registered_report_type():
         importlib.reload(loan_main)
 
         import openpyxl
-        from fastapi.testclient import TestClient
         from fcmr_core.schemas.loader import available_report_types
 
         report_types = available_report_types()
         assert len(report_types) == 13  # 5 original + 8 from the master schema file
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             for report_type in report_types:
                 resp = client.get(f"/dashboard/schema/{report_type}/download")
                 assert resp.status_code == 200, f"{report_type} schema download failed"
@@ -3365,7 +3387,6 @@ def test_do_upload_streams_csv_and_zipped_csv_without_corrupting_content():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         n = 5000
@@ -3376,7 +3397,7 @@ def test_do_upload_streams_csv_and_zipped_csv_without_corrupting_content():
         with zipfile.ZipFile(zip_buf, "w") as zf:
             zf.writestr("zipped_stream.csv", csv_bytes)
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -3437,7 +3458,6 @@ def test_do_upload_has_no_size_cap_for_direct_and_zipped_files():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.config import settings as fcmr_settings
 
         assert not hasattr(fcmr_settings, "max_upload_bytes")
@@ -3452,7 +3472,7 @@ def test_do_upload_has_no_size_cap_for_direct_and_zipped_files():
         with zipfile.ZipFile(zip_buf, "w") as zf:
             zf.writestr("large_in_zip.csv", large_csv)
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -3592,7 +3612,6 @@ def test_map_columns_form_computes_fuzzy_scores_only_once():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
         from fcmr_core.schemas.loader import SchemaMap
 
@@ -3603,7 +3622,7 @@ def test_map_columns_form_computes_fuzzy_scores_only_once():
         # (0 calls) for the wrong reason instead of exercising the fix.
         csv_bytes = b"loan_id,DrsPOS,PerfCountCheckUniqueColumn\nLN0001,1000,1\n"
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -3793,7 +3812,6 @@ def test_settings_schema_overrides_preview_and_commit_through_real_routes():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
 
         wb = openpyxl.Workbook()
         ws = wb.active
@@ -3802,7 +3820,7 @@ def test_settings_schema_overrides_preview_and_commit_through_real_routes():
         xlsx_buf = io.BytesIO()
         wb.save(xlsx_buf)
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/settings/schema-overrides/preview",
                 files=[("file", ("overrides.xlsx", xlsx_buf.getvalue(),
@@ -3888,11 +3906,10 @@ def test_fuzzy_match_threshold_slider_round_trips_as_a_fraction_not_a_percent():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
         from fcmr_core.schemas.loader import get_schema
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             # The save route must reject a raw 0-100 slider position
             # (and anything else outside [0.0, 1.0]) rather than storing it.
             resp = client.post("/settings", data={"key": "fuzzy_match_threshold", "value": "50"})
@@ -4088,12 +4105,11 @@ def test_map_columns_page_suggests_exact_match_not_near_duplicate():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = b"loan_id,zero_90_days_interest,zero_90_days_interest_Hist\nL1,111,999\n"
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -4146,12 +4162,11 @@ def test_map_columns_page_shows_each_field_s_data_type():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = b"loan_id,original_tenure,ead\nL1,60,100.0\n"
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -4210,10 +4225,9 @@ def test_build_consolidated_df_reuses_one_connection_not_one_per_file():
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             # A dedicated engagement, not the shared "default" every other
             # test also uploads into -- build_consolidated_df pulls in
             # *every* ready ead_files upload for the engagement it's given,
@@ -4306,10 +4320,9 @@ def test_export_consolidated_to_file_matches_build_consolidated_df():
         importlib.reload(loan_main)
 
         import polars as pl
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
-        with TestClient(loan_main.app):
+        with _TrustedLoansClient(loan_main.app):
             engagement_id = catalog_store.create_engagement("export-vs-build-test")
 
             # 3 files: the 3rd is missing DrsPOS (-> null-filled, same as
@@ -4324,7 +4337,7 @@ def test_export_consolidated_to_file_matches_build_consolidated_df():
                 upload_id = catalog_store.create_upload("ead_files", f"export_test_{i}.csv", engagement_id=engagement_id)
                 from fcmr_core.ingestion.pipeline import ingest_csv
 
-                tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+                tmp_csv = _closed_temp_path(".csv")
                 tmp_csv.write_bytes(csv_bytes)
                 result = ingest_csv(
                     tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id", "DrsPOS": "outstanding_principal"}
@@ -4339,7 +4352,7 @@ def test_export_consolidated_to_file_matches_build_consolidated_df():
                 tmp_csv.unlink(missing_ok=True)
 
             upload_id = catalog_store.create_upload("ead_files", "export_test_no_pos.csv", engagement_id=engagement_id)
-            tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+            tmp_csv = _closed_temp_path(".csv")
             tmp_csv.write_bytes(b"loan_id\nLN102\n")
             from fcmr_core.ingestion.pipeline import ingest_csv
 
@@ -4411,23 +4424,20 @@ def test_get_consolidated_table_info_matches_build_consolidated_df_without_mater
     os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
     try:
         import importlib
-        import tempfile
-        from pathlib import Path
 
         import loan_app.main as loan_main
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
         from fcmr_core.ingestion.pipeline import ingest_csv
 
-        with TestClient(loan_main.app):
+        with _TrustedLoansClient(loan_main.app):
             engagement_id = catalog_store.create_engagement("table-info-test")
 
             for i, (loan_id, pos) in enumerate([("LN100", "1000"), ("LN101", "2000")]):
                 csv_bytes = f"loan_id,DrsPOS\n{loan_id},{pos}\n".encode()
                 upload_id = catalog_store.create_upload("ead_files", f"table_info_test_{i}.csv", engagement_id=engagement_id)
-                tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+                tmp_csv = _closed_temp_path(".csv")
                 tmp_csv.write_bytes(csv_bytes)
                 result = ingest_csv(
                     tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id", "DrsPOS": "outstanding_principal"}
@@ -4443,7 +4453,7 @@ def test_get_consolidated_table_info_matches_build_consolidated_df_without_mater
 
             # A third upload missing DrsPOS -- UNION ALL BY NAME null-fills it.
             upload_id = catalog_store.create_upload("ead_files", "table_info_test_no_pos.csv", engagement_id=engagement_id)
-            tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+            tmp_csv = _closed_temp_path(".csv")
             tmp_csv.write_bytes(b"loan_id\nLN102\n")
             result = ingest_csv(tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id"})
             catalog_store.store_upload_data(upload_id, result.parquet_path)
@@ -5061,7 +5071,6 @@ def test_ead_pivot_route_runs_and_downloads_through_real_app():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = (
@@ -5070,7 +5079,7 @@ def test_ead_pivot_route_runs_and_downloads_through_real_app():
             b"L2,OneLMS_TW,Stage 2,ProdB,MH,200.0\n"
             b"L3,SCF,Stage 1,ProdA,GJ,50.0\n"
         )
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -5224,7 +5233,6 @@ def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         csv_bytes = (
@@ -5243,7 +5251,7 @@ def test_ead_analytics_screen_runs_real_rules_and_reports_end_to_end():
             "zero_90_days_interest", "zero_90_int_final", "state",
         ]
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             resp = client.post(
                 "/dashboard/upload",
                 data={"report_type": "ead_files"},
@@ -5389,10 +5397,9 @@ def test_ead_analytics_progress_endpoint_and_running_failed_states():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from loan_app.api import ead_analytics
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             run_id = str(uuid_module.uuid4())
 
             # Simulate a run that's mid-flight: 3 of 11 rules done.
@@ -5464,13 +5471,12 @@ def test_ead_analytics_detects_npa_flag_change_across_two_separate_uploads():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         jan_csv = b"loan_id,business_date,npa_flag_date\nL1,31-01-2024,15-01-2024\n"
         feb_csv = b"loan_id,business_date,npa_flag_date\nL1,29-02-2024,20-02-2024\n"
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             for name, data in [("jan.csv", jan_csv), ("feb.csv", feb_csv)]:
                 client.post(
                     "/dashboard/upload",
@@ -5611,10 +5617,9 @@ def test_ead_analytics_cross_dataset_checks_end_to_end():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             ead_csv = (
                 b"loan_id,ucid,customer_id,disbursement_date\n"
                 b"L1,U1,C1,01-01-2024\n"
@@ -5738,10 +5743,9 @@ def test_analytics_hub_lists_every_dataset_and_links_only_where_analytics_exist(
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             # A dedicated engagement, selected via the real engagements
             # route, keeps this test's ready-count assertions isolated from
             # every other test's EAD uploads -- those all land in the
@@ -6199,7 +6203,6 @@ def test_ead_analytics_link_to_brs_end_to_end():
 
         importlib.reload(loan_main)
 
-        from fastapi.testclient import TestClient
         from fcmr_core.catalog import store as catalog_store
 
         ead_csv = (
@@ -6208,7 +6211,7 @@ def test_ead_analytics_link_to_brs_end_to_end():
             b"L2,2000.0,200.0,20.0\n"
         )
 
-        with TestClient(loan_main.app) as client:
+        with _TrustedLoansClient(loan_main.app) as client:
             # A dedicated engagement (see test_analytics_hub_...'s comment
             # above) keeps this test's per-loan_id sums isolated from every
             # other test's EAD uploads sharing the same loan_id ("L1", "L2")

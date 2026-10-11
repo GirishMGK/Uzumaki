@@ -105,6 +105,9 @@ def run_app(port: int | None = None) -> None:
     sys.argv = [
         "streamlit", "run", home,
         "--server.headless=true",
+        # Loopback only: Streamlit otherwise listens on every interface,
+        # making the app (and every tool in it) reachable from the network.
+        "--server.address=127.0.0.1",
         f"--server.port={port}",
         "--server.fileWatcherType=none",
         "--server.maxUploadSize=2048",  # 2 GB per file (EAD exports can be that large)

@@ -3,13 +3,12 @@
 # Tabs: PF Register | Statutory Compliance (ESI / PT / TDS / GSTR-1 / GSTR-3B)
 #
 # This is a single-file combined app. All logic is self-contained.
-# See PF.py and statutory_extractor.py for standalone versions.
+# Shared extractors live in common/statutory_extractors.py.
 
 import streamlit as st
 import pdfplumber
 import pandas as pd
 import re
-import datetime
 import zipfile
 import os
 import sys
@@ -22,7 +21,6 @@ from common.statutory_extractors import (
     read_pdf_text as _read_pdf_text,
     g,
     g_last,
-    period_from_filename,
     detect_statutory_type,
     extract_tds,
     extract_gstr1,
@@ -128,7 +126,7 @@ def _pick_folder_files(extensions=(".pdf",)):
                     results.append((fn, f.read()))
     return results
 
-# ── PF detection / extraction (same as PF.py) ─────────────────────────────────
+# ── PF detection / extraction ──────────────────────────────────────────────────
 
 def _detect_pf_type(text: str) -> str:
     if re.search(r"Payment\s+Confirmation\s+Receipt", text, re.I):
@@ -158,7 +156,7 @@ def _detect_pf_type_plumber(file_path) -> str:
     return ""
 
 def extract_pf_trrn(file_name, text):
-    # Ported from PF.py's fuller implementation (this file previously had
+    # Ported from the former standalone PF.py's fuller implementation (this file previously had
     # an abbreviated version that dropped the per-account Account-1/2/10/
     # 21/22 breakdown and the 7Q/14B damages-for-delay & interest-for-delay
     # columns entirely) -- real feedback: every "Payment Confirmation
@@ -480,7 +478,7 @@ def extract_ecr_return(file_name, text, file_path=None):
         "TRRN No": g1(r"TRRN(?:\s+Number|\s+No\.?|\b)\s*[:\s]+(\d+)"),
     }
 
-# ── statutory detection / extraction (same as statutory_extractor.py) ─────────
+# ── statutory detection / extraction ───────────────────────────────────────────
 # detect_statutory_type/extract_tds/extract_gstr1/extract_gstr3b/compute_recon
 # are imported from common/statutory_extractors.py (see the top of this file)
 # -- extract_esi/extract_pt stay here since nothing outside this file needs them.
@@ -501,7 +499,6 @@ def extract_pt(fn, text):
             "Grand Total": g_last(r"Grand Total\s+([\d,]+)", text) or g_last(r"Grand Total\s*:\s*([\d,]+)", text)}
 
 def process_statutory_pdf(file_name, file_bytes, state_prefix="stat_"):
-    import traceback
     try:
         text = _read_pdf_text(file_bytes)
         if len(text.strip()) < 50:
@@ -520,7 +517,6 @@ def process_statutory_pdf(file_name, file_bytes, state_prefix="stat_"):
             preview = text.strip()[:200].replace("\n", " ")
             st.session_state[state_prefix + "failed"].append(f"{file_name} — Unrecognised. Preview: «{preview}»")
     except Exception as e:
-        tb = traceback.format_exc().splitlines()
         st.session_state[state_prefix + "failed"].append(f"{file_name} — {type(e).__name__}: {e}")
 
 # ── session state init ────────────────────────────────────────────────────────

@@ -1,6 +1,5 @@
 """End-to-end tests for the Form 26AS parser using a synthetic sample."""
 
-import os
 import sys
 import unittest
 from pathlib import Path

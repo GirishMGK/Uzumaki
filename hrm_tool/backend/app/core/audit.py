@@ -7,7 +7,6 @@ entity write and the audit row (T12: exactly one audit_log row per mutation).
 """
 import json
 import uuid
-from datetime import date, datetime
 from typing import Any
 
 from sqlmodel import Session, SQLModel

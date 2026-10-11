@@ -6,9 +6,30 @@ on:
   pull_request:
     branches: ["**"]
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Same version as requirements-dev.lock.
+      - run: pip install ruff==0.17.0
+      - run: ruff check .
+
+  test:
+    # The product ships as a Windows .exe, so Windows is the platform that
+    # matters most; Linux stays in the matrix to keep from-source runs honest.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -16,13 +37,26 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
+          cache-dependency-path: requirements-dev.lock
 
-      - name: Install dependencies
+      - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r form26as_tool/requirements-dev.txt
-          pip install pytest
+          pip install -r requirements-dev.lock
 
       - name: Compile sweep + regression tests
         run: python -m pytest -v
+
+  audit:
+    # Known-vulnerability scan of the pinned dependency set. Advisory for
+    # now (continue-on-error) so a newly published CVE doesn't block
+    # unrelated work -- check this job's output when it goes red.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pip-audit
+      - run: pip-audit -r requirements.lock --no-deps --disable-pip

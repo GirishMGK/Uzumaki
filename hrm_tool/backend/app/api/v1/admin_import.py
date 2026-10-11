@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 
 from app.core.audit import write_audit_log
-from app.core.deps import get_current_user, get_db, require_roles
+from app.core.deps import get_db, require_roles
 from app.importers.base import build_error_workbook, read_workbook_rows
 from app.importers.clients_importer import row_to_client_kwargs, validate_client_rows
 from app.importers.staff_importer import row_to_staff_kwargs, validate_staff_rows

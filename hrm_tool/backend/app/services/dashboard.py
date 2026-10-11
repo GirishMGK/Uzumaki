@@ -15,15 +15,15 @@ from __future__ import annotations
 
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, timedelta
 
 from sqlmodel import Session, select
 
 from app.models.allocation import Allocation
-from app.models.client import Client, ClientGroup
+from app.models.client import Client
 from app.models.engagement import Engagement
-from app.models.enums import AllocationStatus, BookingType, StaffCategory
+from app.models.enums import AllocationStatus, BookingType
 from app.models.reference import Department, Office
 from app.models.staff import Staff
 

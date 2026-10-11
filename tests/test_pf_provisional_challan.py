@@ -103,7 +103,6 @@ def test_provisional_challan_detected_as_challan_type(tmp_path):
 
 
 def test_provisional_challan_header_fields(tmp_path):
-    from pathlib import Path
 
     pdf_path = tmp_path / "provisional_challan.pdf"
     _build_provisional_challan_pdf(str(pdf_path))
@@ -120,7 +119,6 @@ def test_provisional_challan_table_extracted_as_is(tmp_path):
     """The actual real-world case this was fixed for: every particulars
     row, with its real per-account Amount/NA values, none corrupted or
     dropped."""
-    from pathlib import Path
 
     pdf_path = tmp_path / "provisional_challan.pdf"
     _build_provisional_challan_pdf(str(pdf_path))

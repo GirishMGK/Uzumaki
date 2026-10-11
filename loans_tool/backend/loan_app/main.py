@@ -1,5 +1,6 @@
 """Loan Analytics — FastAPI application entry point."""
 
+import hmac
 import os
 import traceback
 from contextlib import asynccontextmanager
@@ -9,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse, Response
+from starlette.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 from loan_app.api import (
     analytics_hub,
@@ -109,14 +110,18 @@ class LoginRequiredMiddleware(BaseHTTPMiddleware):
     audit-log attribution, etc.) behaves identically either way. Standalone
     / Vercel / Electron-desktop deployments never set this flag and keep
     their own real login untouched.
+
+    Trusting "the host" must not mean trusting anything that can reach the
+    port, though: other local processes and browser tabs can too. So a
+    session is only created for a request carrying the per-launch secret
+    Uzumaki puts in the iframe URL (LOANS_HOST_TOKEN, ?hub_token=...), and
+    this app's own password login is disabled outright in this mode.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
         _ensure_initialized()
-        if os.environ.get("LOANS_TRUST_HOST_AUTH") == "1" and "username" not in request.session:
-            request.session["username"] = auth._ADMIN_USERNAME
-            request.session["display_name"] = "Loan Analytics"
-            return await call_next(request)
+        if os.environ.get("LOANS_TRUST_HOST_AUTH") == "1":
+            return await self._dispatch_trusting_host(request, call_next)
         public_paths = {"/login", "/static"}
         # Check if path starts with any public path
         is_public = any(request.url.path.startswith(p) for p in public_paths)
@@ -125,6 +130,24 @@ class LoginRequiredMiddleware(BaseHTTPMiddleware):
         # Require login for all other paths (including /)
         if "username" not in request.session:
             return RedirectResponse(url="/login", status_code=303)
+        return await call_next(request)
+
+    async def _dispatch_trusting_host(self, request: Request, call_next) -> Response:
+        path = request.url.path
+        if path == "/login" and request.method != "GET":
+            return PlainTextResponse("Password login is disabled inside Uzumaki.", status_code=403)
+        # GET /login stays public: it's _pages/loans.py's readiness probe.
+        if path == "/login" or path.startswith("/static"):
+            return await call_next(request)
+        if "username" not in request.session:
+            expected = os.environ.get("LOANS_HOST_TOKEN", "")
+            supplied = request.query_params.get("hub_token", "")
+            if not expected or not hmac.compare_digest(supplied, expected):
+                return PlainTextResponse(
+                    "Open Loan Analytics from the Uzumaki app.", status_code=403
+                )
+            request.session["username"] = auth._ADMIN_USERNAME
+            request.session["display_name"] = "Loan Analytics"
         return await call_next(request)
 
 

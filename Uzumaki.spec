@@ -95,8 +95,6 @@ datas = [
     (os.path.join(ROOT, "ead_consolidator.py"), "."),
     (os.path.join(ROOT, "brs_consolidator.py"), "."),
     (os.path.join(ROOT, "pdf_tools.py"), "."),
-    (os.path.join(ROOT, "PF.py"), "."),
-    (os.path.join(ROOT, "statutory_extractor.py"), "."),
     (os.path.join(ROOT, "Combined_PF_Statutory.py"), "."),
     _tree("_pages"),
     # common/ (shared pure-Python helpers, e.g. common/statutory_extractors.py)

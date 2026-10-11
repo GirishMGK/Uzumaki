@@ -18,12 +18,13 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
+          cache-dependency-path: requirements-dev.lock
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-build.txt
+          # Pinned versions -- the shipped .exe is built from exactly what CI tested.
+          pip install -r requirements-dev.lock
 
       - name: Stamp version (short commit SHA)
         id: version

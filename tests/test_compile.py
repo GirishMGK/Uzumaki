@@ -15,7 +15,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-EXCLUDE_DIRS = {".git", "__pycache__", "je_audit_tool_blazor"}
+EXCLUDE_DIRS = {".git", "__pycache__", ".venv"}
 
 
 def _all_python_files():

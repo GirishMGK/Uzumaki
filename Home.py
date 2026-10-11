@@ -11,6 +11,7 @@ Run:
 from __future__ import annotations
 
 import base64
+import html
 import importlib
 import os
 import sys
@@ -30,21 +31,57 @@ inject_css()
 auth.init_db()
 
 
+def _render_auth_header(subtitle: str) -> None:
+    st.markdown(
+        f"""
+        <div style="max-width:420px;margin:4rem auto 0;text-align:center;">
+            <div class="sa-logo-mark" style="font-size:2.4rem;">🥷</div>
+            <h2 style="margin:.3rem 0 .2rem;">Uzumaki</h2>
+            <p style="margin:0 0 1.2rem;opacity:.75;">{subtitle}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_setup_screen() -> None:
+    """Fresh install, no accounts yet: the first person to open the app
+    creates the administrator account and picks its password -- there is
+    no shared built-in default login."""
+    _render_auth_header("First-time setup — create the administrator account")
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        with st.form("setup_form"):
+            username = st.text_input("Username", value="admin")
+            full_name = st.text_input("Full name (optional)")
+            password = st.text_input(
+                "Password", type="password",
+                help=f"At least {auth.MIN_PASSWORD_LENGTH} characters.",
+            )
+            confirm = st.text_input("Confirm password", type="password")
+            submitted = st.form_submit_button(
+                "Create account", type="primary", use_container_width=True
+            )
+        if submitted:
+            if password != confirm:
+                st.error("Passwords don't match.")
+                return
+            try:
+                auth.create_initial_admin(username.strip(), password, full_name.strip())
+            except ValueError as e:
+                st.error(str(e))
+                return
+            st.session_state.auth_user = auth.authenticate(username.strip(), password)
+            st.rerun()
+
+
 def _render_login_screen() -> None:
     """Blocks the whole app behind a login -- real request: per-user
     accounts, with an admin able to restrict which tools a given role can
     open. Runs before anything else in this file (including building the
     nav), so an unauthenticated session never even sees the tool
     catalogue, let alone a page."""
-    st.markdown(
-        """
-        <div style="max-width:420px;margin:4rem auto 0;text-align:center;">
-            <div class="sa-logo-mark" style="font-size:2.4rem;">🥷</div>
-            <h2 style="margin:.3rem 0 1.2rem;">Uzumaki</h2>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    _render_auth_header("Sign in")
     _, col, _ = st.columns([1, 2, 1])
     with col:
         with st.form("login_form"):
@@ -58,15 +95,53 @@ def _render_login_screen() -> None:
                 st.rerun()
             else:
                 st.error("Incorrect username or password.")
-        if auth.get_user(auth.DEFAULT_ADMIN_USERNAME) and len(auth.list_users()) == 1:
-            st.caption(
-                f"First run — default admin login: **{auth.DEFAULT_ADMIN_USERNAME}** / "
-                f"**{auth.DEFAULT_ADMIN_PASSWORD}** (change this from Admin → Users once logged in)."
-            )
 
+
+def _render_change_password_screen() -> None:
+    """Shown instead of the app for an account flagged must_change_password
+    (e.g. an older install still using the once-seeded default login)."""
+    user = st.session_state.auth_user
+    _render_auth_header(f"Choose a new password for <strong>{html.escape(user['username'])}</strong>")
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.warning("Your account is using a temporary or default password. Set a new one to continue.")
+        with st.form("change_password_form"):
+            current = st.text_input("Current password", type="password")
+            new = st.text_input(
+                "New password", type="password",
+                help=f"At least {auth.MIN_PASSWORD_LENGTH} characters.",
+            )
+            confirm = st.text_input("Confirm new password", type="password")
+            submitted = st.form_submit_button(
+                "Change password", type="primary", use_container_width=True
+            )
+        if st.button("Log out", key="change_pw_logout", use_container_width=True):
+            del st.session_state["auth_user"]
+            st.rerun()
+        if submitted:
+            if new != confirm:
+                st.error("New passwords don't match.")
+                return
+            try:
+                auth.change_own_password(user["username"], current, new)
+            except ValueError as e:
+                st.error(str(e))
+                return
+            st.session_state.auth_user = auth.authenticate(user["username"], new)
+            st.rerun()
+
+
+if auth.needs_setup():
+    st.session_state.pop("auth_user", None)
+    _render_setup_screen()
+    st.stop()
 
 if "auth_user" not in st.session_state:
     _render_login_screen()
+    st.stop()
+
+if st.session_state.auth_user.get("must_change_password"):
+    _render_change_password_screen()
     st.stop()
 
 _LOGO_MARK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_pages", "assets", "logo_mark.png")

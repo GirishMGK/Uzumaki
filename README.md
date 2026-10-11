@@ -90,10 +90,12 @@ per-user accounts, each assigned a **role** that controls which tools they
 can open. An account can also be an **Administrator**, which always has
 access to every tool regardless of role.
 
-**First run:** since there are no accounts yet, one is created automatically —
-username `admin`, password `ChangeMe!2026` (shown on the login screen itself
-until a second account exists). Log in with that, then go to **Admin → Users
-& Access** to:
+**First run:** there are no accounts yet, so instead of a login form you get
+a **Create administrator account** form — you pick the username and password
+(at least 8 characters). There is no built-in default login. Installs from
+before this change that still use the old seeded `admin` / `ChangeMe!2026`
+login are made to choose a new password at their next login. Once in, go to
+**Admin → Users & Access** to:
 - create roles and pick exactly which tools each one can open
 - create user accounts and assign them a role (or make them an admin)
 - change passwords / edit / delete accounts
@@ -135,17 +137,12 @@ users who prefer that, but it's optional, not required to use the tool.
 | **Statutory Extractor** (`Combined_PF_Statutory.py`) | PF Challan / ECR Return / TRRN **and** ESI · PT · TDS · GSTR-1 · GSTR-3B extraction — already combined into one two-tab app (shared PDF-read/regex utilities). Accepts individual PDFs or a ZIP of a whole folder. |
 | **Form 26AS Extractor** (`form26as_tool/`) | Flattens Form 26AS's nested Part A (TDS) into a flat, searchable table — every transaction row carries its deductor's Name and TAN. Combines multiple assessment years into one workbook (TRACES only lets you download one year at a time), with Summary-by-Year/Deductor/Section/Month rollup tabs. Auto-detects input format (caret-delimited `.txt`, `.xlsx`/`.xls`, HTML, password-protected PDF). Also ships as a standalone CLI + double-click Windows GUI (`Run26ASFormatter.bat`). |
 | **PDF Tools** (`pdf_tools.py` + `tools/`) | Merge, split, edit (remove/insert/reorder pages) and PDF→Word. |
-| **SOA · RPS · Reconcile** (`extract_soa.py` / `extract_rps.py` / `reconcile.py`) | L&T Finance SOA extractor with TOC/TOD audit, RPS parser, and auto-reconciliation by Agreement No. Also ships as a standalone Flask app (`app.py`, SSE live progress) for users who prefer that UI. |
+| **SOA · RPS · Reconcile** (`extract_soa.py` / `extract_rps.py` / `reconcile.py`) | L&T Finance SOA extractor with TOC/TOD audit, RPS parser, and auto-reconciliation by Agreement No. |
 | **Document Redaction** (`redaction_tool/`) | Auto-detect + redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email plus custom keywords across PDF (true redaction via PyMuPDF), DOCX, XLSX, and images (Tesseract OCR). Also ships as a standalone tkinter desktop app (`redaction_tool/main.py`). |
 | **JE Audit Analytics** (`je_audit_tool/`) | Journal Entry exception testing for statutory/forensic audit: Amount (duplicates, high-value, split transactions), Timing (weekend/holiday, year-end cutoff, reversals), User & Access Control (SOD violations, dormant users, related parties), Vendor Master Data (duplicate GSTIN/PAN, MSME delay, inactive vendors), Benford's Law (chi-square digit analysis). DuckDB-backed for large GL dumps; exports a multi-sheet Excel audit report + working paper. |
 | **Tally extraction tool** (`tally_tool/`) | Pulls every ledger's full transaction history out of Tally in one shot, instead of exporting each ledger one by one. Two ways in: upload a "JSON (Data Interchange)" **or** "XML (Data Interchange)" export (`extract_ledgers.py` — streams either format, doesn't load the whole file into memory, auto-detects which one you gave it), or **connect live** to a running TallyPrime instance over its XML/HTTP interface (`tally_connector.py` — no manual export step, requires ODBC/XML Server enabled in Tally). Computes a running balance per ledger and prints a Debit-vs-Credit control total as a sanity check either way. Debit/Credit is taken from the sign of Tally's `amount` field rather than its `isdeemedpositive` flag, which was found unreliable on some statutory/duty lines. A third tab pulls a **Sales & Purchase Register** item-wise (Stock Item, Quantity, Rate, Amount) via the same live connection. |
 | **Loan Analytics** (`loans_tool/`) | NBFC loan-portfolio audit analytics, vendored from the `FCMR` repo (originally "SanGir Automations") — deterministic, no AI/LLM anywhere. KYC/data-quality checks (24 rules: PAN/Aadhaar-Verhoeff/Voter/Passport/DL/Mobile/Email/DOB format, PIN/address validation against a bundled India Post master, PAN/Aadhaar/Mobile/Bank/Voter/Name+DOB/Address duplicate detection, UCID identity grouping), EAD/ECL file consolidation (merges L&T-Finance-style exports), and an ICAI-sampled 4-sheet Excel audit workpaper. Like HRM, a stateful multi-session app with its own FastAPI backend and database — but reuses your Uzumaki login instead of a second one; see "Loan Analytics is different" below. |
 | **Firm RMS** (`firm_rms_tool/`) | Manpower/resource management — scheduler board, capacity dashboards, report library, timesheets/actuals, forecasting, RBAC. Unlike every other tool above, this one is a **stateful multi-session app with its own database and login**, not a one-shot file processor — see "Firm RMS is different" below. |
-
-> A separate .NET/Blazor Server port of the JE Audit workflow exists at
-> `je_audit_tool_blazor/JEAuditApp.razor` for reference, but is not part of
-> the unified app/`.exe` (different framework, same functionality as
-> JE Audit Analytics above).
 
 > **PF + Statutory combinable?** Yes — they already share `_read_pdf_text`,
 > `_g`/`normalize_period` helpers and live together in `Combined_PF_Statutory.py`
@@ -158,7 +155,7 @@ Same shape as Firm RMS/HRM below — a vendored FastAPI backend
 and embedded via iframe, with its own persistent database (per-user
 app-data, `%LOCALAPPDATA%\UzumakiLoanAnalytics` on Windows). The one
 deliberate difference: it does **not** have a second login. Its original
-repo (`FCMR`) has its own single hardcoded `admin`/`admin123` account —
+repo (`FCMR`) has its own single `admin` account —
 asking a user to log into it *again*, right after they already logged into
 Uzumaki, would be a redundant prompt, not real additional security, since
 this page is only reachable at all once Uzumaki's own login + role check
@@ -170,6 +167,13 @@ route downstream behaves identically either way. The flag is only ever set
 from inside `_pages/loans.py`; a standalone run of the vendored backend (or
 the original, unvendored `FCMR` app it came from) keeps its own real login,
 untouched.
+
+Trusting Uzumaki must not mean trusting anything that can reach the port, so
+each launch picks a **random free port** and a **per-launch secret token**
+(`LOANS_HOST_TOKEN`). The backend only creates a session for a request
+carrying that token (`?hub_token=…`, present only in this page's iframe URL),
+and its own password login is disabled in this mode. HRM likewise runs on a
+random free port each launch.
 
 One consequence worth knowing: actions inside Loan Analytics are attributed
 to its own internal `admin` account, not your actual Uzumaki username —
@@ -199,7 +203,9 @@ separate server to run. Data lives in a per-user app-data directory
 (`%LOCALAPPDATA%\FirmRMS` on Windows), independent of the app's own install
 location, so it survives an `Uzumaki.exe` self-update.
 
-Default login on first run: `admin@firm.local` / `ChangeMe!2026`.
+First login: `admin@firm.local` with a random password generated per install
+(Uzumaki admins can see it under **First-time HRM admin login** on the HRM
+page). HRM makes you change it on first login.
 
 **Sharing one Python environment**: Firm RMS's own `backend/requirements.txt`
 pins `fastapi==0.115.0`, which conflicts with the `starlette` version
@@ -216,18 +222,9 @@ Parses L&T Finance Statement-of-Account (SOA) PDFs into structured Excel and
 auto-computes **Test of Controls / Test of Details** validation checks for NBFC
 loan audits. All L&T SOAs share the same layout, so the parser is tuned to it.
 
-## Install
-```bash
-pip install pdfplumber openpyxl flask
-```
-
-## Web UI (localhost)
-```bash
-python app.py            # then open http://127.0.0.1:5000
-```
-Pick a document type with the **SOA / RPS** tabs, then upload SOAs/RPS as
-**individual PDFs, a whole folder, or a `.zip`**. Files stream through with a
-**live progress bar** and an on-screen results table.
+## Using it
+Open **SOA · RPS · Reconcile** in the Uzumaki hub (see "Run from source" /
+"Run as a Windows app" at the top of this README).
 
 **SOA mode** — per-loan working-paper workbooks + a Portfolio Exception Report,
 with TOC/TOD validation. Running totals (uploaded / clean / with-exceptions /
@@ -250,8 +247,7 @@ servicing deviated from the *scheduled* plan:
 - `Unmatched` — agreements present on only one side.
 
 A bad/corrupt file is reported as FAILED with the reason and never aborts the
-batch. Nothing is persisted beyond the running session. Custom port:
-`PORT=8080 python app.py`.
+batch. Nothing is persisted beyond the running session.
 
 ### RPS from the command line
 ```bash

@@ -1,0 +1,11 @@
+# Everything needed to test, lint and build Uzumaki -- on top of the
+# runtime deps in requirements.txt. CI and the .exe build both install the
+# pinned versions from requirements-dev.lock. After changing any
+# requirements*.txt, regenerate both lockfiles:
+#   uv pip compile requirements.txt --universal --python-version 3.11 -o requirements.lock
+#   uv pip compile requirements-dev.txt --universal --python-version 3.11 -c requirements.lock -o requirements-dev.lock
+-r requirements.txt
+-r requirements-build.txt
+pytest
+ruff
+pip-audit
