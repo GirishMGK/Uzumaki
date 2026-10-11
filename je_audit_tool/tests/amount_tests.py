@@ -9,7 +9,7 @@ Tests covered:
       - Excludes: DR/CR offset pairs and cleared documents
   2b. Duplicate Invoice Reference (same invoice_ref booked twice)
   2c. Near-Duplicate (same vendor + amount within ±3 days)
-  3.  High-Value Entries (≥ Performance Materiality)
+  3.  High-Value Entries (≥ data-driven threshold: max(10× median, 10% of PM))
   4.  Split Transactions / Just Below Approval Limit
   5.  Unusual Decimal Patterns
   6.  High-Value Entries Without Adequate Narration
@@ -67,16 +67,17 @@ def run_amount_rowlevel(chunk: pd.DataFrame, col_map: dict, params: dict) -> lis
     materiality    = float(params.get("overall_materiality",     1_000_000))
     perf_mat       = float(params.get("performance_materiality", materiality * 0.75))
     approval_limit = float(params.get("approval_limit",           500_000))
-    # _hv_thresh precomputed from full df by app.py; fall back to perf_mat * 0.1
-    # TODO: unused -- check 3 below flags at performance materiality instead.
-    # Decide which threshold is intended before wiring this in or removing it.
-    hv_thresh      = float(params.get("_hv_thresh", perf_mat * 0.1))  # noqa: F841
+    # Data-driven high-value threshold, precomputed by app.py from the FULL
+    # dataset (this function only sees one chunk): max(10 × median |amount|,
+    # 10% of performance materiality). Falls back to the 10%-of-PM floor.
+    hv_thresh      = float(params.get("_hv_thresh", perf_mat * 0.1))
 
-    # ── 3. High-Value Entries (≥ Performance Materiality) ────────────────────
+    # ── 3. High-Value Entries (≥ data-driven threshold) ──────────────────────
     exceptions.extend(_exc(
-        chunk[abs_amt >= perf_mat].index.tolist(),
-        "High-Value Entry (≥ Performance Materiality)", "High",
-        f"Amount ≥ ₹{perf_mat:,.0f} (performance materiality threshold) — requires substantive review",
+        chunk[abs_amt >= hv_thresh].index.tolist(),
+        "High-Value Entry (≥ Data-Driven Threshold)", "High",
+        f"Amount ≥ ₹{hv_thresh:,.0f} (greater of 10× median amount and 10% of "
+        f"performance materiality) — requires substantive review",
     ))
 
     # ── 4a. Just Below Approval Limit (Manual / Non-PO entries only) ─────────
