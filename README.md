@@ -137,7 +137,7 @@ users who prefer that, but it's optional, not required to use the tool.
 | **Statutory Extractor** (`Combined_PF_Statutory.py`) | PF Challan / ECR Return / TRRN **and** ESI · PT · TDS · GSTR-1 · GSTR-3B extraction — already combined into one two-tab app (shared PDF-read/regex utilities). Accepts individual PDFs or a ZIP of a whole folder. |
 | **Form 26AS Extractor** (`form26as_tool/`) | Flattens Form 26AS's nested Part A (TDS) into a flat, searchable table — every transaction row carries its deductor's Name and TAN. Combines multiple assessment years into one workbook (TRACES only lets you download one year at a time), with Summary-by-Year/Deductor/Section/Month rollup tabs. Auto-detects input format (caret-delimited `.txt`, `.xlsx`/`.xls`, HTML, password-protected PDF). Also ships as a standalone CLI + double-click Windows GUI (`Run26ASFormatter.bat`). |
 | **PDF Tools** (`pdf_tools.py` + `tools/`) | Merge, split, edit (remove/insert/reorder pages) and PDF→Word. |
-| **SOA · RPS · Reconcile** (`extract_soa.py` / `extract_rps.py` / `reconcile.py`) | L&T Finance SOA extractor with TOC/TOD audit, RPS parser, and auto-reconciliation by Agreement No. Also ships as a standalone Flask app (`app.py`, SSE live progress) for users who prefer that UI. |
+| **SOA · RPS · Reconcile** (`extract_soa.py` / `extract_rps.py` / `reconcile.py`) | L&T Finance SOA extractor with TOC/TOD audit, RPS parser, and auto-reconciliation by Agreement No. |
 | **Document Redaction** (`redaction_tool/`) | Auto-detect + redact PAN/TAN/GSTIN/CIN/Aadhaar/Phone/Email plus custom keywords across PDF (true redaction via PyMuPDF), DOCX, XLSX, and images (Tesseract OCR). Also ships as a standalone tkinter desktop app (`redaction_tool/main.py`). |
 | **JE Audit Analytics** (`je_audit_tool/`) | Journal Entry exception testing for statutory/forensic audit: Amount (duplicates, high-value, split transactions), Timing (weekend/holiday, year-end cutoff, reversals), User & Access Control (SOD violations, dormant users, related parties), Vendor Master Data (duplicate GSTIN/PAN, MSME delay, inactive vendors), Benford's Law (chi-square digit analysis). DuckDB-backed for large GL dumps; exports a multi-sheet Excel audit report + working paper. |
 | **Tally extraction tool** (`tally_tool/`) | Pulls every ledger's full transaction history out of Tally in one shot, instead of exporting each ledger one by one. Two ways in: upload a "JSON (Data Interchange)" **or** "XML (Data Interchange)" export (`extract_ledgers.py` — streams either format, doesn't load the whole file into memory, auto-detects which one you gave it), or **connect live** to a running TallyPrime instance over its XML/HTTP interface (`tally_connector.py` — no manual export step, requires ODBC/XML Server enabled in Tally). Computes a running balance per ledger and prints a Debit-vs-Credit control total as a sanity check either way. Debit/Credit is taken from the sign of Tally's `amount` field rather than its `isdeemedpositive` flag, which was found unreliable on some statutory/duty lines. A third tab pulls a **Sales & Purchase Register** item-wise (Stock Item, Quantity, Rate, Amount) via the same live connection. |
@@ -222,18 +222,9 @@ Parses L&T Finance Statement-of-Account (SOA) PDFs into structured Excel and
 auto-computes **Test of Controls / Test of Details** validation checks for NBFC
 loan audits. All L&T SOAs share the same layout, so the parser is tuned to it.
 
-## Install
-```bash
-pip install pdfplumber openpyxl flask
-```
-
-## Web UI (localhost)
-```bash
-python app.py            # then open http://127.0.0.1:5000
-```
-Pick a document type with the **SOA / RPS** tabs, then upload SOAs/RPS as
-**individual PDFs, a whole folder, or a `.zip`**. Files stream through with a
-**live progress bar** and an on-screen results table.
+## Using it
+Open **SOA · RPS · Reconcile** in the Uzumaki hub (see "Run from source" /
+"Run as a Windows app" at the top of this README).
 
 **SOA mode** — per-loan working-paper workbooks + a Portfolio Exception Report,
 with TOC/TOD validation. Running totals (uploaded / clean / with-exceptions /
@@ -256,8 +247,7 @@ servicing deviated from the *scheduled* plan:
 - `Unmatched` — agreements present on only one side.
 
 A bad/corrupt file is reported as FAILED with the reason and never aborts the
-batch. Nothing is persisted beyond the running session. Custom port:
-`PORT=8080 python app.py`.
+batch. Nothing is persisted beyond the running session.
 
 ### RPS from the command line
 ```bash

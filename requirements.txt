@@ -1,7 +1,6 @@
 pdfplumber
 PyMuPDF
 openpyxl
-flask
 streamlit
 pypdf
 python-docx

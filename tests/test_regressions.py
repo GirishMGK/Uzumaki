@@ -5,7 +5,6 @@ Each test is a minimal reproduction of the failure scenario that was fixed.
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 
@@ -256,12 +255,6 @@ def test_compute_recon_flags_duplicate_gstr3b_keys():
     gstr1 = [{"GSTIN": "27ABCDE1234F1Z5", "Tax Period": "Apr-2025", "TL Taxable Value": "150.00"}]
     results, dups = se.compute_recon(gstr1, gstr3b)
     assert dups == [("27ABCDE1234F1Z5", "Apr-2025")]
-
-
-# ── app.py (Flask): filename prefix strip must not assume a fixed width ────────
-def test_app_prefix_strip_handles_wide_index():
-    display = re.sub(r"^\d+_", "", "1000_myfile.pdf", count=1)
-    assert display == "myfile.pdf"
 
 
 # ── unified-framework pages: dispatch must call the real tool functions ────────
