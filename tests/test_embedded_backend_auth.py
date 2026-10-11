@@ -26,9 +26,12 @@ def loans_client(tmp_path, monkeypatch):
 
     from fcmr_core.config import settings
 
+    # logs_dir is deliberately left alone: fcmr_core's loggers attach their
+    # file handlers once per process, so pointing them at this test's tmp
+    # dir would silently redirect every later test's log output too.
     for attr, sub in [
         ("data_dir", ""), ("uploads_dir", "uploads"), ("parquet_dir", "parquet"),
-        ("outputs_dir", "outputs"), ("logs_dir", "logs"), ("backups_dir", "backups"),
+        ("outputs_dir", "outputs"), ("backups_dir", "backups"),
     ]:
         monkeypatch.setattr(settings, attr, tmp_path / sub)
     monkeypatch.setattr(settings, "catalog_path", tmp_path / "catalog.duckdb")
