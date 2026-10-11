@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import os
 import secrets
 from pathlib import Path
 
@@ -18,7 +20,6 @@ templates = Jinja2Templates(directory=str(_templates_dir))
 
 # Default admin user created on first run
 _ADMIN_USERNAME = "admin"
-_ADMIN_PASSWORD = "admin123"  # Must be changed on first login
 
 
 def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
@@ -32,21 +33,25 @@ def _hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
 def _verify_password(password: str, password_hash: str, salt: str) -> bool:
     """Verify password against hash and salt."""
     computed_hash, _ = _hash_password(password, salt)
-    return computed_hash == password_hash
+    return hmac.compare_digest(computed_hash, password_hash)
 
 
 def _ensure_admin() -> None:
-    """Create default admin user if it doesn't exist."""
+    """Create the admin user if it doesn't exist.
+
+    Its password comes from FCMR_BOOTSTRAP_ADMIN_PASSWORD, or is generated
+    randomly and printed once -- never a fixed, publicly known default.
+    (Inside Uzumaki this account is only used for audit attribution; password
+    login is disabled there, see main.py's LoginRequiredMiddleware.)"""
     try:
         user = store.get_user(_ADMIN_USERNAME)
         if user is None:
-            pwd_hash, salt = _hash_password(_ADMIN_PASSWORD)
+            password = os.environ.get("FCMR_BOOTSTRAP_ADMIN_PASSWORD") or secrets.token_urlsafe(12)
+            pwd_hash, salt = _hash_password(password)
             # Store salt:hash in password_hash field
             store.create_user(_ADMIN_USERNAME, f"{salt}:{pwd_hash}", "Admin User")
-            print(
-                f"\n🔐 Default admin user created: username='{_ADMIN_USERNAME}', password='{_ADMIN_PASSWORD}'"
-            )
-            print("   ⚠️  CHANGE THIS PASSWORD IMMEDIATELY ON FIRST LOGIN!\n")
+            if not os.environ.get("FCMR_BOOTSTRAP_ADMIN_PASSWORD"):
+                print(f"\n🔐 Admin user created: username='{_ADMIN_USERNAME}', password='{password}'\n")
     except Exception:
         pass  # User might already exist
 

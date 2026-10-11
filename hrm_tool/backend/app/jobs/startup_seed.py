@@ -1,10 +1,14 @@
-"""Idempotent boot-time bootstrap: default admin user + app_config rows.
+"""Idempotent boot-time bootstrap: initial admin user + app_config rows.
 
 Runs on container start (see Dockerfile CMD). This is NOT the demo/sample
 dataset described in §14 (6 offices, 300 staff, 200 clients, ...) — that
 lives in seed/seed_data.py and is run explicitly, never automatically,
 since a firm's production deployment must never get demo data injected.
 """
+import logging
+import os
+import secrets
+
 from sqlmodel import Session, select
 
 from app.core.config import get_settings
@@ -13,6 +17,8 @@ from app.db.session import engine, init_db
 from app.models.enums import UserRole
 from app.models.reference import AppConfig
 from app.models.user import User
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_APP_CONFIG: dict[str, dict] = {}
 
@@ -44,10 +50,17 @@ def run() -> None:
         admin_email = "admin@firm.local"
         existing_admin = session.exec(select(User).where(User.email == admin_email)).first()
         if existing_admin is None:
+            # Never a fixed default: RMS_BOOTSTRAP_ADMIN_PASSWORD if the host
+            # supplies one (Uzumaki's _pages/hrm.py does), else random and
+            # logged once. Either way it must be changed on first login.
+            password = os.environ.get("RMS_BOOTSTRAP_ADMIN_PASSWORD")
+            if not password:
+                password = secrets.token_urlsafe(12)
+                logger.warning("Created HRM admin %s with initial password: %s", admin_email, password)
             session.add(
                 User(
                     email=admin_email,
-                    hashed_password=hash_password("ChangeMe!2026"),
+                    hashed_password=hash_password(password),
                     role=UserRole.ADMIN,
                     full_name="System Administrator",
                     must_change_password=True,

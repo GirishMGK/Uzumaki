@@ -142,11 +142,6 @@ users who prefer that, but it's optional, not required to use the tool.
 | **Loan Analytics** (`loans_tool/`) | NBFC loan-portfolio audit analytics, vendored from the `FCMR` repo (originally "SanGir Automations") — deterministic, no AI/LLM anywhere. KYC/data-quality checks (24 rules: PAN/Aadhaar-Verhoeff/Voter/Passport/DL/Mobile/Email/DOB format, PIN/address validation against a bundled India Post master, PAN/Aadhaar/Mobile/Bank/Voter/Name+DOB/Address duplicate detection, UCID identity grouping), EAD/ECL file consolidation (merges L&T-Finance-style exports), and an ICAI-sampled 4-sheet Excel audit workpaper. Like HRM, a stateful multi-session app with its own FastAPI backend and database — but reuses your Uzumaki login instead of a second one; see "Loan Analytics is different" below. |
 | **Firm RMS** (`firm_rms_tool/`) | Manpower/resource management — scheduler board, capacity dashboards, report library, timesheets/actuals, forecasting, RBAC. Unlike every other tool above, this one is a **stateful multi-session app with its own database and login**, not a one-shot file processor — see "Firm RMS is different" below. |
 
-> A separate .NET/Blazor Server port of the JE Audit workflow exists at
-> `je_audit_tool_blazor/JEAuditApp.razor` for reference, but is not part of
-> the unified app/`.exe` (different framework, same functionality as
-> JE Audit Analytics above).
-
 > **PF + Statutory combinable?** Yes — they already share `_read_pdf_text`,
 > `_g`/`normalize_period` helpers and live together in `Combined_PF_Statutory.py`
 > as two tabs, so the hub mounts that single file.
@@ -158,7 +153,7 @@ Same shape as Firm RMS/HRM below — a vendored FastAPI backend
 and embedded via iframe, with its own persistent database (per-user
 app-data, `%LOCALAPPDATA%\UzumakiLoanAnalytics` on Windows). The one
 deliberate difference: it does **not** have a second login. Its original
-repo (`FCMR`) has its own single hardcoded `admin`/`admin123` account —
+repo (`FCMR`) has its own single `admin` account —
 asking a user to log into it *again*, right after they already logged into
 Uzumaki, would be a redundant prompt, not real additional security, since
 this page is only reachable at all once Uzumaki's own login + role check
@@ -170,6 +165,13 @@ route downstream behaves identically either way. The flag is only ever set
 from inside `_pages/loans.py`; a standalone run of the vendored backend (or
 the original, unvendored `FCMR` app it came from) keeps its own real login,
 untouched.
+
+Trusting Uzumaki must not mean trusting anything that can reach the port, so
+each launch picks a **random free port** and a **per-launch secret token**
+(`LOANS_HOST_TOKEN`). The backend only creates a session for a request
+carrying that token (`?hub_token=…`, present only in this page's iframe URL),
+and its own password login is disabled in this mode. HRM likewise runs on a
+random free port each launch.
 
 One consequence worth knowing: actions inside Loan Analytics are attributed
 to its own internal `admin` account, not your actual Uzumaki username —
@@ -199,7 +201,9 @@ separate server to run. Data lives in a per-user app-data directory
 (`%LOCALAPPDATA%\FirmRMS` on Windows), independent of the app's own install
 location, so it survives an `Uzumaki.exe` self-update.
 
-Default login on first run: `admin@firm.local` / `ChangeMe!2026`.
+First login: `admin@firm.local` with a random password generated per install
+(Uzumaki admins can see it under **First-time HRM admin login** on the HRM
+page). HRM makes you change it on first login.
 
 **Sharing one Python environment**: Firm RMS's own `backend/requirements.txt`
 pins `fastapi==0.115.0`, which conflicts with the `starlette` version

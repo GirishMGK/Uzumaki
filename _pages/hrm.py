@@ -31,9 +31,9 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from _pages.theme import footer
+from common.net import pick_free_port
 
 HOST = "127.0.0.1"
-PORT = 8766
 
 # Deliberately NOT the full sa-hero page_header() banner every other hub
 # page uses (icon + title + subtitle + badges -- ~150-250px tall): real
@@ -60,7 +60,7 @@ def _app_data_dir() -> Path:
     return data_dir
 
 
-def _configure_environment() -> None:
+def _configure_environment(port: int) -> None:
     data_dir = _app_data_dir()
     db_path = data_dir / "hrm.db"
     os.environ.setdefault("RMS_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
@@ -70,25 +70,41 @@ def _configure_environment() -> None:
         secret_file.write_text(secrets.token_hex(32), encoding="utf-8")
     os.environ.setdefault("RMS_JWT_SECRET_KEY", secret_file.read_text(encoding="utf-8").strip())
 
+    # The first-run HRM admin password: random per install (never the old
+    # shared "ChangeMe!2026"), read by app/jobs/startup_seed.py. HRM forces a
+    # change on first login, after which this file is just stale.
+    initial_pw_file = _initial_admin_password_file()
+    if not initial_pw_file.exists():
+        initial_pw_file.write_text(secrets.token_urlsafe(12), encoding="utf-8")
+    os.environ.setdefault(
+        "RMS_BOOTSTRAP_ADMIN_PASSWORD", initial_pw_file.read_text(encoding="utf-8").strip()
+    )
+
     os.environ.setdefault("RMS_ENVIRONMENT", "desktop")
-    os.environ.setdefault("RMS_CORS_ORIGINS", f'["http://{HOST}:{PORT}"]')
+    os.environ["RMS_CORS_ORIGINS"] = f'["http://{HOST}:{port}"]'
     if os.path.isdir(_FRONTEND_DIST):
         os.environ.setdefault("RMS_STATIC_DIR", _FRONTEND_DIST)
 
 
-def _health_ok() -> bool:
+def _initial_admin_password_file() -> Path:
+    return _app_data_dir() / "initial_admin_password.txt"
+
+
+def _health_ok(port: int) -> bool:
     try:
-        with urllib.request.urlopen(f"http://{HOST}:{PORT}/health", timeout=1) as resp:
+        with urllib.request.urlopen(f"http://{HOST}:{port}/health", timeout=1) as resp:
             return resp.status == 200
     except (urllib.error.URLError, OSError):
         return False
 
 
 @st.cache_resource(show_spinner=False)
-def _start_backend() -> str:
+def _start_backend() -> tuple[int, str]:
     """Starts the HRM backend exactly once per app run (cached across
-    reruns/sessions via st.cache_resource) and blocks until it's serving."""
-    _configure_environment()
+    reruns/sessions via st.cache_resource) on a free port, and blocks until
+    it's serving. Returns (port, iframe URL)."""
+    port = pick_free_port(HOST)
+    _configure_environment(port)
 
     from app.jobs import startup_seed
     startup_seed.run()
@@ -97,33 +113,36 @@ def _start_backend() -> str:
     import uvicorn
 
     def _serve():
-        uvicorn.run(fastapi_app, host=HOST, port=PORT, log_level="warning")
+        uvicorn.run(fastapi_app, host=HOST, port=port, log_level="warning")
 
     threading.Thread(target=_serve, daemon=True, name="hrm-backend").start()
 
     for _ in range(60):
-        if _health_ok():
+        if _health_ok(port):
             break
         time.sleep(0.5)
-    return f"http://{HOST}:{PORT}/"
+    return port, f"http://{HOST}:{port}/"
 
 
 with st.spinner("Starting HRM (first launch creates the local database)…"):
     try:
-        url = _start_backend()
+        port, url = _start_backend()
     except Exception as e:
         st.error(f"HRM failed to start: {e}")
         st.stop()
 
-if not _health_ok():
+if not _health_ok(port):
     st.error("HRM started but isn't responding yet — try reopening this page.")
 else:
     st.components.v1.iframe(url, height=900, scrolling=True)
-    st.caption(
-        f"Data stored locally at `{_app_data_dir()}`. "
-        "Default login on first run: **admin@firm.local** / **ChangeMe!2026** "
-        "(you'll be asked to change it)."
-    )
+    st.caption(f"Data stored locally at `{_app_data_dir()}`.")
+    if st.session_state.auth_user["is_admin"]:
+        with st.expander("First-time HRM admin login"):
+            st.markdown(
+                "Username **admin@firm.local**, password "
+                f"`{_initial_admin_password_file().read_text(encoding='utf-8').strip()}` -- "
+                "HRM asks you to change it on first login, after which this one stops working."
+            )
 
 with st.expander("What this does"):
     st.markdown(

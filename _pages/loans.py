@@ -17,6 +17,7 @@ PyInstaller/Vercel-specific files -- Uzumaki has its own packaging/launcher
 already).
 """
 import os
+import secrets
 import sys
 import threading
 import time
@@ -32,9 +33,9 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from _pages.theme import footer
+from common.net import pick_free_port
 
 HOST = "127.0.0.1"
-PORT = 8767
 
 # Same reasoning as hrm.py: a compact header instead of the full sa-hero
 # banner, so the embedded app's own UI is visible immediately, not pushed
@@ -57,11 +58,14 @@ def _app_data_dir() -> Path:
     return data_dir
 
 
-def _configure_environment() -> None:
+def _configure_environment(port: int, host_token: str) -> None:
     # Trust Uzumaki's own login instead of asking again -- see this file's
     # module docstring and LoginRequiredMiddleware's own docstring in
-    # loans_tool/backend/loan_app/main.py for the full reasoning.
+    # loans_tool/backend/loan_app/main.py for the full reasoning. The backend
+    # only honours that trust for requests carrying host_token, which only
+    # this page's iframe URL has.
     os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    os.environ["LOANS_HOST_TOKEN"] = host_token
 
     # fcmr_core/config.py already resolves a per-user appdata directory on
     # its own when sys.frozen is set (which it is, process-wide, whenever
@@ -74,53 +78,54 @@ def _configure_environment() -> None:
     data_dir = _app_data_dir()
     salt_file = data_dir / "aadhaar_salt.key"
     if not salt_file.exists():
-        import secrets
         salt_file.write_text(secrets.token_hex(32), encoding="utf-8")
     os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", salt_file.read_text(encoding="utf-8").strip())
-    os.environ.setdefault("FCMR_BACKEND_PORT", str(PORT))
+    os.environ["FCMR_BACKEND_PORT"] = str(port)
 
 
-def _health_ok() -> bool:
+def _health_ok(port: int) -> bool:
     # No dedicated /health route -- /login is always public regardless of
     # session/auth state (see LoginRequiredMiddleware), so it's a reliable
     # readiness probe even with LOANS_TRUST_HOST_AUTH active.
     try:
-        with urllib.request.urlopen(f"http://{HOST}:{PORT}/login", timeout=1) as resp:
+        with urllib.request.urlopen(f"http://{HOST}:{port}/login", timeout=1) as resp:
             return resp.status == 200
     except (urllib.error.URLError, OSError):
         return False
 
 
 @st.cache_resource(show_spinner=False)
-def _start_backend() -> str:
+def _start_backend() -> tuple[int, str]:
     """Starts the Loan Analytics backend exactly once per app run (cached
-    across reruns/sessions via st.cache_resource) and blocks until it's
-    serving."""
-    _configure_environment()
+    across reruns/sessions via st.cache_resource) on a free port, and blocks
+    until it's serving. Returns (port, iframe URL)."""
+    port = pick_free_port(HOST)
+    host_token = secrets.token_urlsafe(32)
+    _configure_environment(port, host_token)
 
     from loan_app.main import app as fastapi_app
     import uvicorn
 
     def _serve():
-        uvicorn.run(fastapi_app, host=HOST, port=PORT, log_level="warning")
+        uvicorn.run(fastapi_app, host=HOST, port=port, log_level="warning")
 
     threading.Thread(target=_serve, daemon=True, name="loans-backend").start()
 
     for _ in range(60):
-        if _health_ok():
+        if _health_ok(port):
             break
         time.sleep(0.5)
-    return f"http://{HOST}:{PORT}/"
+    return port, f"http://{HOST}:{port}/?hub_token={host_token}"
 
 
 with st.spinner("Starting Loan Analytics (first launch creates the local database)…"):
     try:
-        url = _start_backend()
+        port, url = _start_backend()
     except Exception as e:
         st.error(f"Loan Analytics failed to start: {e}")
         st.stop()
 
-if not _health_ok():
+if not _health_ok(port):
     st.error("Loan Analytics started but isn't responding yet — try reopening this page.")
 else:
     st.components.v1.iframe(url, height=900, scrolling=True)
