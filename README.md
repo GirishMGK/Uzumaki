@@ -90,10 +90,12 @@ per-user accounts, each assigned a **role** that controls which tools they
 can open. An account can also be an **Administrator**, which always has
 access to every tool regardless of role.
 
-**First run:** since there are no accounts yet, one is created automatically —
-username `admin`, password `ChangeMe!2026` (shown on the login screen itself
-until a second account exists). Log in with that, then go to **Admin → Users
-& Access** to:
+**First run:** there are no accounts yet, so instead of a login form you get
+a **Create administrator account** form — you pick the username and password
+(at least 8 characters). There is no built-in default login. Installs from
+before this change that still use the old seeded `admin` / `ChangeMe!2026`
+login are made to choose a new password at their next login. Once in, go to
+**Admin → Users & Access** to:
 - create roles and pick exactly which tools each one can open
 - create user accounts and assign them a role (or make them an admin)
 - change passwords / edit / delete accounts

@@ -30,6 +30,7 @@ _NON_ADMIN_SESSION = {
 def isolated_admin_env(tmp_path, monkeypatch):
     monkeypatch.setattr(auth, "_app_data_dir", lambda: tmp_path)
     auth.init_db()
+    auth.create_initial_admin("admin", "Adm1n-Test-Pass", "Administrator")
     yield tmp_path
 
 
