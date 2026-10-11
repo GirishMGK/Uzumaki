@@ -63,13 +63,20 @@ class SchemaMap:
 
     def map_headers_with_scores(self, raw_headers: list[str]) -> dict[str, tuple[str, float]]:
         """Return {raw_header: (canonical_name, confidence_score)} for all recognisable columns."""
-        # Load threshold from database (or config default)
+        # Load threshold from database (or config default). Guards against
+        # an out-of-[0.0, 1.0]-range stored value (e.g. a stray 0-100
+        # slider position saved before the Settings form validated this --
+        # see loan_app/api/settings.py's update_setting()) rather than
+        # using it as-is: since best_score below is itself always in
+        # [0.0, 1.0], a threshold above 1.0 would make `best_score >=
+        # threshold` never true, silently turning off every fuzzy
+        # suggestion with no error anywhere.
         threshold_str = catalog_store.get_setting("fuzzy_match_threshold")
         try:
-            threshold = (
-                float(threshold_str) if threshold_str else config_settings.fuzzy_match_threshold
-            )
+            threshold = float(threshold_str) if threshold_str else config_settings.fuzzy_match_threshold
         except (ValueError, TypeError):
+            threshold = config_settings.fuzzy_match_threshold
+        if not (0.0 <= threshold <= 1.0):
             threshold = config_settings.fuzzy_match_threshold
 
         result: dict[str, tuple[str, float]] = {}

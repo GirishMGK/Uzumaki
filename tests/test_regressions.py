@@ -3853,6 +3853,83 @@ def test_settings_schema_overrides_preview_and_commit_through_real_routes():
                 del sys.modules[mod]
 
 
+def test_fuzzy_match_threshold_slider_round_trips_as_a_fraction_not_a_percent():
+    """Regression guard: the Settings page's Fuzzy Match Threshold slider
+    is a 0-100 range input (for a smoother drag) but map_headers_with_
+    scores() compares its stored value directly against a 0.0-1.0
+    similarity score. The slider used to post its own raw 0-100 value
+    (e.g. "50") straight into that setting with no conversion, and the
+    page re-read it as `stored * 100` to reposition the slider -- so
+    after exactly one save, the stored value was 100x too large: the
+    slider's own max=100 clamped the display to "stuck at 1.00" (the
+    reported symptom), and far more importantly, a threshold > 1.0 means
+    `best_score >= threshold` can never be true, silently turning off
+    every fuzzy-match suggestion on every Column Mapping page with no
+    error anywhere -- this likely explains a separate "auto match isn't
+    happening" report from the same user.
+
+    Covers all three layers of the fix: the save route rejects an
+    out-of-range value instead of storing it, get_schema()'s threshold
+    read self-heals an already-corrupted stored value (simulating the
+    pre-fix bug's exact leftover state) by falling back to the config
+    default, and a real save of a slider position now round-trips as the
+    correct fraction end-to-end through the real routes.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+
+    backend_dir = os.path.join(REPO_ROOT, "loans_tool", "backend")
+    sys.path.insert(0, backend_dir)
+    os.environ.setdefault("FCMR_AADHAAR_HASH_SALT", "test-salt-for-pytest")
+    os.environ["LOANS_TRUST_HOST_AUTH"] = "1"
+    try:
+        import importlib
+
+        import loan_app.main as loan_main
+        importlib.reload(loan_main)
+
+        from fastapi.testclient import TestClient
+        from fcmr_core.catalog import store as catalog_store
+        from fcmr_core.schemas.loader import get_schema
+
+        with TestClient(loan_main.app) as client:
+            # The save route must reject a raw 0-100 slider position
+            # (and anything else outside [0.0, 1.0]) rather than storing it.
+            resp = client.post("/settings", data={"key": "fuzzy_match_threshold", "value": "50"})
+            assert resp.status_code == 400
+            assert "must be between 0.0 and 1.0" in resp.text
+            assert catalog_store.get_setting("fuzzy_match_threshold") == "0.6"  # pre-seeded default, left untouched
+
+            # A real slider drag posts the fraction the hidden input now
+            # carries, not the visible range input's own 0-100 value.
+            resp = client.post("/settings", data={"key": "fuzzy_match_threshold", "value": "0.30"})
+            assert resp.status_code == 200
+            assert catalog_store.get_setting("fuzzy_match_threshold") == "0.3"
+
+            resp = client.get("/settings")
+            assert resp.status_code == 200
+            assert 'id="threshold" min="0" max="100" value="30"' in resp.text
+            assert '>0.30<' in resp.text
+
+            # Simulate the pre-fix bug's exact leftover state: a stored
+            # value already corrupted to a 0-100 number by an old save.
+            catalog_store.set_setting("fuzzy_match_threshold", "100")
+            schema = get_schema("ead_files")
+            scored = schema.map_headers_with_scores(["AgreementNo"])  # an exact-match alias
+            assert scored.get("AgreementNo") == ("loan_id", 1.0), (
+                "a corrupted >1.0 stored threshold must not silently suppress every fuzzy suggestion"
+            )
+
+            resp = client.get("/settings")
+            assert 'id="threshold" min="0" max="100" value="60"' in resp.text  # self-healed to the 0.6 default
+    finally:
+        os.environ.pop("LOANS_TRUST_HOST_AUTH", None)
+        sys.path.remove(backend_dir)
+        for mod in list(sys.modules):
+            if mod == "loan_app" or mod.startswith("loan_app.") or mod == "app" or mod.startswith("app."):
+                del sys.modules[mod]
+
+
 # ── ead_consolidator.py: colliding rename no longer crashes ─────────────────
 def test_ead_consolidator_rejects_a_rename_that_would_duplicate_a_column():
     """
