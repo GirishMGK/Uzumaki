@@ -14,6 +14,18 @@ import pytest
 _LOANS_TEST_HOST_TOKEN = "regression-test-host-token"
 
 
+def _closed_temp_path(suffix: str):
+    """A fresh temp file's Path with mkstemp's OS handle already closed.
+    Path(tempfile.mkstemp()[1]) leaks that handle, and on Windows an open
+    handle blocks the code under test from replacing or deleting the file."""
+    import tempfile
+    from pathlib import Path
+
+    fd, name = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+    return Path(name)
+
+
 def _TrustedLoansClient(app, **kwargs):
     """A TestClient for the Loan Analytics app in Uzumaki-embedded
     (LOANS_TRUST_HOST_AUTH=1) mode. That mode only creates a session for a
@@ -339,7 +351,8 @@ def test_firm_rms_removed_and_replaced_by_hrm():
     spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
     assert "firm_rms" not in spec_src.lower()
     assert '_tree("hrm_tool")' in spec_src
-    assert os.path.join("hrm_tool", "backend", "app", "main.py") in spec_src
+    # The spec's own source text, not an evaluated (OS-specific) path.
+    assert 'os.path.join("hrm_tool", "backend", "app", "main.py")' in spec_src
 
 
 # ── tally_tool/extract_ledgers.py: sign convention, filters, control total ─────
@@ -1680,7 +1693,8 @@ def test_loans_wired_into_home_spec_and_auth():
 
     spec_src = open(os.path.join(REPO_ROOT, "Uzumaki.spec"), encoding="utf-8").read()
     assert '_tree("loans_tool")' in spec_src
-    assert os.path.join("loans_tool", "backend", "loan_app", "main.py") in spec_src
+    # The spec's own source text, not an evaluated (OS-specific) path.
+    assert 'os.path.join("loans_tool", "backend", "loan_app", "main.py")' in spec_src
 
     auth_src = open(os.path.join(REPO_ROOT, "auth.py"), encoding="utf-8").read()
     assert '"Loan Analytics"' in auth_src, (
@@ -2228,7 +2242,7 @@ def test_unhandled_exception_is_logged_and_surfaced_not_a_bare_500():
             assert resp.json() == {"detail": "No files provided."}
 
         assert error_log.exists()
-        new_content = error_log.read_text(encoding="utf-8")[before_size:]
+        new_content = error_log.read_bytes()[before_size:].decode("utf-8")  # st_size is bytes
         assert "synthetic failure for the regression test" in new_content
         assert "Traceback" in new_content
     finally:
@@ -2284,7 +2298,7 @@ def test_upload_checkpoint_logging_pinpoints_progress():
             assert resp.status_code == 303
 
         assert processing_log.exists()
-        new_content = processing_log.read_text(encoding="utf-8")[before_size:]
+        new_content = processing_log.read_bytes()[before_size:].decode("utf-8")  # st_size is bytes
         expected_in_order = [
             "Upload request received: 1 file(s)",
             "Streaming uploaded file to disk: checkpoint_test.csv",
@@ -2829,7 +2843,7 @@ def test_tag_product_helper_rewrites_disk_to_disk_not_in_memory():
                 "system": ["OneLMS_TW", "NotARealSystem", "Weird'System"],
             }
         )
-        path = Path(tempfile.mkstemp(suffix=".parquet")[1])
+        path = _closed_temp_path(".parquet")
         df.write_parquet(path)
 
         _tag_product_helper(path)
@@ -2839,7 +2853,7 @@ def test_tag_product_helper_rewrites_disk_to_disk_not_in_memory():
 
         # No `system` column at all -> left untouched, no product_helper added.
         no_system_df = pl.DataFrame({"loan_id": ["L1"]})
-        no_system_path = Path(tempfile.mkstemp(suffix=".parquet")[1])
+        no_system_path = _closed_temp_path(".parquet")
         no_system_df.write_parquet(no_system_path)
         _tag_product_helper(no_system_path)
         assert pl.read_parquet(no_system_path).columns == ["loan_id"]
@@ -4353,7 +4367,7 @@ def test_export_consolidated_to_file_matches_build_consolidated_df():
                 upload_id = catalog_store.create_upload("ead_files", f"export_test_{i}.csv", engagement_id=engagement_id)
                 from fcmr_core.ingestion.pipeline import ingest_csv
 
-                tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+                tmp_csv = _closed_temp_path(".csv")
                 tmp_csv.write_bytes(csv_bytes)
                 result = ingest_csv(
                     tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id", "DrsPOS": "outstanding_principal"}
@@ -4368,7 +4382,7 @@ def test_export_consolidated_to_file_matches_build_consolidated_df():
                 tmp_csv.unlink(missing_ok=True)
 
             upload_id = catalog_store.create_upload("ead_files", "export_test_no_pos.csv", engagement_id=engagement_id)
-            tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+            tmp_csv = _closed_temp_path(".csv")
             tmp_csv.write_bytes(b"loan_id\nLN102\n")
             from fcmr_core.ingestion.pipeline import ingest_csv
 
@@ -4456,7 +4470,7 @@ def test_get_consolidated_table_info_matches_build_consolidated_df_without_mater
             for i, (loan_id, pos) in enumerate([("LN100", "1000"), ("LN101", "2000")]):
                 csv_bytes = f"loan_id,DrsPOS\n{loan_id},{pos}\n".encode()
                 upload_id = catalog_store.create_upload("ead_files", f"table_info_test_{i}.csv", engagement_id=engagement_id)
-                tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+                tmp_csv = _closed_temp_path(".csv")
                 tmp_csv.write_bytes(csv_bytes)
                 result = ingest_csv(
                     tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id", "DrsPOS": "outstanding_principal"}
@@ -4472,7 +4486,7 @@ def test_get_consolidated_table_info_matches_build_consolidated_df_without_mater
 
             # A third upload missing DrsPOS -- UNION ALL BY NAME null-fills it.
             upload_id = catalog_store.create_upload("ead_files", "table_info_test_no_pos.csv", engagement_id=engagement_id)
-            tmp_csv = Path(tempfile.mkstemp(suffix=".csv")[1])
+            tmp_csv = _closed_temp_path(".csv")
             tmp_csv.write_bytes(b"loan_id\nLN102\n")
             result = ingest_csv(tmp_csv, "ead_files", upload_id, user_mapping={"loan_id": "loan_id"})
             catalog_store.store_upload_data(upload_id, result.parquet_path)

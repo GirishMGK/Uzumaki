@@ -174,6 +174,7 @@ def test_run_app_launches_home_py_headless_on_given_port():
     assert os.path.exists(sys.argv[2])
     assert "--server.headless=true" in sys.argv
     assert "--server.port=54321" in sys.argv
+    assert "--server.address=127.0.0.1" in sys.argv  # never exposed on the LAN
 
 
 def test_find_free_port_returns_a_bindable_port():
@@ -246,10 +247,17 @@ def test_fatal_startup_error_writes_a_real_log_file(tmp_path):
     console, no window. This is the fallback: verified end-to-end with a
     real exception and a real temp file, not mocked, since the whole point
     is that the file's actual content must be readable/useful."""
+    import ctypes
+
     fake_exe = tmp_path / "Uzumaki.exe"
     fake_exe.write_bytes(b"")  # only its path is used, content irrelevant
-    with mock.patch.object(sys, "executable", str(fake_exe)):
+    # On Windows this path also shows a real modal MessageBoxW, which would
+    # block the test run forever waiting for a click -- stub it out.
+    fake_windll = mock.MagicMock()
+    with mock.patch.object(sys, "executable", str(fake_exe)),             mock.patch.object(ctypes, "windll", fake_windll, create=True):
         launcher._report_fatal_startup_error(RuntimeError("simulated startup failure"))
+    if sys.platform.startswith("win"):
+        fake_windll.user32.MessageBoxW.assert_called_once()
 
     log_path = tmp_path / "Uzumaki_error.log"
     assert log_path.exists()
@@ -305,6 +313,8 @@ def test_download_streams_and_reports_progress_with_content_length():
             assert os.path.getsize(dest) == len(payload)
     finally:
         server.shutdown()
+        server.server_close()  # free the port: SO_REUSEADDR on Windows lets a
+        # later test bind the same, still-open port and hang on its dead listener
 
     assert len(calls) >= 2  # payload spans multiple chunks at this size
     assert calls[-1] == (len(payload), len(payload))
@@ -349,6 +359,8 @@ def test_download_progress_falls_back_gracefully_without_content_length():
             assert os.path.getsize(dest) == len(payload)
     finally:
         server.shutdown()
+        server.server_close()  # free the port: SO_REUSEADDR on Windows lets a
+        # later test bind the same, still-open port and hang on its dead listener
 
     assert calls  # progress still reported
     assert all(total is None for _, total in calls)
